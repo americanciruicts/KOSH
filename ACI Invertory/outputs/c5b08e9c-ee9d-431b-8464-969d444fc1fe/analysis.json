@@ -1,0 +1,29 @@
+{
+  "summary": "```json\n{\n    \"summary\": \"This document is an invoice from TechSupply Corp, located in New York, to Acme Corporation in Los Angeles. The invoice, numbered INV-2024-001, was issued on January 15, 2024, with a due date of February 15, 2024, and specifies payment terms of Net 30. The invoice details th...",
+  "document_type": "unknown",
+  "confidence": 0.5,
+  "extracted_fields": {
+    "detected_pii": {
+      "email": [
+        "billing@techsupply.com"
+      ],
+      "address": [
+        "123 Business Ave",
+        "456 Industry Blvd"
+      ]
+    }
+  },
+  "raw_text": "INVOICE\n\nTechSupply Corp\n123 Business Ave\nNew York, NY 10001\nPhone: (555) 123-4567\nEmail: billing@techsupply.com\n\nBILL TO:\nAcme Corporation\n456 Industry Blvd\nLos Angeles, CA 90210\n\nInvoice Number: INV-2024-001\nInvoice Date: January 15, 2024\nDue Date: February 15, 2024\nPayment Terms: Net 30\n\nDESCRIPTION                    QTY    RATE      AMOUNT\nLaptop Computers HP EliteBook   10    $1,200    $12,000\nWireless Mice                   15    $25       $375\nUSB Cables                      20    $10       $200\nSoftware Licenses               10    $150      $1,500\n\n                              SUBTOTAL: $14,075\n                              TAX (8.5%): $1,196.38\n                              TOTAL: $15,271.38\n\nPayment Instructions:\nPlease remit payment within 30 days.\nWire Transfer: Account #123456789\nCheck payable to: TechSupply Corp",
+  "metadata": {
+    "file_name": "c5b08e9c-ee9d-431b-8464-969d444fc1fe_sample_invoice.txt",
+    "file_size": 840,
+    "mime_type": "text/plain",
+    "file_hash": "bd689a0d911b63d85cfddad5e8e741cf54962ea5e433308899f4d15ee703b142",
+    "upload_timestamp": "2025-07-15 10:54:56.580465",
+    "pages": null,
+    "language": null
+  },
+  "processing_time": 2.927048683166504,
+  "model_used": "gpt-4o",
+  "cost_estimate": 0.00105
+}

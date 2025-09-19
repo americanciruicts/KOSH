@@ -1,0 +1,49 @@
+JOHN SMITH
+Senior Software Engineer
+
+Email: john.smith@email.com
+Phone: (555) 987-6543
+Address: 789 Tech Street, San Francisco, CA 94105
+LinkedIn: linkedin.com/in/johnsmith
+
+PROFESSIONAL SUMMARY
+Experienced software engineer with 8+ years developing scalable web applications and cloud infrastructure. Expertise in Python, JavaScript, and AWS. Proven track record of leading teams and delivering high-quality software solutions.
+
+EXPERIENCE
+
+Senior Software Engineer | TechCorp Inc. | 2020 - Present
+• Led development of microservices architecture serving 1M+ users
+• Implemented CI/CD pipelines reducing deployment time by 75%
+• Mentored 5 junior developers and conducted code reviews
+• Technologies: Python, React, AWS, Docker, Kubernetes
+
+Software Engineer | StartupXYZ | 2018 - 2020
+• Built REST APIs and database schemas for e-commerce platform
+• Optimized application performance improving response times by 40%
+• Collaborated with product team on feature requirements
+• Technologies: Node.js, PostgreSQL, Redis, JavaScript
+
+Junior Developer | WebSolutions LLC | 2016 - 2018
+• Developed responsive web applications using modern frameworks
+• Fixed bugs and implemented new features in legacy systems
+• Participated in agile development process and daily standups
+• Technologies: HTML, CSS, JavaScript, PHP, MySQL
+
+EDUCATION
+
+Bachelor of Science in Computer Science
+University of California, Berkeley | 2012 - 2016
+GPA: 3.7/4.0
+
+SKILLS
+
+Programming Languages: Python, JavaScript, TypeScript, Java, Go
+Frameworks: React, Node.js, Django, Flask, Express
+Databases: PostgreSQL, MongoDB, Redis, MySQL
+Cloud: AWS (EC2, S3, Lambda, RDS), Docker, Kubernetes
+Tools: Git, Jenkins, Terraform, Elasticsearch
+
+CERTIFICATIONS
+
+AWS Certified Solutions Architect - Associate (2022)
+Certified Kubernetes Administrator (2021)

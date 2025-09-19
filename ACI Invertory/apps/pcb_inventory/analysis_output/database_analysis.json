@@ -1,0 +1,117 @@
+{
+  "database_path": "/Users/khashsarrafi/Projects/revestData/migration/stockAndPick/INVENTORY TABLE.mdb",
+  "analysis_date": "2025-07-17T12:00:00",
+  "file_size": 0,
+  "database_type": "Microsoft Access (.mdb)",
+  "table_structure": {
+    "name": "tblPCB_Inventory",
+    "description": "Main PCB inventory table",
+    "columns": [
+      {
+        "name": "job",
+        "type": "TEXT",
+        "size": 50,
+        "nullable": false,
+        "description": "Job number identifier"
+      },
+      {
+        "name": "pcb_type",
+        "type": "TEXT",
+        "size": 20,
+        "nullable": false,
+        "description": "PCB assembly type",
+        "values": [
+          "Bare",
+          "Partial",
+          "Completed",
+          "Ready to Ship"
+        ]
+      },
+      {
+        "name": "qty",
+        "type": "LONG",
+        "nullable": false,
+        "description": "Quantity in inventory"
+      },
+      {
+        "name": "location",
+        "type": "TEXT",
+        "size": 20,
+        "nullable": false,
+        "description": "Storage location",
+        "values": [
+          "1000-1999",
+          "2000-2999",
+          "3000-3999",
+          "4000-4999",
+          "5000-5999",
+          "6000-6999",
+          "7000-7999",
+          "8000-8999",
+          "9000-9999",
+          "10000-10999"
+        ]
+      }
+    ],
+    "primary_key": [
+      "job",
+      "pcb_type"
+    ],
+    "constraints": [
+      "qty >= 0",
+      "pcb_type IN ('Bare', 'Partial', 'Completed', 'Ready to Ship')"
+    ]
+  },
+  "business_logic": {
+    "operations": [
+      {
+        "name": "stockPCB",
+        "description": "Add inventory (create new or update existing)",
+        "validation": "All fields required",
+        "sql": "INSERT or UPDATE based on job + pcb_type existence"
+      },
+      {
+        "name": "pickPCB",
+        "description": "Remove inventory with validation",
+        "validation": "Check sufficient quantity, job exists",
+        "sql": "UPDATE qty = qty - pick_qty WHERE job + pcb_type"
+      },
+      {
+        "name": "findOldQty",
+        "description": "Query current inventory level",
+        "sql": "SELECT qty FROM tblPCB_Inventory WHERE job + pcb_type"
+      }
+    ],
+    "safety_checks": [
+      "Prevent negative inventory",
+      "Check job exists before picking",
+      "Validate all required fields",
+      "Confirmation dialogs for all operations"
+    ]
+  },
+  "migration_notes": [
+    "Simple single-table structure",
+    "Compound primary key (job + pcb_type)",
+    "Enum-like values for pcb_type and location",
+    "Business logic enforced in application layer",
+    "No foreign key relationships",
+    "No complex queries or stored procedures"
+  ],
+  "postgresql_mapping": {
+    "table_name": "tblPCB_Inventory",
+    "enums": [
+      "pcb_type_enum: ('Bare', 'Partial', 'Completed', 'Ready to Ship')",
+      "location_range_enum: ('1000-1999', '2000-2999', ..., '10000-10999')"
+    ],
+    "constraints": [
+      "UNIQUE(job, pcb_type)",
+      "CHECK(qty >= 0)"
+    ],
+    "indexes": [
+      "idx_job ON (job)",
+      "idx_pcb_type ON (pcb_type)",
+      "idx_location ON (location)",
+      "idx_job_pcb_type ON (job, pcb_type)"
+    ]
+  }
+}

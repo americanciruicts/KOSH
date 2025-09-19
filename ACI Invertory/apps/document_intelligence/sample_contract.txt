@@ -1,0 +1,60 @@
+SOFTWARE DEVELOPMENT AGREEMENT
+
+This Software Development Agreement ("Agreement") is entered into on March 1, 2024, between:
+
+CLIENT:
+Digital Innovations LLC
+555 Corporate Drive
+Austin, TX 78701
+Contact: Sarah Johnson, CTO
+
+DEVELOPER:
+CodeCraft Solutions Inc.
+123 Developer Lane
+Seattle, WA 98101
+Contact: Mike Chen, Project Manager
+
+1. PROJECT SCOPE
+Developer agrees to create a custom e-commerce platform with the following features:
+- User registration and authentication system
+- Product catalog with search functionality
+- Shopping cart and checkout process
+- Payment processing integration
+- Admin dashboard for inventory management
+
+2. TIMELINE
+Project Start Date: March 15, 2024
+Estimated Completion: September 15, 2024
+Milestone 1 (Authentication): April 30, 2024
+Milestone 2 (Product Catalog): June 30, 2024
+Milestone 3 (Payment System): August 31, 2024
+
+3. COMPENSATION
+Total Project Cost: $125,000
+Payment Schedule:
+- 25% ($31,250) upon contract signing
+- 25% ($31,250) upon Milestone 1 completion
+- 25% ($31,250) upon Milestone 2 completion
+- 25% ($31,250) upon final delivery
+
+4. INTELLECTUAL PROPERTY
+All source code and documentation created under this agreement shall be owned by Client upon final payment.
+
+5. CONFIDENTIALITY
+Both parties agree to maintain confidentiality of proprietary information shared during the project.
+
+6. TERMINATION
+Either party may terminate this agreement with 30 days written notice.
+
+7. GOVERNING LAW
+This agreement shall be governed by the laws of the State of Texas.
+
+SIGNATURES:
+
+Client: ___________________ Date: __________
+Sarah Johnson, CTO
+Digital Innovations LLC
+
+Developer: ___________________ Date: __________
+Mike Chen, Project Manager
+CodeCraft Solutions Inc.

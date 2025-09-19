@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="container-fluid">
+    <div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);">
+        <div class="col-md-8">
+            <h1 class="h2 mb-2 text-white">
+                <i class="bi bi-table me-2"></i> Inventory Management
+            </h1>
+            <p class="text-white-50 mb-0 fs-6">Search inventory • View stock levels • Manage components</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{{ url_for('stock') }}" class="btn btn-success btn-lg me-2">
+                <i class="bi bi-plus-circle"></i> Stock PCB
+            </a>
+            <a href="{{ url_for('pick') }}" class="btn btn-warning btn-lg">
+                <i class="bi bi-dash-circle"></i> Pick PCB
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Search Form -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">
+            <i class="bi bi-funnel"></i> Search Filters
+        </h5>
+    </div>
+    <div class="card-body">
+        <form method="GET" class="row g-3">
+            <div class="col-md-4">
+                <label for="job" class="form-label">Job Number</label>
+                <input type="text" class="form-control" id="job" name="job" 
+                       value="{{ search_job }}" placeholder="Enter job number (e.g., 77890)">
+            </div>
+            <div class="col-md-4">
+                <label for="pcb_type" class="form-label">PCB Type</label>
+                <select class="form-select" id="pcb_type" name="pcb_type">
+                    <option value="">All Types</option>
+                    {% for value, label in pcb_types %}
+                        <option value="{{ value }}" {% if search_pcb_type == value %}selected{% endif %}>
+                            {{ label }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary me-2">
+                    <i class="bi bi-search"></i> Search
+                </button>
+                <a href="{{ url_for('inventory') }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-circle"></i> Clear
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Inventory Results -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">
+            <i class="bi bi-list-ul"></i> 
+            {% if search_job or search_pcb_type %}
+                Search Results
+            {% else %}
+                All Inventory Items
+            {% endif %}
+        </h5>
+        <span class="badge bg-primary">{{ inventory|length }} items</span>
+    </div>
+    <div class="card-body">
+        {% if inventory %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Job Number</th>
+                            <th>PCB Type</th>
+                            <th>Quantity</th>
+                            <th>Location</th>
+                            <th>Last Updated</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in inventory %}
+                        <tr>
+                            <td>
+                                <strong>{{ item.job }}</strong>
+                            </td>
+                            <td>
+                                <span class="badge bg-{% if item.pcb_type == 'Bare' %}secondary{% elif item.pcb_type == 'Partial' %}warning{% elif item.pcb_type == 'Completed' %}info{% else %}success{% endif %} pcb-type-badge">
+                                    {{ item.pcb_type }}
+                                </span>
+                            </td>
+                            <td>
+                                <strong class="{% if item.qty < 50 %}text-warning{% elif item.qty < 20 %}text-danger{% else %}text-success{% endif %}">
+                                    {{ '{:,}'.format(item.qty) }}
+                                </strong>
+                            </td>
+                            <td>
+                                <code>{{ item.location }}</code>
+                            </td>
+                            <td class="text-muted small">
+                                {{ item.updated_at | moment_fromnow }}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <a href="{{ url_for('stock') }}?job={{ item.job }}&pcb_type={{ item.pcb_type }}" 
+                                       class="btn btn-outline-success" title="Stock more">
+                                        <i class="bi bi-plus"></i>
+                                    </a>
+                                    <a href="{{ url_for('pick') }}?job={{ item.job }}&pcb_type={{ item.pcb_type }}" 
+                                       class="btn btn-outline-primary" title="Pick items">
+                                        <i class="bi bi-dash"></i>
+                                    </a>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light">
+                        <tr>
+                            <td colspan="2"><strong>Total Items:</strong></td>
+                            <td><strong>{{ '{:,}'.format(inventory | sum(attribute='qty')) }}</strong></td>
+                            <td colspan="3"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center py-5">
+                <i class="bi bi-inbox display-1 text-muted"></i>
+                <h4 class="text-muted mt-3">No inventory items found</h4>
+                {% if search_job or search_pcb_type %}
+                    <p class="text-muted">
+                        Try adjusting your search criteria or 
+                        <a href="{{ url_for('inventory') }}">view all items</a>
+                    </p>
+                {% else %}
+                    <p class="text-muted">Get started by stocking your first PCB</p>
+                    <a href="{{ url_for('stock') }}" class="btn btn-success">
+                        <i class="bi bi-plus-circle"></i> Stock First PCB
+                    </a>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Summary Cards -->
+{% if inventory %}
+<div class="row mt-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-muted">Unique Jobs</h5>
+                <h3 class="text-primary">{{ inventory | map(attribute='job') | unique | list | length }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-muted">Total Quantity</h5>
+                <h3 class="text-success">{{ '{:,}'.format(inventory | sum(attribute='qty')) }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-muted">PCB Types</h5>
+                <h3 class="text-info">{{ inventory | map(attribute='pcb_type') | unique | list | length }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="card-title text-muted">Locations</h5>
+                <h3 class="text-warning">{{ inventory | map(attribute='location') | unique | list | length }}</h3>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Auto-populate forms when action buttons are clicked
+document.addEventListener('DOMContentLoaded', function() {
+    // Add click handlers for stock/pick buttons to pre-populate forms
+    const stockLinks = document.querySelectorAll('a[href*="/stock"]');
+    const pickLinks = document.querySelectorAll('a[href*="/pick"]');
+    
+    // Add tooltips
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>
+{% endblock %}

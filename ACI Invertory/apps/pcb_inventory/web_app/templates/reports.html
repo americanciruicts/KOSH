@@ -1,0 +1,312 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="container-fluid">
+    <div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #e83e8c 0%, #fd7e14 100%);">
+        <div class="col-md-8">
+            <h1 class="h2 mb-2 text-white">
+                <i class="bi bi-graph-up me-2"></i> Reports & Analytics
+            </h1>
+            <p class="text-white-50 mb-0 fs-6">Inventory summaries • Audit trails • Performance insights</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{{ url_for('inventory') }}" class="btn btn-light btn-lg me-2">
+                <i class="bi bi-list-ul"></i> View Inventory
+            </a>
+            <button class="btn btn-outline-light btn-lg" onclick="window.print()">
+                <i class="bi bi-printer"></i> Print Report
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Statistics -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-bar-chart"></i> Inventory Summary by Type & Location
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if summary %}
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>PCB Type</th>
+                                    <th>Location</th>
+                                    <th>Jobs Count</th>
+                                    <th>Total Quantity</th>
+                                    <th>Average Qty/Job</th>
+                                    <th>% of Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% set total_qty = summary | sum(attribute='total_quantity') %}
+                                {% for item in summary %}
+                                <tr>
+                                    <td>
+                                        <span class="badge bg-{% if item.pcb_type == 'Bare' %}secondary{% elif item.pcb_type == 'Partial' %}warning{% elif item.pcb_type == 'Completed' %}info{% else %}success{% endif %} me-2">
+                                            {{ item.pcb_type }}
+                                        </span>
+                                    </td>
+                                    <td><code>{{ item.location }}</code></td>
+                                    <td>{{ item.job_count }}</td>
+                                    <td><strong>{{ '{:,}'.format(item.total_quantity) }}</strong></td>
+                                    <td>{{ '{:.1f}'.format(item.average_quantity) }}</td>
+                                    <td>
+                                        <div class="d-flex align-items-center">
+                                            <div class="progress me-2" style="width: 100px; height: 20px;">
+                                                {% set percentage = (item.total_quantity / total_qty * 100) if total_qty > 0 else 0 %}
+                                                <div class="progress-bar" role="progressbar" 
+                                                     style="width: {{ percentage }}%" 
+                                                     aria-valuenow="{{ percentage }}" 
+                                                     aria-valuemin="0" aria-valuemax="100">
+                                                </div>
+                                            </div>
+                                            <span class="small">{{ '{:.1f}%'.format(percentage) }}</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot class="table-light">
+                                <tr>
+                                    <td colspan="2"><strong>Total:</strong></td>
+                                    <td><strong>{{ summary | sum(attribute='job_count') }}</strong></td>
+                                    <td><strong>{{ '{:,}'.format(total_qty) }}</strong></td>
+                                    <td><strong>{{ '{:.1f}'.format((summary | sum(attribute='total_quantity')) / (summary | sum(attribute='job_count')) if (summary | sum(attribute='job_count')) > 0 else 0) }}</strong></td>
+                                    <td><strong>100.0%</strong></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-graph-down display-4 text-muted"></i>
+                        <p class="text-muted mt-2">No summary data available</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Stats Cards -->
+{% if summary %}
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center bg-primary text-white">
+            <div class="card-body">
+                <i class="bi bi-briefcase display-4"></i>
+                <h4 class="mt-2">{{ summary | map(attribute='job_count') | sum }}</h4>
+                <p class="card-text">Total Jobs</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-success text-white">
+            <div class="card-body">
+                <i class="bi bi-box-seam display-4"></i>
+                <h4 class="mt-2">{{ '{:,}'.format(summary | map(attribute='total_quantity') | sum) }}</h4>
+                <p class="card-text">Total Quantity</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-info text-white">
+            <div class="card-body">
+                <i class="bi bi-cpu display-4"></i>
+                <h4 class="mt-2">{{ summary | map(attribute='pcb_type') | unique | list | length }}</h4>
+                <p class="card-text">PCB Types</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-warning text-white">
+            <div class="card-body">
+                <i class="bi bi-geo-alt display-4"></i>
+                <h4 class="mt-2">{{ summary | map(attribute='location') | unique | list | length }}</h4>
+                <p class="card-text">Locations</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Audit Trail -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-clock-history"></i> Recent Activity Log
+                </h5>
+                <span class="badge bg-secondary">Last 100 entries</span>
+            </div>
+            <div class="card-body">
+                {% if audit_log %}
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>Operation</th>
+                                    <th>Job</th>
+                                    <th>PCB Type</th>
+                                    <th>Quantity Change</th>
+                                    <th>New Qty</th>
+                                    <th>Location</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for entry in audit_log %}
+                                <tr>
+                                    <td class="text-muted small">
+                                        {{ entry.timestamp.strftime('%m/%d %H:%M') if entry.timestamp else 'N/A' }}
+                                    </td>
+                                    <td>
+                                        <span class="badge {% if entry.operation == 'STOCK' %}bg-success{% else %}bg-danger{% endif %}">
+                                            {{ entry.operation }}
+                                        </span>
+                                    </td>
+                                    <td><strong>{{ entry.job }}</strong></td>
+                                    <td>
+                                        <span class="badge bg-{% if entry.pcb_type == 'Bare' %}secondary{% elif entry.pcb_type == 'Partial' %}warning{% elif entry.pcb_type == 'Completed' %}info{% else %}success{% endif %} badge-sm">
+                                            {{ entry.pcb_type }}
+                                        </span>
+                                    </td>
+                                    <td class="{% if entry.quantity_change > 0 %}text-success{% else %}text-danger{% endif %}">
+                                        {{ '+' if entry.quantity_change > 0 else '' }}{{ entry.quantity_change }}
+                                    </td>
+                                    <td>{{ entry.new_quantity }}</td>
+                                    <td><code class="small">{{ entry.location or 'N/A' }}</code></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-clock display-4 text-muted"></i>
+                        <p class="text-muted mt-2">No audit log entries found</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Export Options -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-download"></i> Export Options
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="d-grid">
+                            <a href="{{ url_for('api_inventory') }}" class="btn btn-outline-primary" target="_blank">
+                                <i class="bi bi-file-code"></i> Export as JSON
+                            </a>
+                        </div>
+                        <p class="small text-muted mt-1">Raw inventory data in JSON format</p>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-grid">
+                            <button class="btn btn-outline-success" onclick="exportToCSV()">
+                                <i class="bi bi-file-spreadsheet"></i> Export as CSV
+                            </button>
+                        </div>
+                        <p class="small text-muted mt-1">Spreadsheet-compatible format</p>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-grid">
+                            <button class="btn btn-outline-info" onclick="window.print()">
+                                <i class="bi bi-printer"></i> Print Report
+                            </button>
+                        </div>
+                        <p class="small text-muted mt-1">Print-friendly version</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Export to CSV functionality
+function exportToCSV() {
+    fetch('/api/inventory')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const csv = convertToCSV(data.data);
+                downloadCSV(csv, 'inventory_export.csv');
+            } else {
+                alert('Failed to export data');
+            }
+        })
+        .catch(error => {
+            console.error('Export error:', error);
+            alert('Failed to export data');
+        });
+}
+
+function convertToCSV(data) {
+    const header = ['Job', 'PCB Type', 'Quantity', 'Location', 'Created At', 'Updated At'];
+    const rows = data.map(item => [
+        item.job,
+        item.pcb_type,
+        item.qty,
+        item.location,
+        item.created_at,
+        item.updated_at
+    ]);
+    
+    const csvContent = [header, ...rows]
+        .map(row => row.map(field => `"${field}"`).join(','))
+        .join('\n');
+    
+    return csvContent;
+}
+
+function downloadCSV(csv, filename) {
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.setAttribute('hidden', '');
+    a.setAttribute('href', url);
+    a.setAttribute('download', filename);
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+// Print styles
+const printStyles = `
+@media print {
+    .btn, .card-header .badge, nav, footer { display: none !important; }
+    .card { border: none !important; box-shadow: none !important; }
+    .table { font-size: 12px; }
+    h1, h2, h3, h4, h5 { color: black !important; }
+}
+`;
+
+// Add print styles
+const style = document.createElement('style');
+style.textContent = printStyles;
+document.head.appendChild(style);
+</script>
+{% endblock %}

@@ -1,0 +1,29 @@
+{
+  "summary": "```json\n{\n    \"summary\": \"The document is a medical test result for an individual named Khash Sarrafi, born on September 11, 1970. The test, specifically measuring Thyroid Stimulating Hormone (TSH) levels, was collected on July 14, 2025, at 9:59 AM EDT and completed on July 15, 2025, at 1:35 AM EDT....",
+  "document_type": "unknown",
+  "confidence": 0.5,
+  "extracted_fields": {
+    "detected_pii": {
+      "phone": [
+        "866-389-2727"
+      ],
+      "address": [
+        "2601 RIVA RD",
+        "21401\nFor questions about your test"
+      ]
+    }
+  },
+  "raw_text": "Name SARRAFI, KHASH\nDate of birth September 11, 1970\nTSH\nCollected on July 14, 2025 at 9:59 AM EDT\nComponent Your value Normal range\nTHYROID STIMULATING 0.544 uIU/mL 0.450 to 4.500\nHORMONE\nProvider Christine Dimino, NP\nCompleted on July 15, 2025 at 1:35 AM EDT\nCollection location 2601 RIVA RD, ANNAPOLIS, MD 21401\nFor questions about your test results, call MinuteClinic\u00ae at 1-866-389-2727 (TTY: 711).\n",
+  "metadata": {
+    "file_name": "27afdc42-bbce-420b-a035-ec35173e485c_Lab Result (3).pdf",
+    "file_size": 40155,
+    "mime_type": "application/pdf",
+    "file_hash": "1ef000cb554634bdeecd2dded006bd48b55158ca67c02d6fc69858895546162d",
+    "upload_timestamp": "2025-07-15 11:13:40.498265",
+    "pages": null,
+    "language": null
+  },
+  "processing_time": 3.668912649154663,
+  "model_used": "gpt-4o",
+  "cost_estimate": 0.0005
+}

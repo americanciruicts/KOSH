@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}User Authentication - Stock and Pick PCB Inventory{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h4 class="mb-0">
+                        <i class="bi bi-person-check"></i>
+                        ACI Dashboard Authentication
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Demo Mode:</strong> This simulates authentication from the ACI Dashboard. 
+                        Select a user to see how ITAR access control works.
+                    </div>
+
+                    <form method="POST">
+                        {{ form.hidden_tag() }}
+                        
+                        <div class="mb-3">
+                            {{ form.username.label(class="form-label") }}
+                            {{ form.username(class="form-select") }}
+                            <div class="form-text">
+                                Select a user to simulate login from ACI Dashboard
+                            </div>
+                        </div>
+                        
+                        <div class="d-grid">
+                            {{ form.submit(class="btn btn-primary") }}
+                        </div>
+                    </form>
+
+                    <hr class="my-4">
+
+                    <div class="row">
+                        <div class="col-12">
+                            <h6>Available Users:</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>Username</th>
+                                            <th>Role</th>
+                                            <th>ITAR Access</th>
+                                            <th>Description</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for user in users %}
+                                        <tr>
+                                            <td><code>{{ user.username }}</code></td>
+                                            <td>
+                                                <span class="badge bg-{% if user.role == 'ADMIN' %}danger{% elif user.role == 'ITAR_USER' %}warning{% else %}secondary{% endif %}">
+                                                    {{ user.role }}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                {% if user.itar_authorized %}
+                                                    <span class="badge bg-success">
+                                                        <i class="bi bi-check-circle"></i> Authorized
+                                                    </span>
+                                                {% else %}
+                                                    <span class="badge bg-danger">
+                                                        <i class="bi bi-x-circle"></i> Not Authorized
+                                                    </span>
+                                                {% endif %}
+                                            </td>
+                                            <td>
+                                                {% if user.role == 'ADMIN' %}
+                                                    Full access to all items
+                                                {% elif user.role == 'ITAR_USER' and user.itar_authorized %}
+                                                    Can see ITAR controlled items
+                                                {% elif user.role == 'ITAR_USER' %}
+                                                    ITAR role but not authorized
+                                                {% elif user.role == 'READONLY' %}
+                                                    Read-only access
+                                                {% else %}
+                                                    Standard user, no ITAR access
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
+                        <div class="alert alert-warning">
+                            <i class="bi bi-shield-exclamation"></i>
+                            <strong>ITAR Security Notice:</strong>
+                            <ul class="mb-0">
+                                <li>ITAR items are only visible to authorized users</li>
+                                <li>All access is logged for audit purposes</li>
+                                <li>Export control restrictions apply</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

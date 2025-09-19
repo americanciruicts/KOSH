@@ -1,0 +1,18 @@
+EMPLOYEE ROSTER - TECHNICAL DEPARTMENT
+
+No. | Name                    | Service No | Job Title      | Signature
+----|-------------------------|------------|----------------|----------
+01  | W.D. Ranjan Puyguolla  | 008249     | Tech. Mgr/OR&M | [signed]
+02  | H.C. Jayaweera         | 008301     | T.M./OR&M      | [signed]
+03  | H.P.D. Lakmadasa       | 008293     | T.M./SYSOP     | [signed]
+04  | C.B.T. De Silva        | 011430     | SAE            | [signed]
+05  | M.M.P. Rivera          | 004473     | Eng/OR&M       | [signed]
+06  | Samatha de Silva       | -          | Eng/OR&M CMT   | [signed]
+07  | U.L.S.I. Ranasinghe    | 012332     | Eng/SOP        | [signed]
+08  | M.A. Waralakshmi       | 013418     | A-15           | [signed]
+09  | M.K.T. De Silva        | 006874     | Eng/OR&M       | [signed]
+
+Department: Technical Operations
+Date: [Not specified]
+Supervisor: [Not specified]
+Total Entries: 9

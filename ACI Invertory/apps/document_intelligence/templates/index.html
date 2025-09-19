@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Intelligence - revestDataPipe</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <div class="row">
+            <div class="col-md-12">
+                <h1 class="text-center mb-4">Document Intelligence API</h1>
+                <p class="text-center text-muted">Part of the revestDataPipe project</p>
+                
+                <div class="row mt-5">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Document Analysis</h5>
+                            </div>
+                            <div class="card-body">
+                                <form id="analyzeForm" enctype="multipart/form-data">
+                                    <div class="mb-3">
+                                        <label for="analyzeFile" class="form-label">Select Document</label>
+                                        <input type="file" class="form-control" id="analyzeFile" name="file" accept=".pdf,.doc,.docx,.txt">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary">Analyze Document</button>
+                                </form>
+                                <div id="analyzeResult" class="mt-3"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>Data Extraction</h5>
+                            </div>
+                            <div class="card-body">
+                                <form id="extractForm" enctype="multipart/form-data">
+                                    <div class="mb-3">
+                                        <label for="extractFile" class="form-label">Select Document</label>
+                                        <input type="file" class="form-control" id="extractFile" name="file" accept=".pdf,.doc,.docx,.txt">
+                                    </div>
+                                    <button type="submit" class="btn btn-success">Extract Data</button>
+                                </form>
+                                <div id="extractResult" class="mt-3"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="row mt-4">
+                    <div class="col-md-12">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5>API Endpoints</h5>
+                            </div>
+                            <div class="card-body">
+                                <ul class="list-group list-group-flush">
+                                    <li class="list-group-item">
+                                        <strong>POST /api/analyze</strong> - Analyze uploaded document
+                                    </li>
+                                    <li class="list-group-item">
+                                        <strong>POST /api/extract</strong> - Extract data from document
+                                    </li>
+                                    <li class="list-group-item">
+                                        <strong>GET /health</strong> - Health check endpoint
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('analyzeForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            const file = document.getElementById('analyzeFile').files[0];
+            formData.append('file', file);
+            
+            fetch('/api/analyze', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('analyzeResult').innerHTML = 
+                    `<div class="alert alert-success">Analysis completed for ${data.filename}</div>`;
+            })
+            .catch(error => {
+                document.getElementById('analyzeResult').innerHTML = 
+                    `<div class="alert alert-danger">Error: ${error.message}</div>`;
+            });
+        });
+        
+        document.getElementById('extractForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            const file = document.getElementById('extractFile').files[0];
+            formData.append('file', file);
+            
+            fetch('/api/extract', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('extractResult').innerHTML = 
+                    `<div class="alert alert-success">Data extracted from ${data.filename}</div>`;
+            })
+            .catch(error => {
+                document.getElementById('extractResult').innerHTML = 
+                    `<div class="alert alert-danger">Error: ${error.message}</div>`;
+            });
+        });
+    </script>
+</body>
+</html>

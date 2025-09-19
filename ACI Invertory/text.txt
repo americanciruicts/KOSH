@@ -1,0 +1,13 @@
+Created stockandpick-app.tar (244MB) containing both the web application 
+
+  (stockandpick-web_app:latest) and PostgreSQL (postgres:15-alpine) images. 
+
+ 
+
+  To use on another machine: 
+
+  docker load -i stockandpick-app.tar 
+
+http://dashboard.aci.local:5002/
+
+

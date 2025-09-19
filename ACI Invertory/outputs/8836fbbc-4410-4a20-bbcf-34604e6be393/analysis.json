@@ -1,0 +1,27 @@
+{
+  "summary": "```json\n{\n    \"summary\": \"The document appears to be a fragmented and incomplete text with references to 'SPARES/ LABOUR' and other unclear terms. It lacks coherent structure and context, making it difficult to ascertain its purpose or content. The text includes various symbols and partial words, su...",
+  "document_type": "unknown",
+  "confidence": 0.5,
+  "extracted_fields": {
+    "document_type": "Form",
+    "entries": [],
+    "totals": {
+      "count": 0
+    },
+    "metadata": {},
+    "detected_pii": {}
+  },
+  "raw_text": "i \u2014\u2014\u2014\nif \u2018SPARES/ LABOUR 7\nN TSR\n|SenQrUs nrxes ie |e ox\n[nate ae pone (0A5 8 oe\nce \u2014 > ss eeerinin\nFa SAR. vihiow no MANGE, 206 Ne\n|\nBi at Sbsilel Ti coal Zi a Gag\nB gab nae fate [ited\nth \u2014\n= __ a\nreat a\nTs} \u2014_ \u2014\nI _ a\ngy __ an\ng \u2014\u2014_\n\u2014 = _ |\na = __\na Raa TR TS\n\u2014 \u2014- yy ee\n",
+  "metadata": {
+    "file_name": "8836fbbc-4410-4a20-bbcf-34604e6be393_nsGIo.jpg",
+    "file_size": 63677,
+    "mime_type": "image/jpeg",
+    "file_hash": "bcdd117f8b3769d3c5292f2a7987fabacfb2e5dc11ce3f9cafddbcb096a8fc75",
+    "upload_timestamp": "2025-07-17 16:23:36.838008",
+    "pages": null,
+    "language": null
+  },
+  "processing_time": 4.7154247760772705,
+  "model_used": "gpt-4o",
+  "cost_estimate": 0.00034
+}

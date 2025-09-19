@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h2 mb-0">
+            <i class="bi bi-bar-chart-fill text-primary"></i> Analytics & Statistics
+        </h1>
+        <p class="text-muted">Database migration statistics and integrity verification</p>
+    </div>
+    <div>
+        <a href="{{ url_for('index') }}" class="btn btn-outline-primary">
+            <i class="bi bi-house"></i> Dashboard
+        </a>
+        <a href="{{ url_for('reports') }}" class="btn btn-primary">
+            <i class="bi bi-file-earmark-text"></i> Reports
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-primary">{{ source_stats.unique_jobs }}</h3>
+                <p class="text-muted mb-0">Total Jobs</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-success">{{ '{:,}'.format(postgres_stats.total_quantity) }}</h3>
+                <p class="text-muted mb-0">Total PCBs</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-info">{{ postgres_stats.total_records }}</h3>
+                <p class="text-muted mb-0">Inventory Items</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h3 class="text-warning">{{ postgres_stats.pcb_types }}</h3>
+                <p class="text-muted mb-0">PCB Types</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Migration Status -->
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-database"></i> Source Database (Access)</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless">
+                    <tr>
+                        <td><strong>Total Records:</strong></td>
+                        <td>{{ source_stats.total_records }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Unique Jobs:</strong></td>
+                        <td>{{ source_stats.unique_jobs }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Total PCBs:</strong></td>
+                        <td>{{ '{:,}'.format(source_stats.total_quantity) }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>PCB Types:</strong></td>
+                        <td>{{ source_stats.pcb_types }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>File Size:</strong></td>
+                        <td>57.6 MB</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Migration Date:</strong></td>
+                        <td>{{ source_stats.migration_date }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-server"></i> Current Database (PostgreSQL)</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm table-borderless">
+                    <tr>
+                        <td><strong>Total Records:</strong></td>
+                        <td>{{ postgres_stats.total_records }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Unique Jobs:</strong></td>
+                        <td>{{ postgres_stats.unique_jobs }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Total PCBs:</strong></td>
+                        <td>{{ '{:,}'.format(postgres_stats.total_quantity) }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>PCB Types:</strong></td>
+                        <td>{{ postgres_stats.pcb_types }}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Database Engine:</strong></td>
+                        <td>PostgreSQL 15</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Last Updated:</strong></td>
+                        <td>{{ postgres_stats.last_updated }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Data Integrity -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-shield-check"></i> Data Integrity Verification</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            {% if integrity_check.records_match %}
+                                <i class="bi bi-check-circle-fill fs-2 text-success"></i>
+                                <h6 class="mt-2">Record Count</h6>
+                                <span class="badge bg-success">Match</span>
+                            {% else %}
+                                <i class="bi bi-exclamation-triangle-fill fs-2 text-warning"></i>
+                                <h6 class="mt-2">Record Count</h6>
+                                <span class="badge bg-warning">{{ integrity_check.record_difference }} difference</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            {% if integrity_check.jobs_match %}
+                                <i class="bi bi-check-circle-fill fs-2 text-success"></i>
+                                <h6 class="mt-2">Job Numbers</h6>
+                                <span class="badge bg-success">Match</span>
+                            {% else %}
+                                <i class="bi bi-exclamation-triangle-fill fs-2 text-warning"></i>
+                                <h6 class="mt-2">Job Numbers</h6>
+                                <span class="badge bg-warning">{{ integrity_check.job_difference }} difference</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            {% if integrity_check.quantity_match %}
+                                <i class="bi bi-check-circle-fill fs-2 text-success"></i>
+                                <h6 class="mt-2">Total Quantity</h6>
+                                <span class="badge bg-success">Match</span>
+                            {% else %}
+                                <i class="bi bi-exclamation-triangle-fill fs-2 text-warning"></i>
+                                <h6 class="mt-2">Total Quantity</h6>
+                                <span class="badge bg-warning">{{ integrity_check.quantity_difference }} difference</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PCB Types & Locations -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-cpu"></i> PCB Types</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Count</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pcb_type in pcb_breakdown %}
+                        <tr>
+                            <td>
+                                <span class="badge bg-{% if pcb_type.name == 'Bare' %}secondary{% elif pcb_type.name == 'Partial' %}warning{% elif pcb_type.name == 'Completed' %}info{% else %}success{% endif %}">
+                                    {{ pcb_type.name }}
+                                </span>
+                            </td>
+                            <td>{{ '{:,}'.format(pcb_type.postgres_count) }}</td>
+                            <td>
+                                {% if pcb_type.source_count == pcb_type.postgres_count %}
+                                    <i class="bi bi-check-circle text-success"></i>
+                                {% else %}
+                                    <i class="bi bi-exclamation-triangle text-warning"></i>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-geo-alt"></i> Storage Locations</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Location</th>
+                            <th>Items</th>
+                            <th>Quantity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for location in location_breakdown %}
+                        <tr>
+                            <td><code>{{ location.range }}</code></td>
+                            <td>{{ location.item_count }}</td>
+                            <td>{{ '{:,}'.format(location.total_qty) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Auto-refresh every 5 minutes
+setTimeout(function() {
+    location.reload();
+}, 300000);
+</script>
+{% endblock %}

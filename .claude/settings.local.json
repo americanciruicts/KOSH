@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(git filter-branch:*)",
+      "Bash(git add:*)",
+      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --index-filter 'git rm --cached --ignore-unmatch \"\"ACI Invertory/INVENTORY TABLE.mdb\"\" \"\"ACI Invertory/apps/pcb_inventory/INVENTORY TABLE.mdb\"\" \"\"ACI Invertory/stockandpick-app.tar\"\"' --prune-empty --tag-name-filter cat -- --all)",
+      "Bash(git checkout:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

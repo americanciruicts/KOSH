@@ -1,0 +1,77 @@
+{
+  "summary": "```json\n{\n    \"summary\": \"The document is a sales invoice from Construction Supply, Inc., detailing a transaction dated March 4, 2008. It includes various construction-related items such as paint, sanding sealer, and brushes, along with their respective quantities, unit prices, and total amounts. Th...",
+  "document_type": "unknown",
+  "confidence": 0.5,
+  "extracted_fields": {
+    "document_type": "Invoice",
+    "entries": [
+      {
+        "item": "Reda lash Paint Cohite",
+        "quantity": "9",
+        "unit_price": "Sons"
+      },
+      {
+        "item": "Sanding Sealer",
+        "quantity": "87",
+        "unit_price": "604.00"
+      },
+      {
+        "item": "Chea Jalegs Naeg.",
+        "quantity": "630",
+        "unit_price": "630.00"
+      },
+      {
+        "item": "Macq har",
+        "quantity": "UT",
+        "unit_price": "485.90"
+      },
+      {
+        "item": "deal -(ir Lacy",
+        "quantity": "2",
+        "unit_price": "2.00060"
+      },
+      {
+        "item": "Pat brusl.",
+        "quantity": "2",
+        "unit_price": "4.00.00"
+      },
+      {
+        "item": "Cotton waste",
+        "quantity": "75",
+        "unit_price": "75.00"
+      },
+      {
+        "item": "Peni #1",
+        "quantity": "woisan trea",
+        "unit_price": "430.00"
+      },
+      {
+        "item": "miggfinsiht",
+        "quantity": "15",
+        "unit_price": "75.00"
+      }
+    ],
+    "totals": {
+      "count": 9
+    },
+    "metadata": {
+      "vendor": "CONSTRUCTION SUPPLY, INC.",
+      "invoice_number": "11473",
+      "date": "Mar. 4 2008"
+    },
+    "detected_pii": {}
+  },
+  "raw_text": "ee\n\" CONSTRUCTION SUPPLY, INC.\nfe LUMBER and \u00e9 2\nINI WNL\nUlire Ne 11473\nSALES INVOICE\n<a Pate 2 Date Nar. 4 2008\nSoldtoM__ 2 a epee | CHechedibye fs\nBusiness Style__* ) \u2014\u2014\u2014\u2014\u2014 |PON onsale\nleurs Maleaday Marina \u2014 | 5, Les\n\u2014_ Les ers =\nOSCAPWD ID No. _ SCPWDSig\nss a z Unit\nbaby, rat\" S Stn\n[AS | 9s. | Reda lash Paint Cohite) Sons\nba [Uw | B87 Sanding Sealer 604.00\nLT | o [ Chea Jalegs Naeg. | 630- | 630.00\neT |) [Macq har UT 485 | 48590\n4 | Ade [0 deal -(ir Lacy, | 2 | 2 00060\na ae 22 25000\nfemee| Pee, | Pat brusl. 2 | so | 4.00.00\n[71 | Kito [Cotton waste 75 | 7500\n[2M 3m S Peni #1] woisan trea D5]\n430.00\nZSRs HS.\u00bb miggfinsiht 1S | 7500\nCc CO\nED = a eS\na CS 22 ST\nE5505\nReuensnremnsneteessnserings Received in good ordevand condtions. subje\nEepatetefiatet then errr \u2018 cle\nSoaicerasmieiaerentavarmmemcretimiece:| 9 me\u2018ermsand epmidons therein,\n",
+  "metadata": {
+    "file_name": "f9ea45fe-cdca-46bd-ba2f-417b3ac2ecc7_bba477baf6a1f2604ec14229c53d4f4b.jpg",
+    "file_size": 111906,
+    "mime_type": "image/jpeg",
+    "file_hash": "d3b3c4f1cd2c873c30a78d68e147c2d714d19bb7ab58ff7cbd506682dcede252",
+    "upload_timestamp": "2025-07-17 13:40:04.015014",
+    "pages": null,
+    "language": null
+  },
+  "processing_time": 12.506620407104492,
+  "model_used": "gpt-4o",
+  "cost_estimate": 0.00106
+}

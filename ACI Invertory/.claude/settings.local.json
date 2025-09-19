@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker exec:*)",
+      "Bash(curl:*)",
+      "Bash(docker cp:*)",
+      "Bash(docker load:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker network create:*)",
+      "Bash(docker run:*)",
+      "Bash(docker rm:*)",
+      "Bash(/dev/null)",
+      "Bash(docker stop:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(docker-compose:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(ip addr:*)",
+      "Bash(systemctl:*)",
+      "Bash(docker version:*)",
+      "Read(//home/tony/**)",
+      "Bash(docker ps:*)",
+      "Bash(grep:*)",
+      "Bash(docker restart:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

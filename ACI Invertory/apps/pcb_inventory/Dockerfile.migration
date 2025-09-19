@@ -1,0 +1,39 @@
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy migration scripts and database
+COPY . /app/migration/
+
+# Create directories
+RUN mkdir -p /app/logs /app/analysis_output
+
+# Set working directory to migration
+WORKDIR /app/migration
+
+# Create migration script
+COPY dockerized_migration.py /app/migration/
+
+# Make script executable
+RUN chmod +x /app/migration/dockerized_migration.py
+
+# Default command - run migration
+CMD ["python", "dockerized_migration.py"]

@@ -1,0 +1,184 @@
+{
+  "migration_start": "2025-07-18T02:20:45.458895",
+  "phases": {
+    "phase_1": {
+      "name": "Database Setup",
+      "success": true,
+      "time": 0.09911012649536133,
+      "results": {
+        "create_schema": {
+          "success": true,
+          "message": "Create schema and enums completed successfully"
+        },
+        "create_table": {
+          "success": true,
+          "message": "Create main inventory table completed successfully"
+        },
+        "create_audit": {
+          "success": true,
+          "message": "Create audit table completed successfully"
+        }
+      }
+    },
+    "phase_2": {
+      "name": "Business Logic",
+      "success": true,
+      "time": 0.18695449829101562,
+      "results": {
+        "update_trigger": {
+          "success": true,
+          "message": "Create update trigger completed successfully"
+        },
+        "audit_trigger": {
+          "success": true,
+          "message": "Create audit trigger completed successfully"
+        },
+        "stock_function": {
+          "success": true,
+          "message": "Create stock_pcb function completed successfully"
+        },
+        "pick_function": {
+          "success": true,
+          "message": "Create pick_pcb function completed successfully"
+        },
+        "create_views": {
+          "success": true,
+          "message": "Create views completed successfully"
+        }
+      }
+    },
+    "phase_3": {
+      "name": "Sample Data & Testing",
+      "success": true,
+      "time": 0.23161578178405762,
+      "results": {
+        "sample_data": {
+          "success": true,
+          "message": "Insert sample data completed successfully"
+        },
+        "test_stock": {
+          "success": true,
+          "results": [
+            {
+              "stock_pcb": {
+                "success": true,
+                "job": "TEST001",
+                "pcb_type": "Bare",
+                "old_qty": 0,
+                "new_qty": 50,
+                "stocked_qty": 50,
+                "location": "8000-8999"
+              }
+            }
+          ],
+          "row_count": 1
+        },
+        "test_pick": {
+          "success": true,
+          "results": [
+            {
+              "pick_pcb": {
+                "success": true,
+                "job": "TEST001",
+                "pcb_type": "Bare",
+                "old_qty": 50,
+                "new_qty": 25,
+                "picked_qty": 25
+              }
+            }
+          ],
+          "row_count": 1
+        },
+        "test_views": {
+          "success": true,
+          "results": [
+            {
+              "inventory_count": 6
+            }
+          ],
+          "row_count": 1
+        },
+        "test_audit": {
+          "success": true,
+          "results": [
+            {
+              "audit_count": 7
+            }
+          ],
+          "row_count": 1
+        }
+      }
+    },
+    "phase_4": {
+      "name": "Validation & Reporting",
+      "success": true,
+      "time": 0.23511385917663574,
+      "results": {
+        "schema_validation": {
+          "success": true,
+          "results": [
+            {
+              "table_name": "inventory_audit"
+            },
+            {
+              "table_name": "tblpcb_inventory"
+            },
+            {
+              "table_name": "current_inventory"
+            },
+            {
+              "table_name": "inventory_summary"
+            }
+          ],
+          "row_count": 4
+        },
+        "total_records": {
+          "success": true,
+          "results": [
+            {
+              "total_records": 6
+            }
+          ],
+          "row_count": 1
+        },
+        "audit_records": {
+          "success": true,
+          "results": [
+            {
+              "audit_records": 7
+            }
+          ],
+          "row_count": 1
+        },
+        "pcb_types": {
+          "success": true,
+          "results": [
+            {
+              "pcb_types": 4
+            }
+          ],
+          "row_count": 1
+        },
+        "locations": {
+          "success": true,
+          "results": [
+            {
+              "locations": 4
+            }
+          ],
+          "row_count": 1
+        },
+        "summary_stats": {
+          "total_items": 6,
+          "total_quantity": 410,
+          "unique_jobs": 5,
+          "pcb_types": 4,
+          "locations": 4
+        }
+      }
+    }
+  },
+  "migration_end": "2025-07-18T02:20:46.214014",
+  "success": true,
+  "total_time": 0.755119
+}

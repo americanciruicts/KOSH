@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # PCB Inventory System - Main Production Application
+  pcb_inventory:
+    build: ./apps/pcb_inventory
+    ports:
+      - "5002:5000"
+    environment:
+      - FLASK_ENV=production
+      - DATABASE_URL=postgresql://stockpick_user:stockpick_pass@postgres:5432/pcb_inventory
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./apps/pcb_inventory:/app
+    networks:
+      - revest-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: pcb_inventory
+      POSTGRES_USER: stockpick_user
+      POSTGRES_PASSWORD: stockpick_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./apps/pcb_inventory/init:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stockpick_user -d pcb_inventory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - revest-network
+
+  # pgAdmin Database Management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@stockandpick.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - revest-network
+
+  # Document Intelligence API
+  document_intelligence:
+    build: ./apps/document_intelligence
+    ports:
+      - "5001:5000"
+    environment:
+      - FLASK_ENV=development
+    volumes:
+      - ./apps/document_intelligence:/app
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+    restart: unless-stopped
+    networks:
+      - revest-network
+
+  # AI Development Toolkit
+  aicoder:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+    volumes:
+      - .:/app
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+    restart: unless-stopped
+    networks:
+      - revest-network
+
+volumes:
+  postgres_data:
+
+networks:
+  revest-network:
+    driver: bridge

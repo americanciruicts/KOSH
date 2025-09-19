@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Stock and Pick PCB Inventory{% endblock %}</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    
+    <style>
+        /* Modern Navigation Styles */
+        .modern-navbar {
+            background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%) !important;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+            padding: 1rem 0;
+            min-height: 70px;
+        }
+        
+        .navbar-brand {
+            font-weight: 600;
+            font-size: 1.4rem;
+            color: #ffffff !important;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+        }
+        
+        .navbar-brand:hover {
+            color: #e5e7eb !important;
+        }
+        
+        .navbar-brand i {
+            color: #fbbf24;
+            margin-right: 10px;
+            font-size: 1.3rem;
+        }
+        
+        .navbar-nav {
+            align-items: center;
+        }
+        
+        .modern-nav-link {
+            color: rgba(255, 255, 255, 0.85) !important;
+            font-weight: 500;
+            font-size: 0.95rem;
+            padding: 10px 16px !important;
+            border-radius: 6px;
+            margin: 0 3px;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+        }
+        
+        .modern-nav-link:hover {
+            color: #ffffff !important;
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-1px);
+        }
+        
+        .modern-nav-link.active {
+            color: #ffffff !important;
+            background: rgba(255, 255, 255, 0.15);
+            font-weight: 600;
+        }
+        
+        .modern-nav-link i {
+            margin-right: 8px;
+            font-size: 1rem;
+            width: 16px;
+            text-align: center;
+        }
+        
+        .modern-time-badge {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 25px;
+            padding: 8px 16px;
+            color: #ffffff;
+            font-weight: 500;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+        
+        .modern-time-badge i {
+            color: #fbbf24;
+            margin-right: 8px;
+        }
+        
+        /* Container improvements */
+        .navbar .container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .navbar-collapse {
+            flex-grow: 0;
+        }
+        
+        .navbar-nav.me-auto {
+            flex-direction: row;
+            margin-left: 2rem;
+        }
+        
+        /* Navigation toggle button */
+        .navbar-toggler {
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 6px 10px;
+            border-radius: 4px;
+        }
+        
+        .navbar-toggler:focus {
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.2);
+        }
+        
+        .navbar-toggler-icon {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255, 255, 255, 0.8%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+        }
+        
+        /* Responsive improvements */
+        @media (max-width: 991.98px) {
+            .modern-nav-link {
+                margin: 4px 0;
+                justify-content: flex-start;
+            }
+            
+            .navbar-nav.me-auto {
+                margin-left: 0;
+                width: 100%;
+            }
+            
+            .modern-time-badge {
+                margin-top: 15px;
+                align-self: flex-start;
+            }
+            
+            .navbar-collapse {
+                margin-top: 15px;
+            }
+        }
+        
+        /* Card styles */
+        .card-stats {
+            border-left: 4px solid #007bff;
+        }
+        .card-stats.success {
+            border-left-color: #28a745;
+        }
+        .card-stats.warning {
+            border-left-color: #ffc107;
+        }
+        .card-stats.danger {
+            border-left-color: #dc3545;
+        }
+        .table-hover tbody tr:hover {
+            background-color: rgba(0,123,255,.075);
+        }
+        .pcb-type-badge {
+            font-size: 0.875em;
+            padding: 0.375rem 0.75rem;
+        }
+        .audit-operation {
+            font-weight: bold;
+        }
+        .audit-operation.STOCK {
+            color: #28a745;
+        }
+        .audit-operation.PICK {
+            color: #dc3545;
+        }
+        footer {
+            margin-top: 50px;
+            padding: 20px 0;
+            border-top: 1px solid #e9ecef;
+            background-color: #f8f9fa;
+        }
+    </style>
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Modern Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark modern-navbar">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('index') }}">
+                <i class="bi bi-cpu-fill"></i> PCB Stock & Pick
+            </a>
+            
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">
+                            <i class="bi bi-speedometer2"></i> Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint == 'stock' %}active{% endif %}" href="{{ url_for('stock') }}">
+                            <i class="bi bi-plus-circle-fill"></i> Stock
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint == 'pick' %}active{% endif %}" href="{{ url_for('pick') }}">
+                            <i class="bi bi-dash-circle-fill"></i> Pick
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint == 'inventory' %}active{% endif %}" href="{{ url_for('inventory') }}">
+                            <i class="bi bi-grid-3x3-gap-fill"></i> Inventory
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint == 'reports' %}active{% endif %}" href="{{ url_for('reports') }}">
+                            <i class="bi bi-bar-chart-fill"></i> Reports
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint == 'stats' %}active{% endif %}" href="{{ url_for('stats') }}">
+                            <i class="bi bi-graph-up"></i> Stats
+                        </a>
+                    </li>
+                    {% if session.get('role') == 'ADMIN' %}
+                    <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint and request.endpoint.startswith('source') %}active{% endif %}" href="{{ url_for('source_access') }}">
+                            <i class="bi bi-database-fill"></i> Source
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+                
+                <ul class="navbar-nav">
+                    <!-- User authenticated via ACI Dashboard -->
+                    
+                    <li class="nav-item">
+                        <span class="modern-time-badge">
+                            <i class="bi bi-clock-fill"></i> <span id="current-time">{{ current_time }}</span>
+                        </span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container mt-4">
+        <!-- Modern Toast Notifications -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    {% for category, message in messages %}
+                    showToast('{{ message|e }}', '{{ category }}');
+                    {% endfor %}
+                });
+                </script>
+            {% endif %}
+        {% endwith %}
+
+        <!-- Page Header -->
+        {% block page_header %}{% endblock %}
+
+        <!-- Page Content -->
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Footer -->
+    <footer class="text-center text-muted">
+        <div class="container">
+            <p>&copy; 2024 Stock and Pick PCB Inventory System | Migrated from Access to PostgreSQL</p>
+            <p class="small">
+                <i class="bi bi-database"></i> PostgreSQL Database | 
+                <i class="bi bi-shield-check"></i> Audit Logging Enabled |
+                <i class="bi bi-speedometer2"></i> Real-time Updates
+            </p>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Moment.js for time formatting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    
+    <script>
+        // Update time every minute
+        function updateTime() {
+            const timeElement = document.getElementById('current-time');
+            if (timeElement) {
+                timeElement.textContent = moment().format('MMMM DD, YYYY h:mm A');
+            }
+        }
+        
+        // Update time immediately and then every minute
+        updateTime();
+        setInterval(updateTime, 60000);
+        
+        // Auto-dismiss alerts after 5 seconds
+        setTimeout(function() {
+            const alerts = document.querySelectorAll('.alert');
+            alerts.forEach(function(alert) {
+                const bsAlert = new bootstrap.Alert(alert);
+                bsAlert.close();
+            });
+        }, 5000);
+        
+        // Add loading states to forms
+        document.addEventListener('DOMContentLoaded', function() {
+            const forms = document.querySelectorAll('form');
+            forms.forEach(function(form) {
+                form.addEventListener('submit', function() {
+                    const submitBtn = form.querySelector('input[type="submit"], button[type="submit"]');
+                    if (submitBtn) {
+                        submitBtn.disabled = true;
+                        submitBtn.innerHTML = '<i class="bi bi-arrow-clockwise spin"></i> Processing...';
+                    }
+                });
+            });
+        });
+    </script>
+    
+    <style>
+        .spin {
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+    
+    <!-- Toast Notification Container -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 11000;">
+        <!-- Toast notifications will be dynamically added here -->
+    </div>
+    
+    <script>
+        // Modern Toast Notification System
+        let toastCounter = 0;
+        
+        function showToast(message, type = 'info', duration = 5000) {
+            toastCounter++;
+            const toastId = `toast-${toastCounter}`;
+            
+            // Map flash message types to Bootstrap toast types
+            const typeMap = {
+                'error': 'danger',
+                'success': 'success',
+                'warning': 'warning',
+                'info': 'info'
+            };
+            
+            const toastType = typeMap[type] || 'info';
+            
+            // Icon mapping
+            const iconMap = {
+                'danger': 'bi-exclamation-triangle-fill',
+                'success': 'bi-check-circle-fill',
+                'warning': 'bi-exclamation-triangle-fill',
+                'info': 'bi-info-circle-fill'
+            };
+            
+            const icon = iconMap[toastType] || 'bi-info-circle-fill';
+            
+            // Create toast HTML
+            const toastHtml = `
+                <div id="${toastId}" class="toast align-items-center text-bg-${toastType} border-0" role="alert" aria-live="assertive" aria-atomic="true">
+                    <div class="d-flex">
+                        <div class="toast-body">
+                            <i class="bi ${icon} me-2"></i>
+                            ${message}
+                        </div>
+                        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+                    </div>
+                </div>
+            `;
+            
+            // Add toast to container
+            const container = document.querySelector('.toast-container');
+            if (container) {
+                container.insertAdjacentHTML('beforeend', toastHtml);
+                
+                // Initialize and show the toast
+                const toastElement = document.getElementById(toastId);
+                const toast = new bootstrap.Toast(toastElement, {
+                    delay: duration
+                });
+                
+                // Auto-remove toast element after it's hidden
+                toastElement.addEventListener('hidden.bs.toast', function() {
+                    toastElement.remove();
+                });
+                
+                toast.show();
+            }
+        }
+        
+        // Function to show success notifications
+        function showSuccess(message, duration = 4000) {
+            showToast(message, 'success', duration);
+        }
+        
+        // Function to show error notifications
+        function showError(message, duration = 6000) {
+            showToast(message, 'error', duration);
+        }
+        
+        // Function to show warning notifications
+        function showWarning(message, duration = 5000) {
+            showToast(message, 'warning', duration);
+        }
+        
+        // Function to show info notifications
+        function showInfo(message, duration = 4000) {
+            showToast(message, 'info', duration);
+        }
+        
+        // Export functions globally for use in other templates
+        window.showToast = showToast;
+        window.showSuccess = showSuccess;
+        window.showError = showError;
+        window.showWarning = showWarning;
+        window.showInfo = showInfo;
+    </script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

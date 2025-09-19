@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Upload</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .upload-area { border: 2px dashed #ccc; padding: 20px; text-align: center; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; cursor: pointer; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <h1>Simple Upload Test</h1>
+    <div class="upload-area">
+        <input type="file" id="fileInput" class="hidden" accept=".pdf,.txt,.docx">
+        <label for="fileInput">
+            <button type="button">Choose File</button>
+        </label>
+        <p id="fileName">No file selected</p>
+    </div>
+    
+    <script>
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                document.getElementById('fileName').textContent = file.name;
+                
+                // Test upload
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('model', 'gpt-4o');
+                
+                fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Upload result:', data);
+                    alert('Upload successful! Request ID: ' + data.request_id);
+                })
+                .catch(error => {
+                    console.error('Upload error:', error);
+                    alert('Upload failed: ' + error.message);
+                });
+            }
+        });
+    </script>
+</body>
+</html>

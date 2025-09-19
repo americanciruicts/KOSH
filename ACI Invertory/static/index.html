@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Intelligence System</title>
+    <link rel="stylesheet" href="/static/styles.css?v=2">
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8" x-data="documentUploader()">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-gray-900 mb-2">📄 Document Intelligence</h1>
+            <p class="text-lg text-gray-600">Upload any document for AI-powered analysis and data extraction</p>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-lg p-6 mb-8">
+            <h2 class="text-2xl font-semibold mb-4">Upload Document</h2>
+            
+            <!-- File Upload -->
+            <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors"
+                 :class="{'border-blue-400 bg-blue-50': isDragging}"
+                 @dragover.prevent="isDragging = true"
+                 @dragleave.prevent="isDragging = false"
+                 @drop.prevent="handleDrop($event)">
+                
+                <div x-show="!selectedFile">
+                    <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <p class="text-xl text-gray-500 mb-2">Drop your document here</p>
+                    <p class="text-gray-400 mb-4">or</p>
+                    <label for="fileInput" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 cursor-pointer inline-block">
+                        Choose File
+                    </label>
+                    <input type="file" id="fileInput" class="hidden" @change="handleFileSelect($event)" 
+                           accept=".pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.html,.txt,.csv">
+                    <p class="text-sm text-gray-500 mt-2">Supports: PDF, Word, Excel, PowerPoint, Images, HTML, Text</p>
+                </div>
+                
+                <div x-show="selectedFile" class="text-left">
+                    <p class="font-medium text-gray-900" x-text="selectedFile?.name"></p>
+                    <p class="text-sm text-gray-500" x-text="formatFileSize(selectedFile?.size)"></p>
+                    <button type="button" class="text-red-500 text-sm mt-2" @click="clearFile()">Remove</button>
+                </div>
+            </div>
+
+            <!-- File Preview Section -->
+            <div x-show="selectedFile" class="mt-6 bg-gray-50 rounded-lg p-4">
+                <h3 class="text-lg font-medium text-gray-900 mb-3">📋 File Preview</h3>
+                
+                <!-- Image Preview -->
+                <div x-show="filePreview?.type === 'image'" class="text-center">
+                    <img :src="filePreview.data" class="max-w-full max-h-96 mx-auto rounded-lg shadow-md" alt="Preview">
+                    <p class="text-sm text-gray-500 mt-2">Image preview - ready for OCR processing</p>
+                </div>
+                
+                <!-- Text Preview -->
+                <div x-show="filePreview?.type === 'text'" class="bg-white rounded border p-4">
+                    <pre class="text-sm text-gray-800 whitespace-pre-wrap max-h-64 overflow-y-auto" x-text="filePreview.data"></pre>
+                    <p class="text-sm text-gray-500 mt-2">Text content preview (first 2000 characters)</p>
+                </div>
+                
+                <!-- PDF Preview -->
+                <div x-show="filePreview?.type === 'pdf'" class="bg-white rounded border p-4 text-center">
+                    <div class="text-4xl text-red-500 mb-2">📄</div>
+                    <p class="text-gray-700 font-medium" x-text="selectedFile?.name"></p>
+                    <p class="text-sm text-gray-500">PDF ready for text extraction and analysis</p>
+                </div>
+                
+                <!-- Office Document Preview -->
+                <div x-show="filePreview?.type === 'office'" class="bg-white rounded border p-4 text-center">
+                    <div class="text-4xl text-blue-500 mb-2" x-text="getOfficeIcon(selectedFile?.type)"></div>
+                    <p class="text-gray-700 font-medium" x-text="selectedFile?.name"></p>
+                    <p class="text-sm text-gray-500">Document ready for content extraction</p>
+                </div>
+                
+                <!-- Unsupported Preview -->
+                <div x-show="filePreview?.type === 'unsupported'" class="bg-white rounded border p-4 text-center">
+                    <div class="text-4xl text-gray-400 mb-2">📎</div>
+                    <p class="text-gray-700 font-medium" x-text="selectedFile?.name"></p>
+                    <p class="text-sm text-gray-500">File ready for processing</p>
+                </div>
+                
+                <!-- Loading Preview -->
+                <div x-show="selectedFile && !filePreview" class="bg-white rounded border p-4 text-center">
+                    <div class="text-4xl text-gray-400 mb-2">⏳</div>
+                    <p class="text-gray-700 font-medium">Loading preview...</p>
+                    <p class="text-sm text-gray-500" x-text="selectedFile?.name"></p>
+                </div>
+            </div>
+
+            <!-- Model Selection -->
+            <div class="mt-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">AI Model</label>
+                <select x-model="selectedModel" class="w-full border border-gray-300 rounded-lg px-3 py-2">
+                    <option value="gpt-4o">GPT-4o (Recommended)</option>
+                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Faster/Cheaper)</option>
+                    <option value="claude-3-sonnet">Claude 3 Sonnet</option>
+                    <option value="claude-3-haiku">Claude 3 Haiku (Fastest)</option>
+                </select>
+            </div>
+
+            <!-- Options -->
+            <div class="mt-4 space-y-2">
+                <label class="flex items-center">
+                    <input type="checkbox" x-model="extractPII" class="mr-2">
+                    <span class="text-sm text-gray-700">Extract PII (Personal Identifiable Information)</span>
+                </label>
+            </div>
+
+            <!-- Upload Button -->
+            <button type="button" 
+                    @click="uploadDocument()"
+                    :disabled="!selectedFile || isUploading"
+                    class="w-full mt-6 bg-green-500 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed">
+                <span x-show="!isUploading">🚀 Process Document</span>
+                <span x-show="isUploading">⏳ Processing...</span>
+            </button>
+        </div>
+
+        <!-- Results Section -->
+        <div x-show="requestId" class="max-w-4xl mx-auto">
+            <!-- Status -->
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h3 class="text-xl font-semibold mb-4">Processing Status</h3>
+                <div class="flex items-center space-x-4">
+                    <div class="flex-1">
+                        <div class="bg-gray-200 rounded-full h-2">
+                            <div class="bg-blue-500 h-2 rounded-full transition-all duration-500"
+                                 :style="`width: ${getProgressWidth()}%`"></div>
+                        </div>
+                    </div>
+                    <span class="text-sm font-medium text-gray-700" x-text="status"></span>
+                </div>
+                <p class="text-sm text-gray-500 mt-2">Request ID: <span x-text="requestId"></span></p>
+            </div>
+
+            <!-- Results -->
+            <div x-show="results" class="bg-white rounded-lg shadow-lg p-6">
+                <h3 class="text-xl font-semibold mb-4">📊 Analysis Results</h3>
+                
+                <!-- Summary -->
+                <div class="mb-6">
+                    <h4 class="font-medium text-gray-900 mb-2">Summary</h4>
+                    <p class="text-gray-700 bg-gray-50 p-4 rounded-lg" x-text="results?.summary"></p>
+                </div>
+
+                <!-- Metadata -->
+                <div class="grid md:grid-cols-2 gap-6 mb-6">
+                    <div>
+                        <h4 class="font-medium text-gray-900 mb-2">Document Info</h4>
+                        <div class="space-y-1 text-sm">
+                            <p><span class="font-medium">Type:</span> <span x-text="results?.document_type"></span></p>
+                            <p><span class="font-medium">Confidence:</span> <span x-text="formatPercentage(results?.confidence)"></span></p>
+                            <p><span class="font-medium">Processing Time:</span> <span x-text="results?.processing_time"></span>s</p>
+                            <p><span class="font-medium">Model:</span> <span x-text="results?.model_used"></span></p>
+                            <p><span class="font-medium">Cost:</span> $<span x-text="results?.cost_estimate?.toFixed(4)"></span></p>
+                        </div>
+                    </div>
+                    <div>
+                        <h4 class="font-medium text-gray-900 mb-2">File Info</h4>
+                        <div class="space-y-1 text-sm">
+                            <p><span class="font-medium">Name:</span> <span x-text="results?.metadata?.file_name"></span></p>
+                            <p><span class="font-medium">Size:</span> <span x-text="formatFileSize(results?.metadata?.file_size)"></span></p>
+                            <p><span class="font-medium">Type:</span> <span x-text="results?.metadata?.mime_type"></span></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Extracted Fields -->
+                <div class="mb-6">
+                    <h4 class="font-medium text-gray-900 mb-2">Extracted Data</h4>
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <pre class="text-sm text-gray-800 whitespace-pre-wrap" x-text="JSON.stringify(results?.extracted_fields, null, 2)"></pre>
+                    </div>
+                </div>
+
+                <!-- Download Button -->
+                <button @click="downloadResults()" 
+                        class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600">
+                    📥 Download JSON
+                </button>
+            </div>
+
+            <!-- Error -->
+            <div x-show="error" class="bg-red-50 border border-red-200 rounded-lg p-4">
+                <h4 class="font-medium text-red-800 mb-2">❌ Error</h4>
+                <p class="text-red-700" x-text="error"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function documentUploader() {
+            return {
+                selectedFile: null,
+                selectedModel: 'gpt-4o',
+                extractPII: true,
+                isUploading: false,
+                isDragging: false,
+                requestId: null,
+                status: '',
+                results: null,
+                error: null,
+                pollInterval: null,
+                filePreview: null,
+
+                handleFileSelect(event) {
+                    this.selectedFile = event.target.files[0];
+                    this.generateFilePreview();
+                },
+
+                handleDrop(event) {
+                    this.isDragging = false;
+                    this.selectedFile = event.dataTransfer.files[0];
+                    this.generateFilePreview();
+                },
+
+                clearFile() {
+                    this.selectedFile = null;
+                    this.filePreview = null;
+                    this.requestId = null;
+                    this.results = null;
+                    this.error = null;
+                    // Clear file input
+                    const fileInput = document.getElementById('fileInput');
+                    if (fileInput) fileInput.value = '';
+                },
+
+                formatFileSize(bytes) {
+                    if (!bytes) return '';
+                    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+                    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+                },
+
+                formatPercentage(value) {
+                    return value ? (value * 100).toFixed(1) + '%' : '';
+                },
+
+                getProgressWidth() {
+                    switch(this.status) {
+                        case 'pending': return 25;
+                        case 'processing': return 75;
+                        case 'completed': return 100;
+                        case 'failed': return 100;
+                        default: return 0;
+                    }
+                },
+
+                async uploadDocument() {
+                    if (!this.selectedFile) return;
+
+                    this.isUploading = true;
+                    this.error = null;
+                    this.results = null;
+
+                    const formData = new FormData();
+                    formData.append('file', this.selectedFile);
+                    formData.append('model', this.selectedModel);
+                    formData.append('extract_pii', this.extractPII);
+
+                    try {
+                        const response = await fetch('/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`Upload failed: ${response.statusText}`);
+                        }
+
+                        const result = await response.json();
+                        this.requestId = result.request_id;
+                        this.status = result.status;
+                        this.startPolling();
+
+                    } catch (err) {
+                        this.error = err.message;
+                    } finally {
+                        this.isUploading = false;
+                    }
+                },
+
+                startPolling() {
+                    this.pollInterval = setInterval(async () => {
+                        try {
+                            const response = await fetch(`/status/${this.requestId}`);
+                            const data = await response.json();
+                            
+                            this.status = data.status;
+
+                            if (data.status === 'completed') {
+                                this.results = data.analysis;
+                                this.stopPolling();
+                            } else if (data.status === 'failed') {
+                                this.error = data.error_message || 'Processing failed';
+                                this.stopPolling();
+                            }
+                        } catch (err) {
+                            console.error('Polling error:', err);
+                        }
+                    }, 2000);
+                },
+
+                stopPolling() {
+                    if (this.pollInterval) {
+                        clearInterval(this.pollInterval);
+                        this.pollInterval = null;
+                    }
+                },
+
+                downloadResults() {
+                    if (!this.results) return;
+                    
+                    const dataStr = JSON.stringify(this.results, null, 2);
+                    const dataBlob = new Blob([dataStr], {type: 'application/json'});
+                    const url = URL.createObjectURL(dataBlob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `analysis_${this.requestId}.json`;
+                    link.click();
+                    URL.revokeObjectURL(url);
+                },
+
+                generateFilePreview() {
+                    if (!this.selectedFile) {
+                        this.filePreview = null;
+                        return;
+                    }
+
+                    const file = this.selectedFile;
+                    const fileType = file.type.toLowerCase();
+                    const fileName = file.name.toLowerCase();
+                    
+                    console.log('Generating preview for:', fileType, fileName);
+                    
+                    // Image files
+                    if (fileType.startsWith('image/') || fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') || fileName.endsWith('.png')) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            this.filePreview = {
+                                type: 'image',
+                                data: e.target.result
+                            };
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                    // Text files
+                    else if (fileType === 'text/plain' || fileType === 'text/csv' || fileName.endsWith('.txt') || fileName.endsWith('.csv')) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            let text = e.target.result;
+                            if (text.length > 2000) {
+                                text = text.substring(0, 2000) + '\n\n... (content truncated for preview)';
+                            }
+                            this.filePreview = {
+                                type: 'text',
+                                data: text
+                            };
+                        };
+                        reader.readAsText(file);
+                    }
+                    // PDF files
+                    else if (fileType === 'application/pdf' || fileName.endsWith('.pdf')) {
+                        this.filePreview = {
+                            type: 'pdf',
+                            data: null
+                        };
+                    }
+                    // Office documents
+                    else if (fileType.includes('word') || fileType.includes('excel') || fileType.includes('powerpoint') || 
+                             fileType.includes('officedocument') || fileName.endsWith('.docx') || fileName.endsWith('.xlsx') || fileName.endsWith('.pptx')) {
+                        this.filePreview = {
+                            type: 'office',
+                            data: null
+                        };
+                    }
+                    // HTML files
+                    else if (fileType === 'text/html' || fileName.endsWith('.html') || fileName.endsWith('.htm')) {
+                        const reader = new FileReader();
+                        reader.onload = (e) => {
+                            let html = e.target.result;
+                            if (html.length > 2000) {
+                                html = html.substring(0, 2000) + '\n\n... (content truncated for preview)';
+                            }
+                            this.filePreview = {
+                                type: 'text',
+                                data: html
+                            };
+                        };
+                        reader.readAsText(file);
+                    }
+                    // Unsupported/other files
+                    else {
+                        this.filePreview = {
+                            type: 'unsupported',
+                            data: null
+                        };
+                    }
+                },
+
+                getOfficeIcon(mimeType) {
+                    if (mimeType?.includes('word')) return '📝';
+                    if (mimeType?.includes('excel') || mimeType?.includes('sheet')) return '📊';
+                    if (mimeType?.includes('powerpoint') || mimeType?.includes('presentation')) return '📽️';
+                    return '📄';
+                }
+            }
+        }
+    </script>
+</body>
+</html>

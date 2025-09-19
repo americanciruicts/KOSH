@@ -1,0 +1,21 @@
+{
+  "summary": "```json\n{\n    \"summary\": \"The document is an employee roster for the Technical Department, listing nine employees along with their service numbers, job titles, and signatures. The job titles include Technical Manager, System Operator, Senior Assistant Engineer, and Engineer in various specialization...",
+  "document_type": "unknown",
+  "confidence": 0.5,
+  "extracted_fields": {
+    "detected_pii": {}
+  },
+  "raw_text": "EMPLOYEE ROSTER - TECHNICAL DEPARTMENT\n\nNo. | Name                    | Service No | Job Title      | Signature\n----|-------------------------|------------|----------------|----------\n01  | W.D. Ranjan Puyguolla  | 008249     | Tech. Mgr/OR&M | [signed]\n02  | H.C. Jayaweera         | 008301     | T.M./OR&M      | [signed]\n03  | H.P.D. Lakmadasa       | 008293     | T.M./SYSOP     | [signed]\n04  | C.B.T. De Silva        | 011430     | SAE            | [signed]\n05  | M.M.P. Rivera          | 004473     | Eng/OR&M       | [signed]\n06  | Samatha de Silva       | -          | Eng/OR&M CMT   | [signed]\n07  | U.L.S.I. Ranasinghe    | 012332     | Eng/SOP        | [signed]\n08  | M.A. Waralakshmi       | 013418     | A-15           | [signed]\n09  | M.K.T. De Silva        | 006874     | Eng/OR&M       | [signed]\n\nDepartment: Technical Operations\nDate: [Not specified]\nSupervisor: [Not specified]\nTotal Entries: 9",
+  "metadata": {
+    "file_name": "6c72dc91-e1c4-491c-a36e-0902a70a9c8c_employee_roster.txt",
+    "file_size": 914,
+    "mime_type": "text/plain",
+    "file_hash": "97ea457b4fd935954f4b8a951b82cdee3b33f28068fff668d4a7ce2c131f367a",
+    "upload_timestamp": "2025-07-15 11:17:40.160731",
+    "pages": null,
+    "language": null
+  },
+  "processing_time": 3.409329891204834,
+  "model_used": "gpt-4o",
+  "cost_estimate": 0.0011400000000000002
+}

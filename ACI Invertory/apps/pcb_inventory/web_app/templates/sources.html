@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Data Sources - PCB Inventory{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>
+            <i class="bi bi-database-fill text-primary"></i>
+            Data Sources
+        </h2>
+        <div class="badge bg-danger fs-6">
+            <i class="bi bi-shield-exclamation"></i>
+            SUPERUSER ACCESS ONLY
+        </div>
+    </div>
+
+    {% if g.current_user.role != 'ADMIN' %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <strong>Access Denied:</strong> This page contains sensitive data and requires ADMIN privileges.
+        <br>Your current role: <strong>{{ g.current_user.role }}</strong>
+        <br>Contact your system administrator for access.
+    </div>
+    {% else %}
+
+    <div class="alert alert-warning">
+        <i class="bi bi-info-circle-fill"></i>
+        <strong>Warning:</strong> This page contains sensitive migrated data from the original Access database.
+        Only authorized superusers should access this information.
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">
+                        <i class="bi bi-table"></i>
+                        Migrated Database Tables
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if tables %}
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Table Name</th>
+                                    <th>Record Count</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for table in tables %}
+                                <tr>
+                                    <td>
+                                        <code>{{ table.table_name }}</code>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-info">{{ table.record_count }} records</span>
+                                    </td>
+                                    <td>
+                                        <a href="{{ url_for('view_source_table', table_name=table.table_name) }}"
+                                           class="btn btn-sm btn-outline-primary">
+                                            <i class="bi bi-eye"></i> View Data
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="text-center py-4">
+                        <i class="bi bi-database-slash display-1 text-muted"></i>
+                        <p class="text-muted mt-2">No migrated tables found.</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}

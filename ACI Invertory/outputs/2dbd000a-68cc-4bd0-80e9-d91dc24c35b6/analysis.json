@@ -1,0 +1,75 @@
+{
+  "summary": "```json\n{\n    \"summary\": \"The document is an employee roster for the Technical Department, listing nine employees with details such as their service numbers, job titles, and signatures. The job titles include Technical Manager, System Operator, Senior Application Engineer, and various engineering ro...",
+  "document_type": "unknown",
+  "confidence": 0.5,
+  "extracted_fields": {
+    "document_type": "Employee Roster",
+    "entries": [
+      {
+        "name": "W.D. Ranjan Puyguolla",
+        "id": "008249",
+        "title": "Tech. Mgr/OR&M"
+      },
+      {
+        "name": "H.C. Jayaweera",
+        "id": "008301",
+        "title": "T.M./OR&M"
+      },
+      {
+        "name": "H.P.D. Lakmadasa",
+        "id": "008293",
+        "title": "T.M./SYSOP"
+      },
+      {
+        "name": "C.B.T. De Silva",
+        "id": "011430",
+        "title": "SAE"
+      },
+      {
+        "name": "M.M.P. Rivera",
+        "id": "004473",
+        "title": "Eng/OR&M"
+      },
+      {
+        "name": "Samatha de Silva",
+        "id": "-",
+        "title": "Eng/OR&M CMT"
+      },
+      {
+        "name": "U.L.S.I. Ranasinghe",
+        "id": "012332",
+        "title": "Eng/SOP"
+      },
+      {
+        "name": "M.A. Waralakshmi",
+        "id": "013418",
+        "title": "A-15"
+      },
+      {
+        "name": "M.K.T. De Silva",
+        "id": "006874",
+        "title": "Eng/OR&M"
+      }
+    ],
+    "totals": {
+      "count": 9
+    },
+    "metadata": {
+      "department": "Technical Operations"
+    },
+    "detected_pii": {}
+  },
+  "raw_text": "EMPLOYEE ROSTER - TECHNICAL DEPARTMENT\n\nNo. | Name                    | Service No | Job Title      | Signature\n----|-------------------------|------------|----------------|----------\n01  | W.D. Ranjan Puyguolla  | 008249     | Tech. Mgr/OR&M | [signed]\n02  | H.C. Jayaweera         | 008301     | T.M./OR&M      | [signed]\n03  | H.P.D. Lakmadasa       | 008293     | T.M./SYSOP     | [signed]\n04  | C.B.T. De Silva        | 011430     | SAE            | [signed]\n05  | M.M.P. Rivera          | 004473     | Eng/OR&M       | [signed]\n06  | Samatha de Silva       | -          | Eng/OR&M CMT   | [signed]\n07  | U.L.S.I. Ranasinghe    | 012332     | Eng/SOP        | [signed]\n08  | M.A. Waralakshmi       | 013418     | A-15           | [signed]\n09  | M.K.T. De Silva        | 006874     | Eng/OR&M       | [signed]\n\nDepartment: Technical Operations\nDate: [Not specified]\nSupervisor: [Not specified]\nTotal Entries: 9",
+  "metadata": {
+    "file_name": "2dbd000a-68cc-4bd0-80e9-d91dc24c35b6_employee_roster.txt",
+    "file_size": 914,
+    "mime_type": "text/plain",
+    "file_hash": "97ea457b4fd935954f4b8a951b82cdee3b33f28068fff668d4a7ce2c131f367a",
+    "upload_timestamp": "2025-07-15 14:33:18.806255",
+    "pages": null,
+    "language": null
+  },
+  "processing_time": 6.1742024421691895,
+  "model_used": "gpt-4o",
+  "cost_estimate": 0.0011400000000000002
+}

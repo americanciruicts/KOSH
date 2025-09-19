@@ -1,0 +1,90 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (shared with main migration)
+  postgres:
+    image: postgres:15
+    container_name: stockandpick_postgres
+    environment:
+      POSTGRES_DB: pcb_inventory
+      POSTGRES_USER: stockpick_user
+      POSTGRES_PASSWORD: stockpick_pass
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stockpick_user -d pcb_inventory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stockpick-network
+
+  # Flask Web Application
+  web_app:
+    build: 
+      context: .
+      dockerfile: Dockerfile.webapp
+    container_name: stockandpick_webapp
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=False
+      - DATABASE_URL=postgresql://stockpick_user:stockpick_pass@postgres:5432/pcb_inventory
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - stockpick-network
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: stockandpick_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@stockandpick.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "8080:80"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - stockpick-network
+
+  # Nginx reverse proxy (optional, for production)
+  nginx:
+    image: nginx:alpine
+    container_name: stockandpick_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/ssl/certs:ro
+    depends_on:
+      - web_app
+    restart: unless-stopped
+    networks:
+      - stockpick-network
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+  pgadmin_data:
+
+networks:
+  stockpick-network:
+    driver: bridge

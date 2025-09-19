@@ -1,0 +1,21 @@
+{
+  "summary": "```json\n{\n    \"summary\": \"The document appears to be a list or table containing names, service numbers, job titles, and signatures. It includes entries with names such as MD. Rorium Rodadld and others, along with associated job titles and service numbers. The document seems to be partially filled wi...",
+  "document_type": "unknown",
+  "confidence": 0.5,
+  "extracted_fields": {
+    "detected_pii": {}
+  },
+  "raw_text": "xia *\n\nNo. Name Service No Job Title Signature\nOt _ MD. Rorium Rodadld CORDES fed, Wor foesm _ (WRAP\nod | He c. Tay auren OG \u00a730\\ TM [okadu =a\n\na -p. - | =\nO4+le BT De Silver O\\\\4430 sad\n\nOS | os. PP. Rivee . OOkKAFE Eng /oR dao\n\nOF |ep-ns.) Qorrasi 12583 2 Es fot Zz\n\n08 Ge, (orm pela rgd OAs 15\nOF | MKT De, ssh oott7ay Er] aee on\n\n",
+  "metadata": {
+    "file_name": "09222dc4-f9a2-4ea3-bdd1-232620ebe075_240364e6ce8332e089b15dabc88573f5a3b8f2cd.jpeg",
+    "file_size": 129731,
+    "mime_type": "image/jpeg",
+    "file_hash": "6e3137c69b06b3a9d33035429bea8e5b3b3f075c0d4f74c4f075c683d3704ea8",
+    "upload_timestamp": "2025-07-15 11:44:20.489296",
+    "pages": null,
+    "language": null
+  },
+  "processing_time": 4.509133815765381,
+  "model_used": "gpt-4o",
+  "cost_estimate": 0.000415
+}

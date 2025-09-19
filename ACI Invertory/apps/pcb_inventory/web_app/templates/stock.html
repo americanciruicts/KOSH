@@ -1,0 +1,631 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="container-fluid">
+    <div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%);">
+        <div class="col-md-8">
+            <h1 class="h2 mb-2 text-white">
+                <i class="bi bi-plus-circle-fill me-2"></i> Stock Electronic Parts
+            </h1>
+            <p class="text-white-50 mb-0 fs-6">Add components to inventory • Track work orders • Manage locations</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <a href="{{ url_for('inventory') }}" class="btn btn-light btn-lg me-2">
+                <i class="bi bi-table"></i> View Inventory
+            </a>
+            <a href="{{ url_for('pick') }}" class="btn btn-outline-light btn-lg">
+                <i class="bi bi-dash-circle"></i> Pick Parts
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row g-4">
+        <!-- Stock Form -->
+        <div class="col-xl-7">
+            <div class="card border-0 shadow-lg">
+                <div class="card-header bg-white border-0 pb-0">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="text-success mb-1">
+                                <i class="bi bi-plus-circle-fill me-2"></i> Add to Inventory
+                            </h4>
+                            <p class="text-muted small mb-0">Fill out the form below to stock new parts</p>
+                        </div>
+                        <div class="badge bg-success-subtle text-success fs-6 px-3 py-2">
+                            <i class="bi bi-shield-check"></i> Secure
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body pt-4">
+                <form method="POST" class="needs-validation" novalidate>
+                    {{ form.hidden_tag() }}
+                    
+                    <!-- Part Identification Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-primary border-bottom pb-2 mb-3">
+                                <i class="bi bi-tag-fill me-2"></i> Part Identification
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.job.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    {{ form.job(class="form-control form-control-lg border-2", placeholder="e.g., RC0603FR-07383KL", id="jobInput") }}
+                                    <button type="button" class="btn btn-outline-success" id="scanBtn" title="Scan Barcode">
+                                        <i class="bi bi-upc-scan"></i>
+                                    </button>
+                                </div>
+                                {% if form.job.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.job.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-success">
+                                    <i class="bi bi-info-circle"></i> Unique identifier for this electronic part
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.work_order.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.work_order(class="form-control form-control-lg border-2", placeholder="e.g., WO-2024-001, Order-12345") }}
+                                {% if form.work_order.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.work_order.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-clipboard-check"></i> Customer order or job number (optional)
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Component Details Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-primary border-bottom pb-2 mb-3">
+                                <i class="bi bi-cpu-fill me-2"></i> Component Specifications
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.pcb_type.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.pcb_type(class="form-control form-control-lg border-2", placeholder="Enter: Bare, Partial, Completed, Ready to Ship") }}
+                                {% if form.pcb_type.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.pcb_type.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-success">
+                                    <i class="bi bi-cpu"></i> Electronic component assembly stage
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.quantity.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    {{ form.quantity(class="form-control form-control-lg border-2", placeholder="Enter quantity", min="1", step="1") }}
+                                    <span class="input-group-text bg-success text-white fw-semibold">units</span>
+                                </div>
+                                {% if form.quantity.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.quantity.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-success">
+                                    <i class="bi bi-plus-circle"></i> Number of parts to add to inventory
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Optional Details Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-secondary border-bottom pb-2 mb-3">
+                                <i class="bi bi-gear-fill me-2"></i> Additional Information
+                                <small class="text-muted fw-normal">(Optional)</small>
+                            </h6>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                {{ form.dc.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.dc(class="form-control border-2", placeholder="e.g., 2024WK01") }}
+                                {% if form.dc.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.dc.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-calendar"></i> Manufacturing date code
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <div class="mb-3">
+                                {{ form.msd.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.msd(class="form-control border-2", placeholder="e.g., Level 3, 168hrs@30°C/60%RH") }}
+                                {% if form.msd.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.msd.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-droplet"></i> Moisture sensitivity device level
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Storage & Security Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-warning border-bottom pb-2 mb-3">
+                                <i class="bi bi-shield-lock-fill me-2"></i> Storage & Security
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.location.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    <span class="input-group-text bg-warning text-dark">
+                                        <i class="bi bi-geo-alt-fill"></i>
+                                    </span>
+                                    {{ form.location(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999, A1, Shelf-1, Rack-B2") }}
+                                </div>
+                                {% if form.location.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.location.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-warning">
+                                    <i class="bi bi-geo-alt"></i> Storage location for these PCBs
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.itar_classification.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.itar_classification(class="form-select form-select-lg border-2", id="itarClassification") }}
+                                {% if form.itar_classification.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.itar_classification.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-warning">
+                                    <i class="bi bi-shield-check"></i> Export control classification
+                                    {% if not user_can_see_itar %}
+                                        <br><span class="text-danger small">(ITAR items require special authorization)</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Export Notes Section (Hidden by default) -->
+                    <div class="row mb-4" id="exportNotesDiv" style="display: none;">
+                        <div class="col-12">
+                            <div class="alert alert-warning border-2 border-warning">
+                                <h6 class="text-warning mb-3">
+                                    <i class="bi bi-exclamation-triangle-fill me-2"></i> Export Control Notes Required
+                                </h6>
+                                {{ form.export_control_notes.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.export_control_notes(class="form-control border-warning", placeholder="Enter export control notes or restrictions", rows="3") }}
+                                {% if form.export_control_notes.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.export_control_notes.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-warning">
+                                    <i class="bi bi-info-circle"></i> Additional notes about export restrictions or compliance requirements
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Action Buttons -->
+                    <div class="row">
+                        <div class="col-12">
+                            <hr class="mb-4">
+                            <div class="d-flex gap-3 justify-content-between">
+                                <a href="{{ url_for('index') }}" class="btn btn-outline-secondary btn-lg">
+                                    <i class="bi bi-arrow-left"></i> Back to Dashboard
+                                </a>
+                                <div class="d-flex gap-2">
+                                    <button type="reset" class="btn btn-outline-warning btn-lg">
+                                        <i class="bi bi-arrow-clockwise"></i> Reset Form
+                                    </button>
+                                    {{ form.submit(class="btn btn-success btn-lg px-5") }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Instructions and Information -->
+    <div class="col-xl-5">
+        <div class="row g-4">
+            <!-- Quick Guide Card -->
+            <div class="col-12">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-header bg-primary text-white border-0">
+                        <h5 class="mb-0">
+                            <i class="bi bi-lightbulb-fill me-2"></i> Quick Guide
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <div class="d-flex align-items-start">
+                                    <div class="badge bg-primary rounded-pill me-3 p-2">1</div>
+                                    <div>
+                                        <h6 class="mb-1 text-primary">Part Identification</h6>
+                                        <p class="text-muted mb-0 small">Enter part number & work order</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="d-flex align-items-start">
+                                    <div class="badge bg-success rounded-pill me-3 p-2">2</div>
+                                    <div>
+                                        <h6 class="mb-1 text-success">Component Details</h6>
+                                        <p class="text-muted mb-0 small">Specify type & quantity</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="d-flex align-items-start">
+                                    <div class="badge bg-warning rounded-pill me-3 p-2">3</div>
+                                    <div>
+                                        <h6 class="mb-1 text-warning">Storage & Security</h6>
+                                        <p class="text-muted mb-0 small">Set location & ITAR classification</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-info border-0 mt-3 mb-0" style="background-color: #e7f3ff;">
+                            <i class="bi bi-info-circle text-info"></i>
+                            <small class="text-info">
+                                <strong>Tip:</strong> Use the <i class="bi bi-upc-scan"></i> scan button for quick part entry
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- PCB Types Reference Card -->
+            <div class="col-12">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-header bg-info text-white border-0">
+                        <h5 class="mb-0">
+                            <i class="bi bi-cpu-fill me-2"></i> PCB Assembly Stages
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <div class="p-2 rounded text-center" style="background-color: #f8f9fa; border: 2px solid #6c757d;">
+                                    <span class="badge bg-secondary mb-2 w-100">Bare</span>
+                                    <p class="small mb-0 text-muted">Basic PCB<br>No components</p>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="p-2 rounded text-center" style="background-color: #fff8e1; border: 2px solid #ffc107;">
+                                    <span class="badge bg-warning mb-2 w-100">Partial</span>
+                                    <p class="small mb-0 text-muted">Some components<br>In assembly</p>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="p-2 rounded text-center" style="background-color: #e3f2fd; border: 2px solid #17a2b8;">
+                                    <span class="badge bg-info mb-2 w-100">Completed</span>
+                                    <p class="small mb-0 text-muted">Fully assembled<br>All components</p>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="p-2 rounded text-center" style="background-color: #e8f5e8; border: 2px solid #28a745;">
+                                    <span class="badge bg-success mb-2 w-100">Ready to Ship</span>
+                                    <p class="small mb-0 text-muted">Final stage<br>Ready for delivery</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Recent Stock Operations -->
+<div class="container-fluid mt-5">
+    <div class="row">
+        <div class="col-12">
+            <div class="card border-0 shadow-lg">
+                <div class="card-header bg-gradient text-white border-0" style="background: linear-gradient(135deg, #6f42c1 0%, #6610f2 100%);">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <h5 class="mb-0">
+                            <i class="bi bi-clock-history me-2"></i> Recent Stock Operations
+                        </h5>
+                        <span class="badge bg-white text-primary">Live Updates</span>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div id="recent-stock-operations" class="p-4">
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="text-muted h6">Loading recent operations...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Scanner Modal -->
+<div class="modal fade" id="scannerModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-upc-scan text-primary"></i> Scan Barcode
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="stopScanner()"></button>
+            </div>
+            <div class="modal-body text-center">
+                <div id="scanner" style="width: 100%; height: 400px; border: 2px solid #dee2e6; border-radius: 8px; overflow: hidden;"></div>
+                <div class="mt-3">
+                    <p class="text-muted mb-2">
+                        <i class="bi bi-camera"></i> Position barcode within the camera view
+                    </p>
+                    <p class="small text-info">
+                        Supports most barcode formats including Code 128, EAN, UPC, Code 39, and more
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" onclick="stopScanner()">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Quagga.js for barcode scanning -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Load recent stock operations
+    loadRecentStockOperations();
+    
+    // Auto-focus on job number field
+    const jobField = document.getElementById('job');
+    if (jobField) {
+        jobField.focus();
+    }
+    
+    // Handle ITAR classification change
+    const itarClassification = document.getElementById('itarClassification');
+    const exportNotesDiv = document.getElementById('exportNotesDiv');
+    
+    if (itarClassification && exportNotesDiv) {
+        // Show/hide export notes based on classification
+        function toggleExportNotes() {
+            const classification = itarClassification.value;
+            if (classification === 'ITAR' || classification === 'EAR99' || classification === 'SENSITIVE') {
+                exportNotesDiv.style.display = 'block';
+            } else {
+                exportNotesDiv.style.display = 'none';
+            }
+        }
+        
+        // Initial state
+        toggleExportNotes();
+        
+        // Listen for changes
+        itarClassification.addEventListener('change', toggleExportNotes);
+    }
+    
+    // Add form validation
+    const form = document.querySelector('form');
+    form.addEventListener('submit', function(e) {
+        const job = document.getElementById('job').value.trim();
+        const quantity = document.getElementById('quantity').value;
+        
+        if (!job) {
+            e.preventDefault();
+            alert('Please enter a job number');
+            document.getElementById('job').focus();
+            return false;
+        }
+        
+        if (!quantity || quantity < 1) {
+            e.preventDefault();
+            alert('Please enter a valid quantity (1 or more)');
+            document.getElementById('quantity').focus();
+            return false;
+        }
+        
+        // Add confirmation for large quantities
+        if (quantity > 1000) {
+            if (!confirm(`Are you sure you want to stock ${quantity} PCBs? This is a large quantity.`)) {
+                e.preventDefault();
+                return false;
+            }
+        }
+    });
+    
+    // Add keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.key === 'Enter') {
+            form.submit();
+        }
+    });
+});
+
+// Barcode Scanner Functions
+let scannerActive = false;
+
+function startScanner() {
+    if (scannerActive) return;
+    
+    const modal = new bootstrap.Modal(document.getElementById('scannerModal'));
+    modal.show();
+    
+    scannerActive = true;
+    
+    Quagga.init({
+        inputStream: {
+            name: "Live",
+            type: "LiveStream",
+            target: document.querySelector('#scanner'),
+            constraints: {
+                width: 640,
+                height: 480,
+                facingMode: "environment"
+            }
+        },
+        decoder: {
+            readers: [
+                "code_128_reader",
+                "ean_reader",
+                "ean_8_reader",
+                "code_39_reader",
+                "code_39_vin_reader",
+                "codabar_reader",
+                "upc_reader",
+                "upc_e_reader",
+                "i2of5_reader",
+                "2of5_reader",
+                "code_93_reader"
+            ]
+        },
+        locate: true,
+        locator: {
+            halfSample: true,
+            patchSize: "medium"
+        }
+    }, function(err) {
+        if (err) {
+            console.error('Scanner initialization error:', err);
+            alert('Camera access denied or not available');
+            stopScanner();
+            return;
+        }
+        Quagga.start();
+    });
+    
+    // Handle successful scan
+    Quagga.onDetected(function(data) {
+        const code = data.codeResult.code;
+        document.getElementById('jobInput').value = code;
+        stopScanner();
+    });
+}
+
+function stopScanner() {
+    if (!scannerActive) return;
+    
+    scannerActive = false;
+    Quagga.stop();
+    
+    const modal = bootstrap.Modal.getInstance(document.getElementById('scannerModal'));
+    if (modal) {
+        modal.hide();
+    }
+}
+
+// Add scan button event listener
+document.addEventListener('DOMContentLoaded', function() {
+    const scanBtn = document.getElementById('scanBtn');
+    if (scanBtn) {
+        scanBtn.addEventListener('click', startScanner);
+    }
+});
+
+function loadRecentStockOperations() {
+    fetch('/api/inventory')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('recent-stock-operations');
+            
+            if (data.success && data.data.length > 0) {
+                // Filter and show recent items (last 5)
+                const recentItems = data.data.slice(0, 5);
+                
+                let html = '<div class="table-responsive"><table class="table table-hover"><thead class="table-light"><tr>';
+                html += '<th>Job</th><th>PCB Type</th><th>Quantity</th><th>Location</th><th>Last Updated</th></tr></thead><tbody>';
+                
+                recentItems.forEach(item => {
+                    const badgeClass = {
+                        'Bare': 'secondary',
+                        'Partial': 'warning',
+                        'Completed': 'info',
+                        'Ready to Ship': 'success'
+                    }[item.pcb_type] || 'secondary';
+                    
+                    html += `<tr>
+                        <td><strong>${item.job}</strong></td>
+                        <td><span class="badge bg-${badgeClass}">${item.pcb_type}</span></td>
+                        <td>${item.qty.toLocaleString()}</td>
+                        <td><code>${item.location}</code></td>
+                        <td class="text-muted small">${moment(item.updated_at).fromNow()}</td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table></div>';
+                container.innerHTML = html;
+            } else {
+                container.innerHTML = `
+                    <div class="text-center py-3">
+                        <i class="bi bi-inbox display-6 text-muted"></i>
+                        <p class="text-muted mt-2">No inventory items found</p>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading recent operations:', error);
+            document.getElementById('recent-stock-operations').innerHTML = `
+                <div class="text-center py-3">
+                    <i class="bi bi-exclamation-triangle text-warning"></i>
+                    <p class="text-muted mt-2">Error loading recent operations</p>
+                </div>
+            `;
+        });
+}
+</script>
+{% endblock %}

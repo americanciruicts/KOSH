@@ -1,0 +1,32 @@
+INVOICE
+
+TechSupply Corp
+123 Business Ave
+New York, NY 10001
+Phone: (555) 123-4567
+Email: billing@techsupply.com
+
+BILL TO:
+Acme Corporation
+456 Industry Blvd
+Los Angeles, CA 90210
+
+Invoice Number: INV-2024-001
+Invoice Date: January 15, 2024
+Due Date: February 15, 2024
+Payment Terms: Net 30
+
+DESCRIPTION                    QTY    RATE      AMOUNT
+Laptop Computers HP EliteBook   10    $1,200    $12,000
+Wireless Mice                   15    $25       $375
+USB Cables                      20    $10       $200
+Software Licenses               10    $150      $1,500
+
+                              SUBTOTAL: $14,075
+                              TAX (8.5%): $1,196.38
+                              TOTAL: $15,271.38
+
+Payment Instructions:
+Please remit payment within 30 days.
+Wire Transfer: Account #123456789
+Check payable to: TechSupply Corp
