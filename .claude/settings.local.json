@@ -25,7 +25,8 @@
       "Bash(grep:*)",
       "Bash(docker restart:*)",
       "Bash(git push:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nClean up repository by removing duplicate ACI Inventory folder and system files\n\n- Removed duplicate ''ACI Invertory'' folder containing outdated migration files\n- Cleaned up macOS system files (.DS_Store, __MACOSX)\n- Updated Claude settings for proper permissions\n- Streamlined repository structure\n\n🤖 Generated with [Claude Code](https://claude.ai/code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")"
     ],
     "deny": [],
     "ask": []
