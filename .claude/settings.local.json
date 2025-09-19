@@ -1,14 +1,31 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git branch:*)",
+      "Bash(docker exec:*)",
+      "Bash(curl:*)",
+      "Bash(docker cp:*)",
+      "Bash(docker load:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker network create:*)",
+      "Bash(docker run:*)",
+      "Bash(docker rm:*)",
+      "Bash(/dev/null)",
+      "Bash(docker stop:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(docker-compose:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(ip addr:*)",
+      "Bash(systemctl:*)",
+      "Bash(docker version:*)",
+      "Read(//home/tony/**)",
+      "Bash(docker ps:*)",
+      "Bash(grep:*)",
+      "Bash(docker restart:*)",
       "Bash(git push:*)",
-      "Bash(git rm:*)",
-      "Bash(git commit:*)",
-      "Bash(git filter-branch:*)",
-      "Bash(git add:*)",
-      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --index-filter 'git rm --cached --ignore-unmatch \"\"ACI Invertory/INVENTORY TABLE.mdb\"\" \"\"ACI Invertory/apps/pcb_inventory/INVENTORY TABLE.mdb\"\" \"\"ACI Invertory/stockandpick-app.tar\"\"' --prune-empty --tag-name-filter cat -- --all)",
-      "Bash(git checkout:*)"
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []
