@@ -1,0 +1,466 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h1 class="h2 mb-0">
+            <i class="bi bi-table text-primary"></i> {{ table_name }}
+        </h1>
+        <p class="text-muted">
+            Showing {{ pagination.total_records }} records from Access database table
+        </p>
+    </div>
+    <div>
+        <a href="{{ url_for('source_access') }}" class="btn btn-outline-secondary me-2">
+            <i class="bi bi-arrow-left"></i> Back to Tables
+        </a>
+        <button class="btn btn-success me-2" onclick="loadTableData('{{ table_name }}')">
+            <i class="bi bi-database"></i> Show All Data
+        </button>
+        {% if table_name == 'tblPCB_Inventory' %}
+        <a href="{{ url_for('inventory') }}" class="btn btn-info me-2" target="_blank">
+            <i class="bi bi-box-arrow-up-right"></i> View in PostgreSQL
+        </a>
+        {% elif table_name == 'tblTransaction' %}
+        <a href="{{ url_for('reports') }}" class="btn btn-info me-2" target="_blank">
+            <i class="bi bi-box-arrow-up-right"></i> View Audit Trail
+        </a>
+        {% elif table_name in ['tblUser', 'TranCode'] %}
+        <span class="badge bg-secondary me-2">No PostgreSQL equivalent</span>
+        {% endif %}
+        <a href="{{ url_for('source_query') }}" class="btn btn-outline-primary">
+            <i class="bi bi-search"></i> Query Tool
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Table Schema -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-gear"></i> Table Schema
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Column Name</th>
+                                <th>Data Type</th>
+                                <th>Size</th>
+                                <th>Nullable</th>
+                                <th>Position</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for column in schema %}
+                            <tr>
+                                <td><strong>{{ column.name }}</strong></td>
+                                <td>{{ column.type }}</td>
+                                <td>{{ column.size if column.size else 'N/A' }}</td>
+                                <td>
+                                    {% if column.nullable %}
+                                        <span class="badge bg-success">Yes</span>
+                                    {% else %}
+                                        <span class="badge bg-danger">No</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ column.position }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Pagination Controls (Top) -->
+{% if pagination.total_pages > 1 %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <span class="text-muted">
+            Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }} to 
+            {{ pagination.page * pagination.per_page if pagination.page * pagination.per_page < pagination.total_records else pagination.total_records }} 
+            of {{ pagination.total_records }} records
+        </span>
+    </div>
+    <nav aria-label="Table pagination">
+        <ul class="pagination pagination-sm mb-0">
+            {% if pagination.has_prev %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('source_table_view', table_name=table_name, page=pagination.prev_page) }}">
+                    <i class="bi bi-chevron-left"></i>
+                </a>
+            </li>
+            {% endif %}
+            
+            {% for page_num in range(max(1, pagination.page - 2), min(pagination.total_pages + 1, pagination.page + 3)) %}
+            <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+                <a class="page-link" href="{{ url_for('source_table_view', table_name=table_name, page=page_num) }}">
+                    {{ page_num }}
+                </a>
+            </li>
+            {% endfor %}
+            
+            {% if pagination.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('source_table_view', table_name=table_name, page=pagination.next_page) }}">
+                    <i class="bi bi-chevron-right"></i>
+                </a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+</div>
+{% endif %}
+
+<!-- Table Data -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-table"></i> Table Data
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if data %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover table-sm">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>#</th>
+                                {% for column in data[0].keys() %}
+                                <th>{{ column }}</th>
+                                {% endfor %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in data %}
+                            <tr>
+                                <td class="text-muted">{{ loop.index + ((pagination.page - 1) * pagination.per_page) }}</td>
+                                {% for column, value in row.items() %}
+                                <td>
+                                    {% if value is none %}
+                                        <span class="text-muted"><em>NULL</em></span>
+                                    {% elif value|string|length > 100 %}
+                                        <span class="text-truncate d-inline-block" style="max-width: 200px;" 
+                                              title="{{ value }}">{{ value }}</span>
+                                    {% elif '<binary' in value|string %}
+                                        <span class="badge bg-secondary">{{ value }}</span>
+                                    {% elif '<div>' in value|string or '<font' in value|string %}
+                                        <span class="text-warning" title="HTML Content">{{ value|striptags }}</span>
+                                    {% else %}
+                                        {{ value }}
+                                    {% endif %}
+                                </td>
+                                {% endfor %}
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i> No data found in this table.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Pagination Controls (Bottom) -->
+{% if pagination.total_pages > 1 %}
+<div class="d-flex justify-content-between align-items-center mt-3">
+    <div>
+        <span class="text-muted">
+            Page {{ pagination.page }} of {{ pagination.total_pages }}
+        </span>
+    </div>
+    <nav aria-label="Table pagination">
+        <ul class="pagination pagination-sm mb-0">
+            {% if pagination.has_prev %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('source_table_view', table_name=table_name, page=pagination.prev_page) }}">
+                    <i class="bi bi-chevron-left"></i> Previous
+                </a>
+            </li>
+            {% endif %}
+            
+            {% if pagination.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('source_table_view', table_name=table_name, page=pagination.next_page) }}">
+                    Next <i class="bi bi-chevron-right"></i>
+                </a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+</div>
+{% endif %}
+
+<!-- Table Statistics -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-bar-chart"></i> Table Statistics
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h3 class="text-primary">{{ pagination.total_records }}</h3>
+                            <p class="text-muted">Total Records</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h3 class="text-success">{{ schema|length }}</h3>
+                            <p class="text-muted">Columns</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h3 class="text-warning">{{ pagination.total_pages }}</h3>
+                            <p class="text-muted">Pages</p>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="text-center">
+                            <h3 class="text-info">{{ pagination.per_page }}</h3>
+                            <p class="text-muted">Per Page</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Actual Table Data Section (Hidden by default) -->
+<div class="row mt-4" id="actualDataSection" style="display: none;">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-database-fill"></i> Actual Table Data
+                    <button type="button" class="btn btn-sm btn-outline-dark float-end" onclick="hideActualData()">
+                        <i class="bi bi-x-lg"></i> Hide
+                    </button>
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="loadingSpinner" class="text-center" style="display: none;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Loading data from Access database...</p>
+                </div>
+                
+                <div id="actualDataContent">
+                    <!-- Data will be loaded here -->
+                </div>
+                
+                <div id="dataError" class="alert alert-danger" role="alert" style="display: none;">
+                    <!-- Error messages will appear here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PostgreSQL Comparison Section -->
+{% if table_name == 'tblPCB_Inventory' %}
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h5 class="card-title mb-0">
+                    <i class="bi bi-arrow-left-right"></i> PostgreSQL Equivalent
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-database"></i> Access Database</h6>
+                        <ul class="list-unstyled">
+                            <li><strong>Table:</strong> {{ table_name }}</li>
+                            <li><strong>Records:</strong> {{ pagination.total_records }}</li>
+                            <li><strong>Type:</strong> Microsoft Access (.mdb)</li>
+                            <li><strong>Status:</strong> <span class="badge bg-secondary">Legacy</span></li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6><i class="bi bi-database-fill-check"></i> PostgreSQL Migration</h6>
+                        <ul class="list-unstyled">
+                            <li><strong>Table:</strong> pcb_inventory.tblpcb_inventory</li>
+                            <li><strong>Records:</strong> <span id="pgRecordCount">Loading...</span></li>
+                            <li><strong>Type:</strong> PostgreSQL with enums</li>
+                            <li><strong>Status:</strong> <span class="badge bg-success">Active</span></li>
+                        </ul>
+                        <div class="mt-3">
+                            <a href="{{ url_for('inventory') }}" class="btn btn-primary btn-sm" target="_blank">
+                                <i class="bi bi-box-arrow-up-right"></i> Open PostgreSQL View
+                            </a>
+                            <button class="btn btn-outline-info btn-sm" onclick="loadPostgreSQLData()">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh Count
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Add tooltips to truncated content
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize Bootstrap tooltips
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+    
+    // Load PostgreSQL record count if on PCB inventory page
+    {% if table_name == 'tblPCB_Inventory' %}
+    loadPostgreSQLData();
+    {% endif %}
+});
+
+// Function to load actual table data from Access database
+function loadTableData(tableName) {
+    const section = document.getElementById('actualDataSection');
+    const content = document.getElementById('actualDataContent');
+    const spinner = document.getElementById('loadingSpinner');
+    const error = document.getElementById('dataError');
+    
+    // Check if all elements exist
+    if (!section || !content || !spinner || !error) {
+        console.error('Required DOM elements not found for loadTableData');
+        return;
+    }
+    
+    // Show section and spinner
+    section.style.display = 'block';
+    spinner.style.display = 'block';
+    content.innerHTML = '';
+    error.style.display = 'none';
+    
+    // Scroll to the section
+    section.scrollIntoView({ behavior: 'smooth' });
+    
+    // Make API call to load actual data
+    fetch(`/api/source/table-data/${tableName}?limit=100`)
+        .then(response => response.json())
+        .then(data => {
+            if (spinner) spinner.style.display = 'none';
+            
+            if (data.success && data.data && data.data.length > 0) {
+                // Create table with actual data
+                const tableHtml = createDataTable(data.data, data.total_records);
+                if (content) content.innerHTML = tableHtml;
+            } else {
+                // Show fallback message
+                if (content) content.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i> 
+                        <strong>Data Access Limited:</strong> ${data.message || 'Unable to load actual data from Access database.'}
+                        <hr>
+                        <p class="mb-0">
+                            <strong>Alternative:</strong> Use mdb-tools on a Linux system or view data on Windows with Microsoft Access.
+                        </p>
+                    </div>`;
+            }
+        })
+        .catch(err => {
+            if (spinner) spinner.style.display = 'none';
+            if (error) {
+                error.style.display = 'block';
+                error.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Error loading data: ${err.message}`;
+            }
+        });
+}
+
+// Function to create HTML table from data
+function createDataTable(data, totalRecords) {
+    if (!data || data.length === 0) return '<p>No data available</p>';
+    
+    const columns = Object.keys(data[0]);
+    let html = `
+        <div class="mb-3">
+            <span class="badge bg-primary">Showing ${data.length} of ${totalRecords} records</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-striped table-hover table-sm">
+                <thead class="table-dark">
+                    <tr>
+                        <th>#</th>`;
+    
+    columns.forEach(col => {
+        html += `<th>${col}</th>`;
+    });
+    
+    html += `</tr></thead><tbody>`;
+    
+    data.forEach((row, index) => {
+        html += `<tr><td>${index + 1}</td>`;
+        columns.forEach(col => {
+            const value = row[col];
+            if (value === null || value === undefined) {
+                html += `<td><em class="text-muted">NULL</em></td>`;
+            } else {
+                html += `<td>${value}</td>`;
+            }
+        });
+        html += `</tr>`;
+    });
+    
+    html += `</tbody></table></div>`;
+    return html;
+}
+
+// Function to hide actual data section
+function hideActualData() {
+    const section = document.getElementById('actualDataSection');
+    if (section) {
+        section.style.display = 'none';
+    }
+}
+
+// Function to load PostgreSQL data count
+function loadPostgreSQLData() {
+    const countElement = document.getElementById('pgRecordCount');
+    if (!countElement) return;
+    
+    countElement.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
+    
+    fetch('/api/inventory')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.data) {
+                countElement.innerHTML = data.data.length.toLocaleString();
+            } else {
+                countElement.innerHTML = 'Error';
+            }
+        })
+        .catch(err => {
+            countElement.innerHTML = 'Error';
+        });
+}
+</script>
+{% endblock %}

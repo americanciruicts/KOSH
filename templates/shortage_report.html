@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+
+{% block title %}Shortage Report - Kosh{% endblock %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);">
+    <div class="col-12">
+        <h1 class="h2 mb-2">
+            <i class="bi bi-exclamation-triangle me-2"></i> Shortage Report
+        </h1>
+        <p class="mb-0 fs-6">Calculate parts shortages by comparing BOM requirements against current inventory</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Job Selection Section -->
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-danger text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-calculator"></i> Calculate Shortage
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Job Number *</label>
+                        <input type="text" class="form-control form-control-lg" id="jobNumber" placeholder="Enter job number (e.g., 7789)">
+                        <small class="text-muted">The job number from your BOM</small>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold">Quantity Needed *</label>
+                        <input type="number" class="form-control form-control-lg" id="quantityNeeded" value="1" min="1" placeholder="10">
+                        <small class="text-muted">Number of boards to build</small>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button class="btn btn-danger btn-lg w-100" onclick="calculateShortage()">
+                            <i class="bi bi-calculator-fill"></i> Calculate
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="col-12" id="summarySection" style="display: none;">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body text-center">
+                        <i class="bi bi-list-ul display-4"></i>
+                        <h3 class="mt-2" id="totalParts">0</h3>
+                        <p class="mb-0">Total Parts in BOM</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body text-center">
+                        <i class="bi bi-check-circle display-4"></i>
+                        <h3 class="mt-2" id="partsInStock">0</h3>
+                        <p class="mb-0">Parts in Stock</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-danger text-white">
+                    <div class="card-body text-center">
+                        <i class="bi bi-exclamation-triangle display-4"></i>
+                        <h3 class="mt-2" id="partsShort">0</h3>
+                        <p class="mb-0">Parts Short</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-warning text-dark">
+                    <div class="card-body text-center">
+                        <i class="bi bi-currency-dollar display-4"></i>
+                        <h3 class="mt-2" id="shortageCost">$0.00</h3>
+                        <p class="mb-0">Shortage Value</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shortage Details Table -->
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-danger text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-list-check"></i> Shortage Details
+                    </h5>
+                    <div>
+                        <button class="btn btn-light btn-sm" onclick="exportShortageToExcel()" id="exportBtn" style="display: none;">
+                            <i class="bi bi-file-earmark-excel"></i> Export Shortage List
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- Loading State -->
+                <div id="loadingState" class="text-center py-5" style="display: none;">
+                    <div class="spinner-border text-danger" role="status"></div>
+                    <p class="text-muted mt-2">Calculating shortage...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div id="emptyState" class="text-center py-5">
+                    <i class="bi bi-calculator display-4 text-muted"></i>
+                    <h5 class="text-muted mt-3">No Shortage Report</h5>
+                    <p class="text-muted">Enter a job number and quantity above to calculate shortages</p>
+                </div>
+
+                <!-- Results Table -->
+                <div id="resultsTable" style="display: none;">
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>Showing shortage for:</strong> <span id="reportJob">-</span> × <span id="reportQty">-</span> boards
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead class="table-danger">
+                                <tr>
+                                    <th>Line</th>
+                                    <th>Description</th>
+                                    <th>MPN</th>
+                                    <th style="width: 100px;">Req'd per Board</th>
+                                    <th style="width: 100px;">Total Required</th>
+                                    <th style="width: 100px;">On Hand</th>
+                                    <th style="width: 100px;">Shortage</th>
+                                    <th style="width: 100px;">Unit Cost</th>
+                                    <th style="width: 120px;">Shortage Cost</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="shortageTableBody">
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="alert alert-warning mt-3">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Note:</strong> Export this list to Excel and send to purchasing department for ordering.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentShortageData = [];
+let currentJob = '';
+let currentQty = 1;
+
+// Enable enter key
+document.addEventListener('DOMContentLoaded', function() {
+    ['jobNumber', 'quantityNeeded'].forEach(id => {
+        document.getElementById(id).addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                calculateShortage();
+            }
+        });
+    });
+});
+
+function calculateShortage() {
+    const job = document.getElementById('jobNumber').value.trim();
+    const qty = parseInt(document.getElementById('quantityNeeded').value);
+
+    if (!job) {
+        alert('Please enter a job number');
+        return;
+    }
+
+    if (!qty || qty < 1) {
+        alert('Please enter a valid quantity (1 or more)');
+        return;
+    }
+
+    currentJob = job;
+    currentQty = qty;
+
+    showLoading();
+
+    fetch(`/api/shortage/calculate?job=${encodeURIComponent(job)}&quantity=${qty}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.data) {
+                currentShortageData = data.data.shortage_items || [];
+                displayShortage(data.data);
+                updateSummary(data.data);
+            } else {
+                showEmpty(data.error || 'No BOM found for this job');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showEmpty('Error calculating shortage');
+        });
+}
+
+function displayShortage(data) {
+    hideLoading();
+    document.getElementById('resultsTable').style.display = 'block';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('summarySection').style.display = 'block';
+    document.getElementById('exportBtn').style.display = 'inline-block';
+
+    document.getElementById('reportJob').textContent = data.job;
+    document.getElementById('reportQty').textContent = data.quantity_needed;
+
+    const tbody = document.getElementById('shortageTableBody');
+    const items = data.shortage_items || [];
+
+    tbody.innerHTML = items.map(item => {
+        const isShort = item.shortage > 0;
+        const statusBadge = isShort
+            ? `<span class="badge bg-danger">SHORT</span>`
+            : `<span class="badge bg-success">OK</span>`;
+
+        const rowClass = isShort ? 'table-danger' : '';
+
+        return `
+            <tr class="${rowClass}">
+                <td>${item.line || '-'}</td>
+                <td><strong>${item.description || '-'}</strong></td>
+                <td><code>${item.mpn || '-'}</code></td>
+                <td class="text-center">${item.qty_per_board || 0}</td>
+                <td class="text-center"><strong>${item.total_required || 0}</strong></td>
+                <td class="text-center">${item.on_hand || 0}</td>
+                <td class="text-center ${isShort ? 'text-danger fw-bold' : ''}">${item.shortage || 0}</td>
+                <td class="text-end">$${(item.unit_cost || 0).toFixed(4)}</td>
+                <td class="text-end ${isShort ? 'text-danger fw-bold' : ''}">$${(item.shortage_cost || 0).toFixed(2)}</td>
+                <td class="text-center">${statusBadge}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function updateSummary(data) {
+    document.getElementById('totalParts').textContent = data.total_parts || 0;
+    document.getElementById('partsInStock').textContent = data.parts_in_stock || 0;
+    document.getElementById('partsShort').textContent = data.parts_short || 0;
+    document.getElementById('shortageCost').textContent = '$' + ((data.total_shortage_cost || 0).toFixed(2));
+}
+
+function exportShortageToExcel() {
+    if (!currentJob) {
+        alert('No shortage report to export');
+        return;
+    }
+
+    window.location.href = `/api/shortage/export?job=${encodeURIComponent(currentJob)}&quantity=${currentQty}`;
+}
+
+function showLoading() {
+    document.getElementById('loadingState').style.display = 'block';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('resultsTable').style.display = 'none';
+    document.getElementById('summarySection').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'none';
+}
+
+function hideLoading() {
+    document.getElementById('loadingState').style.display = 'none';
+}
+
+function showEmpty(message) {
+    hideLoading();
+    document.getElementById('emptyState').style.display = 'block';
+    document.getElementById('emptyState').querySelector('p').textContent = message;
+    document.getElementById('resultsTable').style.display = 'none';
+    document.getElementById('summarySection').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'none';
+}
+</script>
+{% endblock %}

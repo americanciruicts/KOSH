@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <meta name="version" content="2.0-new-template">
+    <title>{{ data.pcn_number }}</title>
+    <style type="text/css">
+        /* NEW TEMPLATE VERSION 2.0 - Page setup - exact 3x1 inch label */
+        @page {
+            size: 3in 1in;
+            margin: 0;
+        }
+
+        /* Screen view styles */
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+        }
+
+        /* Label container */
+        .label-box {
+            width: 3in;
+            height: 1in;
+            padding: 0.05in;
+            border: 2px solid black;
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        /* Top section with PCN, Barcode, and QTY */
+        .label-top {
+            display: grid;
+            grid-template-columns: 1fr auto 0.8fr;
+            align-items: center;
+            gap: 3px;
+            margin-bottom: 3px;
+            padding-bottom: 2px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .pcn-section {
+            font-size: 13px;
+            font-weight: bold;
+            color: #000;
+        }
+
+        .barcode-section {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .qty-section {
+            text-align: right;
+        }
+
+        .qty-label {
+            font-size: 8px;
+            font-weight: bold;
+            color: #666;
+        }
+
+        .qty-value {
+            font-size: 14px;
+            font-weight: bold;
+            color: #000;
+        }
+
+        /* Bottom section with details */
+        .label-details {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 5px;
+            font-size: 8px;
+            line-height: 1.4;
+            flex: 1;
+            align-items: start;
+        }
+
+        .details-left {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .details-right {
+            text-align: right;
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+
+        .detail-line {
+            margin: 0;
+        }
+
+        .detail-line strong {
+            font-weight: 600;
+        }
+
+        /* Control buttons (screen only) */
+        .controls {
+            text-align: center;
+            margin-top: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            margin: 0 8px;
+            font-size: 14px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .btn-print {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-print:hover {
+            background: #2563eb;
+        }
+
+        .btn-close {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-close:hover {
+            background: #5a6268;
+        }
+
+        .btn-zebra {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .btn-zebra:hover {
+            background: #c0392b;
+        }
+
+        /* Print styles - critical for single label output */
+        @media print {
+            @page {
+                size: 3in 1in;
+                margin: 0;
+            }
+
+            html {
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+
+            body {
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 3in;
+                height: 1in;
+                background: white;
+                overflow: hidden;
+            }
+
+            .label-box {
+                width: 3in;
+                height: 1in;
+                padding: 0.05in;
+                margin: 0 !important;
+                box-shadow: none;
+                border: 2px solid black;
+                page-break-inside: avoid;
+                page-break-after: avoid;
+                page-break-before: avoid;
+            }
+
+            .controls {
+                display: none !important;
+            }
+
+            /* Force no headers/footers */
+            @page {
+                margin: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="label-box">
+        <!-- Top section: PCN, Barcode, QTY -->
+        <div class="label-top">
+            <div class="pcn-section">
+                PCN: {{ data.pcn_number }}
+            </div>
+            <div class="barcode-section">
+                <svg id="labelBarcode"></svg>
+            </div>
+            <div class="qty-section">
+                <div class="qty-label">QTY</div>
+                <div class="qty-value">{{ data.quantity or 0 }}</div>
+            </div>
+        </div>
+
+        <!-- Bottom section: Item details -->
+        <div class="label-details">
+            <div class="details-left">
+                {% if data.item %}
+                <div class="detail-line"><strong>Job Number:</strong> {{ data.item }}</div>
+                {% endif %}
+                {% if data.mpn %}
+                <div class="detail-line"><strong>MPN:</strong> {{ data.mpn }}</div>
+                {% endif %}
+                {% if data.po_number %}
+                <div class="detail-line"><strong>PO:</strong> {{ data.po_number }}</div>
+                {% endif %}
+            </div>
+            <div class="details-right">
+                {% if data.date_code %}
+                <div class="detail-line">DCC: {{ data.date_code }}</div>
+                {% endif %}
+                {% if data.msd %}
+                <div class="detail-line">MSD: {{ data.msd.replace('Level ', '') if 'Level' in data.msd else data.msd }}</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Print controls (hidden during print) -->
+    <div class="controls">
+        <button onclick="window.print()" class="btn btn-print">🖨️ Print Label</button>
+        <button onclick="downloadZPL()" class="btn btn-zebra">💾 Download ZPL</button>
+        <button onclick="closePreview()" class="btn btn-close">✖️ Close</button>
+    </div>
+
+    <!-- Barcode generation -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <script>
+        // Version check - NEW TEMPLATE v2.0
+        console.log('✅ NEW LABEL TEMPLATE v2.0 LOADED');
+
+        window.addEventListener('load', function() {
+            try {
+                // Barcode contains ONLY the PCN number
+                let barcodeData = "{{ data.pcn_number }}";
+                console.log('📦 Barcode data (PCN only):', barcodeData);
+
+                // Generate compact barcode with ALL data
+                JsBarcode("#labelBarcode", barcodeData, {
+                    format: "CODE128",
+                    width: 1,
+                    height: 18,
+                    displayValue: false,
+                    margin: 0,
+                    background: "#ffffff",
+                    lineColor: "#000000"
+                });
+                console.log('✅ Barcode generated successfully for PCN: {{ data.pcn_number }}');
+
+                // Auto-trigger print dialog after barcode is generated
+                setTimeout(function() {
+                    console.log('🖨️ Auto-triggering print dialog...');
+                    window.print();
+                }, 500);
+
+            } catch (error) {
+                console.error('❌ Barcode generation error:', error);
+            }
+        });
+
+        // Auto-close after successful print
+        window.onafterprint = function() {
+            console.log('✅ Print dialog closed');
+            // Only auto-close if opened in a popup window (not iframe)
+            if (window.opener && !window.frameElement) {
+                setTimeout(function() {
+                    window.close();
+                }, 1000);
+            } else if (window.parent && window.parent !== window) {
+                // If in iframe, close the parent's iframe and backdrop
+                setTimeout(function() {
+                    const iframe = window.parent.document.getElementById('printIframe');
+                    const backdrop = window.parent.document.getElementById('printBackdrop');
+                    if (iframe) iframe.remove();
+                    if (backdrop) backdrop.remove();
+                }, 1000);
+            }
+        };
+
+        // Close preview (works for both popup and iframe)
+        function closePreview() {
+            if (window.parent && window.parent !== window) {
+                // In iframe - remove iframe and backdrop from parent
+                const iframe = window.parent.document.getElementById('printIframe');
+                const backdrop = window.parent.document.getElementById('printBackdrop');
+                if (iframe) iframe.remove();
+                if (backdrop) backdrop.remove();
+            } else {
+                // In popup window - close it
+                window.close();
+            }
+        }
+
+        // Download ZPL file for Zebra printer
+        function downloadZPL() {
+            const pcnNumber = "{{ data.pcn_number }}";
+            const zplUrl = `/print-label/${pcnNumber}/zpl`;
+
+            // Create temporary link and trigger download
+            const link = document.createElement('a');
+            link.href = zplUrl;
+            link.download = `PCN_${pcnNumber}.zpl`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            // Show instructions
+            setTimeout(function() {
+                alert('ZPL file downloaded successfully!\n\nTo print on your Zebra ZP450:\n\n' +
+                      '1. Open the downloaded PCN_' + pcnNumber + '.zpl file with Notepad\n' +
+                      '2. Copy all the text (Ctrl+A, then Ctrl+C)\n' +
+                      '3. Open Command Prompt (cmd)\n' +
+                      '4. Type: copy con LPT1 (or your Zebra printer port)\n' +
+                      '5. Paste the ZPL code (Ctrl+V)\n' +
+                      '6. Press Ctrl+Z then Enter\n\n' +
+                      'OR: Simply drag the .zpl file to your Zebra printer icon in Windows.');
+            }, 500);
+
+            console.log('✅ ZPL file download initiated for PCN:', pcnNumber);
+        }
+    </script>
+</body>
+</html>

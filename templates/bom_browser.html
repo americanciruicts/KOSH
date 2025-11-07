@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}BOM Browser - Kosh{% endblock %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%);">
+    <div class="col-12">
+        <h1 class="h2 mb-2">
+            <i class="bi bi-list-columns-reverse me-2"></i> BOM Browser
+        </h1>
+        <p class="mb-0 fs-6">View and search Bill of Materials for all jobs</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- Search Section -->
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-search"></i> Search BOM
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Job Number</label>
+                        <input type="text" class="form-control" id="searchJob" placeholder="Enter job number (e.g., 7789)">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold">MPN</label>
+                        <input type="text" class="form-control" id="searchMPN" placeholder="Manufacturer Part Number">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold">Customer</label>
+                        <input type="text" class="form-control" id="searchCustomer" placeholder="Customer name">
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn btn-success w-100" onclick="searchBOM()">
+                            <i class="bi bi-search"></i> Search
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BOM Summary Section -->
+    <div class="col-12" id="bomSummarySection" style="display: none;">
+        <div class="card shadow-sm border-success">
+            <div class="card-header bg-light">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-info-circle"></i> BOM Summary
+                    </h5>
+                    <button class="btn btn-sm btn-success" onclick="exportBOMToExcel()">
+                        <i class="bi bi-file-earmark-excel"></i> Export to Excel
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="border rounded p-3 bg-light">
+                            <div class="text-muted small">Job Number</div>
+                            <div class="h4 mb-0" id="summaryJob">-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3 bg-light">
+                            <div class="text-muted small">Customer</div>
+                            <div class="h4 mb-0" id="summaryCustomer">-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3 bg-light">
+                            <div class="text-muted small">Total Line Items</div>
+                            <div class="h4 mb-0" id="summaryLines">-</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3 bg-light">
+                            <div class="text-muted small">Total Cost (per board)</div>
+                            <div class="h4 mb-0" id="summaryCost">$0.00</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BOM Details Table -->
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-list-ul"></i> BOM Line Items
+                </h5>
+            </div>
+            <div class="card-body">
+                <!-- Loading State -->
+                <div id="loadingState" class="text-center py-5" style="display: none;">
+                    <div class="spinner-border text-success" role="status"></div>
+                    <p class="text-muted mt-2">Loading BOM...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div id="emptyState" class="text-center py-5">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <h5 class="text-muted mt-3">No BOM Data</h5>
+                    <p class="text-muted">Enter a job number above to view BOM details</p>
+                </div>
+
+                <!-- Results Table -->
+                <div id="resultsTable" style="display: none;">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped">
+                            <thead class="table-success">
+                                <tr>
+                                    <th style="width: 50px;">Line</th>
+                                    <th>Description</th>
+                                    <th>Manufacturer</th>
+                                    <th>MPN</th>
+                                    <th style="width: 80px;">Qty</th>
+                                    <th style="width: 100px;">Unit Cost</th>
+                                    <th style="width: 100px;">Ext Cost</th>
+                                    <th>Locations</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bomTableBody">
+                            </tbody>
+                            <tfoot class="table-light">
+                                <tr>
+                                    <th colspan="6" class="text-end">Total Cost per Board:</th>
+                                    <th id="totalCost" class="text-success">$0.00</th>
+                                    <th></th>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentBOMData = [];
+
+// Enable enter key for search
+document.addEventListener('DOMContentLoaded', function() {
+    ['searchJob', 'searchMPN', 'searchCustomer'].forEach(id => {
+        document.getElementById(id).addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchBOM();
+            }
+        });
+    });
+});
+
+function searchBOM() {
+    const job = document.getElementById('searchJob').value.trim();
+    const mpn = document.getElementById('searchMPN').value.trim();
+    const customer = document.getElementById('searchCustomer').value.trim();
+
+    if (!job && !mpn && !customer) {
+        alert('Please enter at least one search criteria');
+        return;
+    }
+
+    showLoading();
+
+    let url = '/api/bom/search?';
+    if (job) url += 'job=' + encodeURIComponent(job) + '&';
+    if (mpn) url += 'mpn=' + encodeURIComponent(mpn) + '&';
+    if (customer) url += 'customer=' + encodeURIComponent(customer);
+
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.data && data.data.length > 0) {
+                currentBOMData = data.data;
+                displayBOM(data.data);
+                updateSummary(data.data);
+            } else {
+                showEmpty('No BOM records found for your search criteria');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showEmpty('Error loading BOM data');
+        });
+}
+
+function displayBOM(data) {
+    hideLoading();
+    document.getElementById('resultsTable').style.display = 'block';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('bomSummarySection').style.display = 'block';
+
+    const tbody = document.getElementById('bomTableBody');
+    let totalCost = 0;
+
+    tbody.innerHTML = data.map(item => {
+        const unitCost = parseFloat(item.cost) || 0;
+        const qty = parseInt(item.qty) || 0;
+        const extCost = unitCost * qty;
+        totalCost += extCost;
+
+        return `
+            <tr>
+                <td class="text-center"><span class="badge bg-secondary">${item.line || '-'}</span></td>
+                <td><strong>${item.DESC || '-'}</strong></td>
+                <td>${item.man || '-'}</td>
+                <td><code>${item.mpn || '-'}</code></td>
+                <td class="text-center"><strong>${qty}</strong></td>
+                <td class="text-end">$${unitCost.toFixed(4)}</td>
+                <td class="text-end"><strong>$${extCost.toFixed(2)}</strong></td>
+                <td><small class="text-muted">${item.loc || '-'}</small></td>
+            </tr>
+        `;
+    }).join('');
+
+    document.getElementById('totalCost').textContent = '$' + totalCost.toFixed(2);
+}
+
+function updateSummary(data) {
+    if (data.length === 0) return;
+
+    const firstItem = data[0];
+    document.getElementById('summaryJob').textContent = firstItem.job || '-';
+    document.getElementById('summaryCustomer').textContent = firstItem.cust || '-';
+    document.getElementById('summaryLines').textContent = data.length;
+
+    const totalCost = data.reduce((sum, item) => {
+        const unitCost = parseFloat(item.cost) || 0;
+        const qty = parseInt(item.qty) || 0;
+        return sum + (unitCost * qty);
+    }, 0);
+
+    document.getElementById('summaryCost').textContent = '$' + totalCost.toFixed(2);
+}
+
+function exportBOMToExcel() {
+    if (currentBOMData.length === 0) {
+        alert('No BOM data to export');
+        return;
+    }
+
+    const job = document.getElementById('summaryJob').textContent;
+    window.location.href = `/api/bom/export?job=${encodeURIComponent(job)}`;
+}
+
+function showLoading() {
+    document.getElementById('loadingState').style.display = 'block';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('resultsTable').style.display = 'none';
+    document.getElementById('bomSummarySection').style.display = 'none';
+}
+
+function hideLoading() {
+    document.getElementById('loadingState').style.display = 'none';
+}
+
+function showEmpty(message) {
+    hideLoading();
+    document.getElementById('emptyState').style.display = 'block';
+    document.getElementById('emptyState').querySelector('p').textContent = message;
+    document.getElementById('resultsTable').style.display = 'none';
+    document.getElementById('bomSummarySection').style.display = 'none';
+}
+</script>
+{% endblock %}

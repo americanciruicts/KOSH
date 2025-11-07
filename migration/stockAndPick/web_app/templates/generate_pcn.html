@@ -1,0 +1,1403 @@
+{% extends "base.html" %}
+
+{% block title %}Generate PCN - Kosh{% endblock %}
+
+{% block extra_css %}
+<style>
+    .pcn-card {
+        border-left: 4px solid #3b82f6;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .pcn-preview-card {
+        border-left: 4px solid #10b981;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    .pcn-preview {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        border: 2px dashed #3b82f6;
+        border-radius: 12px;
+        padding: 24px;
+    }
+    .pcn-number-display {
+        font-size: 3rem;
+        font-weight: 800;
+        color: #1e40af;
+        font-family: 'Courier New', monospace;
+        letter-spacing: 4px;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .section-divider {
+        border-top: 2px solid #e5e7eb;
+        margin: 24px 0;
+        position: relative;
+    }
+    .section-divider::after {
+        content: attr(data-label);
+        position: absolute;
+        top: -12px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: white;
+        padding: 0 12px;
+        color: #6b7280;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .form-label {
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 8px;
+    }
+    .form-control, .form-select {
+        border-radius: 8px;
+        border: 2px solid #e5e7eb;
+        transition: all 0.3s ease;
+    }
+    .form-control:focus, .form-select:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    .instruction-card {
+        background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+        border-left: 4px solid #3b82f6;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+    .warning-card {
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        border-left: 4px solid #f59e0b;
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .label-preview-box {
+        background: white;
+        border: 2px solid #d1d5db;
+        border-radius: 8px;
+        padding: 16px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    @media print {
+        @page {
+            size: 4in 2in;
+            margin: 0;
+        }
+
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background: white !important;
+        }
+
+        /* Hide everything */
+        body * {
+            visibility: hidden !important;
+        }
+
+        /* Show only printable label and children */
+        #printableLabel,
+        #printableLabel * {
+            visibility: visible !important;
+        }
+
+        #printableLabel {
+            position: relative !important;
+            display: block !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 4in !important;
+            height: 2in !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            page-break-after: avoid !important;
+            page-break-inside: avoid !important;
+        }
+
+        /* Ensure inner container fills space */
+        #printableLabel > div {
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            box-sizing: border-box !important;
+        }
+
+        #printableLabel div {
+            display: block !important;
+        }
+
+        #printableLabel span {
+            display: inline !important;
+        }
+
+        #printableLabel svg {
+            display: inline-block !important;
+            max-width: 100% !important;
+        }
+
+        /* Preserve grid layouts */
+        #printableLabel div[style*="display: grid"],
+        #printableLabel div[style*="grid-template-columns"] {
+            display: grid !important;
+        }
+
+        /* Force visibility of barcode elements */
+        #printableLabel svg,
+        #printableLabel svg *,
+        #printableLabel path,
+        #printableLabel rect,
+        #printableLabel g,
+        #printableLabel text {
+            visibility: visible !important;
+            display: inline !important;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);">
+    <div class="col-12">
+        <h1 class="h2 mb-2">
+            <i class="bi bi-upc-scan me-2"></i> Generate PCN
+        </h1>
+        <p class="mb-0 fs-6">Create Part Control Number with auto-assigned 5-digit identifier and printable barcode label</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <!-- PCN Generation Form -->
+    <div class="col-xl-7">
+        <div class="card pcn-card shadow-lg border-0">
+            <div class="card-header bg-primary text-white border-0">
+                <h5 class="mb-0">
+                    <i class="bi bi-file-earmark-plus me-2" style="color: #ffffff !important;"></i> PCN Information Form
+                </h5>
+            </div>
+            <div class="card-body p-4">
+                <form id="pcnForm">
+                    <!-- Primary Information -->
+                    <div class="mb-4">
+                        <h6 class="text-primary border-bottom pb-2 mb-3">
+                            <i class="bi bi-info-circle-fill me-2" style="color: #ffffff !important;"></i> Primary Information
+                        </h6>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="partNumberInput" class="form-label">
+                                        <i class="bi bi-hash me-1"></i> Part Number
+                                        <span class="badge bg-danger">Required</span>
+                                    </label>
+                                    <input type="text" class="form-control form-control-lg" id="partNumberInput" name="part_number" required
+                                           placeholder="e.g., 77890, 8034, 083636" autofocus>
+                                    <div class="form-text text-primary">
+                                        <i class="bi bi-arrow-right"></i> Job number or internal part number
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="mpnInput" class="form-label">
+                                        <i class="bi bi-gear-wide-connected me-1"></i> MPN
+                                    </label>
+                                    <input type="text" class="form-control form-control-lg" id="mpnInput" name="mpn"
+                                           placeholder="e.g., LTC6804-1">
+                                    <div class="form-text text-muted">Manufacturer Part Number</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-12">
+                                <div class="mb-3">
+                                    <label for="poNumberInput" class="form-label">
+                                        <i class="bi bi-receipt-cutoff me-1"></i> PO Number
+                                    </label>
+                                    <input type="text" class="form-control" id="poNumberInput" name="po_number"
+                                           placeholder="e.g., PO-2024-001">
+                                    <div class="form-text text-muted">
+                                        <i class="bi bi-arrow-right"></i> Purchase Order Number
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Additional Details -->
+                    <div class="mb-4">
+                        <h6 class="text-success border-bottom pb-2 mb-3">
+                            <i class="bi bi-cpu-fill me-2" style="color: #ffffff !important;"></i> Additional Details
+                        </h6>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="quantityInput" class="form-label">
+                                        <i class="bi bi-123 me-1"></i> Quantity
+                                    </label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="quantityInput" name="quantity" min="1"
+                                               placeholder="e.g., 100">
+                                        <span class="input-group-text">units</span>
+                                    </div>
+                                    <div class="form-text text-muted">Number of parts</div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="dateCodeInput" class="form-label">
+                                        <i class="bi bi-calendar-event me-1"></i> Date Code
+                                    </label>
+                                    <input type="text" class="form-control" id="dateCodeInput" name="date_code"
+                                           placeholder="e.g., 2024WK12">
+                                    <div class="form-text text-muted">Manufacturing date code</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Additional Information -->
+                    <div class="mb-4">
+                        <h6 class="text-warning border-bottom pb-2 mb-3">
+                            <i class="bi bi-droplet-fill me-2" style="color: #ffffff !important;"></i> Moisture & Sensitivity
+                        </h6>
+
+                        <div class="mb-3">
+                            <label for="msdInput" class="form-label">
+                                <i class="bi bi-shield-check me-1"></i> MSD Level
+                            </label>
+                            <select class="form-select form-select-lg" id="msdInput" name="msd">
+                                <option value="">Select MSD Level (optional)</option>
+                                <option value="Level 1">Level 1 - Unlimited floor life</option>
+                                <option value="Level 2">Level 2 - 1 year floor life</option>
+                                <option value="Level 3">Level 3 - 168 hours</option>
+                                <option value="Level 4">Level 4 - 72 hours</option>
+                                <option value="Level 5">Level 5 - 48 hours</option>
+                                <option value="Level 6">Level 6 - 6 hours</option>
+                                <option value="168hrs@30C">168hrs @ 30°C / 60% RH</option>
+                                <option value="Custom">Custom Level</option>
+                            </select>
+                            <div class="form-text text-warning">
+                                <i class="bi bi-exclamation-triangle me-1"></i> Moisture sensitivity classification
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <hr class="my-4">
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary btn-lg shadow-sm">
+                            <i class="bi bi-printer-fill me-2" style="color: #ffffff !important;"></i> Generate PCN & Print Label
+                        </button>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <button type="reset" class="btn btn-outline-secondary w-100">
+                                    <i class="bi bi-arrow-clockwise me-2" style="color: #ffffff !important;"></i> Reset
+                                </button>
+                            </div>
+                            <div class="col-6">
+                                <a href="{{ url_for('index') }}" class="btn btn-outline-secondary w-100">
+                                    <i class="bi bi-x-circle me-2" style="color: #ffffff !important;"></i> Cancel
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- PCN Preview & Print Section -->
+    <div class="col-xl-5">
+        <div class="card pcn-preview-card shadow-lg border-0 sticky-top" style="top: 80px;">
+            <div class="card-header bg-success text-white border-0">
+                <h5 class="mb-0">
+                    <i class="bi bi-eye-fill me-2" style="color: #ffffff !important;"></i> PCN Preview & Print
+                </h5>
+            </div>
+            <div class="card-body p-4">
+                <div id="pcnPreview" style="display: none;">
+                    <div class="pcn-preview text-center mb-3">
+                        <p class="text-muted mb-2 small text-uppercase fw-bold">Generated PCN Number</p>
+                        <div class="pcn-number-display mb-3" id="displayPCN">-----</div>
+                        <div class="badge bg-success fs-6 px-3 py-2 mb-3">
+                            <i class="bi bi-check-circle me-1"></i> Successfully Saved
+                        </div>
+                    </div>
+
+                    <div id="labelPreview" class="label-preview-box mb-3">
+                        <small class="text-muted">Label preview will appear here</small>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button id="printLabelBtn" class="btn btn-success btn-lg shadow-sm">
+                            <i class="bi bi-printer-fill me-2" style="color: #ffffff !important;"></i> Print Label
+                        </button>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <button id="generateAnotherBtn" class="btn btn-outline-primary w-100">
+                                    <i class="bi bi-plus-circle-fill me-2" style="color: #ffffff !important;"></i> Generate Another
+                                </button>
+                            </div>
+                            <div class="col-6">
+                                <button id="deletePCNBtn" class="btn btn-outline-danger w-100">
+                                    <i class="bi bi-trash-fill me-2" style="color: #ffffff !important;"></i> Delete PCN
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="pcnInstructions">
+                    <div class="instruction-card mb-3">
+                        <h6 class="text-primary mb-3">
+                            <i class="bi bi-lightbulb-fill me-2" style="color: #ffffff !important;"></i> How to Generate PCN
+                        </h6>
+                        <ol class="mb-0 ps-3 small">
+                            <li class="mb-2">Enter the required <strong>Part Number</strong> (job number)</li>
+                            <li class="mb-2">Add optional fields like PO, MPN, Quantity, Date Code</li>
+                            <li class="mb-2">Select MSD level if applicable</li>
+                            <li class="mb-2">Click <strong>"Generate PCN & Print Label"</strong></li>
+                            <li class="mb-2">System auto-assigns next 5-digit PCN number</li>
+                            <li>Print dialog opens automatically - select your printer and print!</li>
+                        </ol>
+                    </div>
+
+                    <div class="warning-card">
+                        <h6 class="text-warning mb-2">
+                            <i class="bi bi-exclamation-triangle-fill me-2" style="color: #ffffff !important;"></i> Important Notes
+                        </h6>
+                        <ul class="mb-0 ps-3 small">
+                            <li class="mb-1">PCN numbers are <strong>auto-incremented</strong> starting from 00001</li>
+                            <li class="mb-1">Each PCN is <strong>unique</strong> and cannot be reused</li>
+                            <li>Labels include CODE128 barcode for scanner compatibility</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PCN History Section -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card shadow-lg border-0">
+            <div class="card-header bg-info text-white border-0">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-clock-history me-2"></i> PCN History & Database
+                    </h5>
+                    <button class="btn btn-light btn-sm" onclick="loadPCNHistory()">
+                        <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <input type="text" class="form-control" id="searchPCN" placeholder="Search by PCN number...">
+                        </div>
+                        <div class="col-md-3">
+                            <input type="text" class="form-control" id="searchJob" placeholder="Search by Job...">
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select" id="searchPCBType">
+                                <option value="">All PCB Types</option>
+                                <option value="Bare">Bare</option>
+                                <option value="Partial">Partial</option>
+                                <option value="Completed">Completed</option>
+                                <option value="Ready to Ship">Ready to Ship</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <button class="btn btn-primary w-100" onclick="searchPCNHistory()">
+                                <i class="bi bi-search"></i> Search
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="pcnHistoryLoading" class="text-center py-5" style="display: none;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2 text-muted">Loading PCN history...</p>
+                </div>
+
+                <div id="pcnHistoryTable">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped table-bordered">
+                            <thead class="table-primary">
+                                <tr>
+                                    <th class="text-center" style="width: 80px;">PCN</th>
+                                    <th>Job Number</th>
+                                    <th class="text-center" style="width: 100px;">PCB Type</th>
+                                    <th class="text-center" style="width: 80px;">Quantity</th>
+                                    <th class="text-center" style="width: 100px;">Location</th>
+                                    <th class="text-center" style="width: 100px;">Work Order</th>
+                                    <th class="text-center" style="width: 100px;">Date Code</th>
+                                    <th class="text-center" style="width: 80px;">MSD Level</th>
+                                    <th class="text-center" style="width: 100px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pcnHistoryBody">
+                                <tr>
+                                    <td colspan="9" class="text-center text-muted py-4">
+                                        Click "Refresh" to load PCN history
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pagination Controls -->
+                    <div class="d-flex justify-content-between align-items-center mt-3">
+                        <div class="text-muted small" id="pcnRecordCount">
+                            <i class="bi bi-info-circle me-1"></i> Total records: 0
+                        </div>
+                        <nav aria-label="PCN History Pagination">
+                            <ul class="pagination pagination-sm mb-0" id="paginationControls">
+                                <!-- Pagination will be inserted here by JavaScript -->
+                            </ul>
+                        </nav>
+                        <div class="text-muted small" id="pageInfo">
+                            Page 1 of 1
+                        </div>
+                    </div>
+                </div>
+
+                <div id="pcnHistoryEmpty" class="text-center py-5" style="display: none;">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <p class="mt-3 text-muted">No PCN records found</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Printable Label (Hidden) - Positioned off-screen when not printing -->
+<div id="printableLabel" style="position: fixed; left: -9999px; top: -9999px;">
+    <!-- Label content will be generated here -->
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<!-- Zebra Browser Print SDK for direct printer communication -->
+<script type="text/javascript" src="https://www.zebra.com/content/dam/zebra_new_ia/en-us/software/printer-software/browser-print/BrowserPrint-3.1.250.min.js"></script>
+<script>
+// Clear any cached label on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const printableLabel = document.getElementById('printableLabel');
+    if (printableLabel) {
+        printableLabel.innerHTML = '';
+    }
+});
+</script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('pcnForm');
+    const pcnPreview = document.getElementById('pcnPreview');
+    const pcnInstructions = document.getElementById('pcnInstructions');
+    const displayPCN = document.getElementById('displayPCN');
+    const labelPreview = document.getElementById('labelPreview');
+    const printLabelBtn = document.getElementById('printLabelBtn');
+    const generateAnotherBtn = document.getElementById('generateAnotherBtn');
+    const printableLabel = document.getElementById('printableLabel');
+
+    let currentPCNData = null;
+
+    // Handle form submission
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        const submitBtn = form.querySelector('button[type="submit"]');
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creating PCN...';
+        submitBtn.disabled = true;
+
+        const formData = new FormData(form);
+        const data = Object.fromEntries(formData.entries());
+
+        // Use part_number as item (since we removed the duplicate field)
+        if (data.part_number) {
+            data.item = data.part_number;
+        }
+
+        // Validate required fields
+        if (!data.item && !data.part_number) {
+            showError('Part Number is required!');
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = false;
+            return;
+        }
+
+        try {
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+            const response = await fetch('/api/pcn/generate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify(data)
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to generate PCN');
+            }
+
+            const result = await response.json();
+            currentPCNData = result;
+
+            // Display PCN with animation
+            displayPCN.textContent = result.pcn_number;
+
+            // Generate label preview
+            generateLabelPreview(result);
+
+            // Show preview section with smooth transition
+            pcnInstructions.style.display = 'none';
+            pcnPreview.style.display = 'block';
+
+            showSuccess('PCN ' + result.pcn_number + ' generated successfully! Sending to printer...');
+
+            // Change button to "Processed" state - disabled and light blue
+            submitBtn.innerHTML = '<i class="bi bi-check-circle-fill me-2"></i>Processed';
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('btn-primary');
+            submitBtn.classList.add('btn-secondary');
+            submitBtn.style.opacity = '0.6';
+            submitBtn.style.cursor = 'not-allowed';
+
+            // Auto-print immediately - silent print using iframe
+            setTimeout(() => {
+                silentPrint(result.pcn_number);
+            }, 500);
+
+            // Auto-refresh PCN history table to show the new PCN
+            setTimeout(() => {
+                loadPCNHistory();
+            }, 1000);
+
+        } catch (error) {
+            console.error('Error:', error);
+            showError('Failed to generate PCN. Please try again.');
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = false;
+        }
+    });
+
+    // Generate label preview (matching bats.png format)
+    function generateLabelPreview(data) {
+        const barcodeData = data.pcn_number;
+
+        labelPreview.innerHTML = `
+            <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 1.4; border: 2px solid #000; padding: 10px; background: white;">
+                <!-- Top section with PCN, small barcode, QTY -->
+                <div style="display: grid; grid-template-columns: auto 1fr auto; align-items: center; margin-bottom: 6px;">
+                    <div style="margin-right: 8px;">
+                        <div style="font-weight: bold; font-size: 8px;">PCN</div>
+                        <div style="font-weight: bold; font-size: 14px;">${data.pcn_number}</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <svg id="previewTopBarcode" style="height: 25px;"></svg>
+                    </div>
+                    <div style="text-align: right; margin-left: 8px;">
+                        <div style="font-weight: bold; font-size: 8px;">QTY:</div>
+                        <div style="font-weight: bold; font-size: 14px;">${data.quantity || '0'}</div>
+                    </div>
+                </div>
+
+                <!-- Middle section -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; margin-bottom: 8px;">
+                    <div>
+                        <div style="font-size: 10px; margin-bottom: 2px;">
+                            <span style="font-weight: bold;">Item:</span> ${data.item || ''}
+                        </div>
+                        ${data.mpn ? `<div style="font-size: 10px; margin-bottom: 2px;"><span style="font-weight: bold;">MPN:</span> ${data.mpn}</div>` : ''}
+                        ${data.po_number ? `<div style="font-size: 10px;"><span style="font-weight: bold;">PO:</span></div><div style="font-size: 10px; margin-left: 15px;">${data.po_number}</div>` : ''}
+                    </div>
+                    <div style="text-align: right; font-size: 9px;">
+                        ${data.date_code ? `<div>DCC ${data.date_code}</div>` : ''}
+                        ${data.msd ? `<div>MSD ${data.msd.replace('Level ', '')}</div>` : ''}
+                    </div>
+                </div>
+
+                <!-- Barcode at bottom -->
+                <div style="text-align: center; border-top: 1px solid #ccc; padding-top: 6px;">
+                    <svg id="previewBarcode"></svg>
+                </div>
+            </div>
+        `;
+
+        // Generate small top barcode
+        JsBarcode("#previewTopBarcode", barcodeData, {
+            format: "CODE128",
+            width: 0.8,
+            height: 20,
+            displayValue: false,
+            margin: 0
+        });
+
+        // Generate large bottom barcode
+        JsBarcode("#previewBarcode", barcodeData, {
+            format: "CODE128",
+            width: 1.5,
+            height: 35,
+            displayValue: true,
+            fontSize: 10,
+            margin: 0
+        });
+
+        // Also generate printable version
+        generatePrintableLabel(data, barcodeData);
+    }
+
+    // Generate printable label (matching bats.png physical label format EXACTLY)
+    function generatePrintableLabel(data, barcodeData) {
+        printableLabel.innerHTML = `
+            <div style="width: 4in; height: 2in; padding: 0.2in; font-family: Arial, sans-serif; border: 2px solid #000; box-sizing: border-box; background: white;">
+                <!-- Top row: PCN left, small barcode middle, QTY right -->
+                <div style="display: grid; grid-template-columns: auto 1fr auto; align-items: center; margin-bottom: 6px;">
+                    <div style="margin-right: 10px;">
+                        <div style="font-size: 10px; font-weight: bold;">PCN</div>
+                        <div style="font-size: 18px; font-weight: bold;">${data.pcn_number}</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <svg id="topBarcode" style="height: 30px;"></svg>
+                    </div>
+                    <div style="text-align: right; margin-left: 10px;">
+                        <div style="font-size: 10px; font-weight: bold;">QTY:</div>
+                        <div style="font-size: 18px; font-weight: bold;">${data.quantity || '0'}</div>
+                    </div>
+                </div>
+
+                <!-- Middle section: Left side (Item, MPN, PO) and Right side (DCC, MSD) -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; margin-bottom: 10px;">
+                    <!-- Left column -->
+                    <div>
+                        <div style="font-size: 11px; margin-bottom: 2px;">
+                            <span style="font-weight: bold;">Item:</span> ${data.item || ''}
+                        </div>
+                        ${data.mpn ? `<div style="font-size: 11px; margin-bottom: 2px;"><span style="font-weight: bold;">MPN:</span> ${data.mpn}</div>` : ''}
+                        ${data.po_number ? `<div style="font-size: 11px; margin-bottom: 2px;"><span style="font-weight: bold;">PO:</span></div><div style="font-size: 11px; margin-left: 20px;">${data.po_number}</div>` : ''}
+                    </div>
+
+                    <!-- Right column -->
+                    <div style="text-align: right; font-size: 10px;">
+                        ${data.date_code ? `<div>DCC ${data.date_code}</div>` : ''}
+                        ${data.msd ? `<div>MSD ${data.msd.replace('Level ', '')}</div>` : ''}
+                    </div>
+                </div>
+
+                <!-- Bottom barcode -->
+                <div style="text-align: center; margin-top: auto; padding-top: 6px; border-top: 1px solid #ccc;">
+                    <svg id="printBarcode" style="width: 100%;"></svg>
+                </div>
+            </div>
+        `;
+
+        // Generate small top barcode
+        setTimeout(() => {
+            JsBarcode("#topBarcode", barcodeData, {
+                format: "CODE128",
+                width: 1,
+                height: 25,
+                displayValue: false,
+                margin: 0
+            });
+
+            // Generate large bottom barcode
+            JsBarcode("#printBarcode", barcodeData, {
+                format: "CODE128",
+                width: 2,
+                height: 45,
+                displayValue: true,
+                fontSize: 14,
+                margin: 0
+            });
+        }, 100);
+    }
+
+    // Print label - Open dedicated print page in new window
+    printLabelBtn.addEventListener('click', function() {
+        // Make sure printable label is ready
+        if (!currentPCNData) {
+            showError('No PCN data available to print');
+            return;
+        }
+
+        // Silent print directly to printer
+        silentPrint(currentPCNData.pcn_number);
+    });
+
+    // Listen for print cancel/complete
+    window.addEventListener('afterprint', function() {
+        // Move label back off-screen
+        printableLabel.style.position = 'fixed';
+        printableLabel.style.left = '-9999px';
+        printableLabel.style.top = '-9999px';
+    });
+
+    // Delete PCN button
+    const deletePCNBtn = document.getElementById('deletePCNBtn');
+    deletePCNBtn.addEventListener('click', async function() {
+        if (!currentPCNData || !currentPCNData.pcn_number) {
+            showError('No PCN to delete');
+            return;
+        }
+
+        // Confirm deletion
+        if (!confirm(`Are you sure you want to delete PCN ${currentPCNData.pcn_number}?\n\nThis action cannot be undone. The PCN will be permanently removed from the database.`)) {
+            return;
+        }
+
+        const originalText = deletePCNBtn.innerHTML;
+        deletePCNBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Deleting...';
+        deletePCNBtn.disabled = true;
+
+        try {
+            const response = await fetch(`/api/pcn/delete/${currentPCNData.pcn_number}`, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                showSuccess(`PCN ${currentPCNData.pcn_number} deleted successfully!`);
+
+                // Reset form and go back to entry mode
+                form.reset();
+                pcnPreview.style.display = 'none';
+                pcnInstructions.style.display = 'block';
+                currentPCNData = null;
+                document.getElementById('partNumberInput').focus();
+
+                // Reload history if it's visible
+                loadPCNHistory();
+            } else {
+                showError(result.error || 'Failed to delete PCN');
+                deletePCNBtn.innerHTML = originalText;
+                deletePCNBtn.disabled = false;
+            }
+        } catch (error) {
+            console.error('Error deleting PCN:', error);
+            showError('Failed to delete PCN. Please try again.');
+            deletePCNBtn.innerHTML = originalText;
+            deletePCNBtn.disabled = false;
+        }
+    });
+
+    // Generate another PCN
+    generateAnotherBtn.addEventListener('click', function() {
+        form.reset();
+        pcnPreview.style.display = 'none';
+        pcnInstructions.style.display = 'block';
+        currentPCNData = null;
+
+        // Reset submit button to original state
+        const submitBtn = form.querySelector('button[type="submit"]');
+        submitBtn.innerHTML = '<i class="bi bi-printer-fill me-2" style="color: #ffffff !important;"></i> Generate PCN & Print Label';
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('btn-secondary');
+        submitBtn.classList.add('btn-primary');
+        submitBtn.style.opacity = '1';
+        submitBtn.style.cursor = 'pointer';
+
+        document.getElementById('partNumberInput').focus();
+    });
+
+    // Helper functions
+    function showSuccess(message) {
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-success alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3';
+        alert.style.zIndex = '9999';
+        alert.innerHTML = `
+            <i class="bi bi-check-circle-fill me-2" style="color: #ffffff !important;"></i>
+            <strong>Success!</strong> ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(alert);
+        setTimeout(() => alert.remove(), 5000);
+    }
+
+    function showError(message) {
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-danger alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3';
+        alert.style.zIndex = '9999';
+        alert.innerHTML = `
+            <i class="bi bi-exclamation-triangle-fill me-2" style="color: #ffffff !important;"></i>
+            <strong>Error!</strong> ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(alert);
+        setTimeout(() => alert.remove(), 5000);
+    }
+});
+
+// PCN History with Pagination
+let allPCNRecords = [];
+let currentPage = 1;
+const recordsPerPage = 10;
+
+function loadPCNHistory() {
+    const historyLoading = document.getElementById('pcnHistoryLoading');
+    const historyTable = document.getElementById('pcnHistoryTable');
+    const historyEmpty = document.getElementById('pcnHistoryEmpty');
+    const historyBody = document.getElementById('pcnHistoryBody');
+
+    historyLoading.style.display = 'block';
+    historyTable.style.display = 'none';
+    historyEmpty.style.display = 'none';
+
+    // Fetch ALL records (no limit) with cache-busting
+    const timestamp = Date.now();
+    fetch(`/api/pcn/history?limit=10000&_=${timestamp}`, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: {
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        }
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            console.log('PCN History loaded:', data.data ? data.data.length : 0, 'records');
+            historyLoading.style.display = 'none';
+
+            if (data.success && data.data && data.data.length > 0) {
+                allPCNRecords = data.data;
+                currentPage = 1;
+                historyTable.style.display = 'block';
+                displayPCNHistoryPage(currentPage);
+            } else {
+                console.warn('No PCN data found');
+                historyEmpty.style.display = 'block';
+            }
+        })
+        .catch(error => {
+            console.error('Error loading PCN history:', error);
+            historyLoading.style.display = 'none';
+            historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-2"></i>Error loading PCN history: ' + error.message + '</td></tr>';
+            historyTable.style.display = 'block';
+        });
+}
+
+function searchPCNHistory() {
+    const pcn = document.getElementById('searchPCN').value.trim();
+    const job = document.getElementById('searchJob').value.trim();
+    const pcbType = document.getElementById('searchPCBType').value;
+
+    const historyLoading = document.getElementById('pcnHistoryLoading');
+    const historyTable = document.getElementById('pcnHistoryTable');
+    const historyEmpty = document.getElementById('pcnHistoryEmpty');
+    const historyBody = document.getElementById('pcnHistoryBody');
+
+    // If all filters are empty, just load all records
+    if (!pcn && !job && !pcbType) {
+        loadPCNHistory();
+        return;
+    }
+
+    historyLoading.style.display = 'block';
+    historyTable.style.display = 'none';
+    historyEmpty.style.display = 'none';
+
+    // Add cache-busting timestamp
+    const timestamp = Date.now();
+    let url = `/api/pcn/history?limit=10000&_=${timestamp}`;
+    if (pcn) url += '&pcn=' + encodeURIComponent(pcn);
+    if (job) url += '&job=' + encodeURIComponent(job);
+    if (pcbType) url += '&pcb_type=' + encodeURIComponent(pcbType);
+
+    fetch(url, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: {
+            'Accept': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        }
+    })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            historyLoading.style.display = 'none';
+
+            if (data.success && data.data && data.data.length > 0) {
+                allPCNRecords = data.data;
+                currentPage = 1;
+                historyTable.style.display = 'block';
+                displayPCNHistoryPage(currentPage);
+            } else {
+                historyEmpty.style.display = 'block';
+                historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-5"><i class="bi bi-search me-2"></i>No PCN records match your search criteria</td></tr>';
+            }
+        })
+        .catch(error => {
+            console.error('Error searching PCN history:', error);
+            historyLoading.style.display = 'none';
+            historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-2"></i>Error searching PCN history: ' + error.message + '</td></tr>';
+            historyTable.style.display = 'block';
+        });
+}
+
+function displayPCNHistoryPage(page) {
+    const startIndex = (page - 1) * recordsPerPage;
+    const endIndex = startIndex + recordsPerPage;
+    const pageRecords = allPCNRecords.slice(startIndex, endIndex);
+
+    displayPCNHistory(pageRecords);
+    updatePagination(page);
+}
+
+function updatePagination(page) {
+    const totalPages = Math.ceil(allPCNRecords.length / recordsPerPage);
+    const paginationControls = document.getElementById('paginationControls');
+    const pageInfo = document.getElementById('pageInfo');
+    const recordCount = document.getElementById('pcnRecordCount');
+
+    // Update record count
+    const startRecord = (page - 1) * recordsPerPage + 1;
+    const endRecord = Math.min(page * recordsPerPage, allPCNRecords.length);
+    recordCount.innerHTML = `<i class="bi bi-info-circle me-1"></i> Showing ${startRecord}-${endRecord} of <strong>${allPCNRecords.length}</strong> records`;
+
+    // Update page info
+    pageInfo.textContent = `Page ${page} of ${totalPages}`;
+
+    // Build pagination controls
+    let paginationHTML = '';
+
+    // Previous button
+    paginationHTML += `
+        <li class="page-item ${page === 1 ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="goToPage(${page - 1}); return false;">
+                <i class="bi bi-chevron-left"></i>
+            </a>
+        </li>
+    `;
+
+    // Page numbers
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, page - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage < maxVisiblePages - 1) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    // First page
+    if (startPage > 1) {
+        paginationHTML += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="goToPage(1); return false;">1</a>
+            </li>
+        `;
+        if (startPage > 2) {
+            paginationHTML += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+        }
+    }
+
+    // Page numbers
+    for (let i = startPage; i <= endPage; i++) {
+        paginationHTML += `
+            <li class="page-item ${i === page ? 'active' : ''}">
+                <a class="page-link" href="#" onclick="goToPage(${i}); return false;">${i}</a>
+            </li>
+        `;
+    }
+
+    // Last page
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            paginationHTML += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+        }
+        paginationHTML += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="goToPage(${totalPages}); return false;">${totalPages}</a>
+            </li>
+        `;
+    }
+
+    // Next button
+    paginationHTML += `
+        <li class="page-item ${page === totalPages ? 'disabled' : ''}">
+            <a class="page-link" href="#" onclick="goToPage(${page + 1}); return false;">
+                <i class="bi bi-chevron-right"></i>
+            </a>
+        </li>
+    `;
+
+    paginationControls.innerHTML = paginationHTML;
+}
+
+function goToPage(page) {
+    const totalPages = Math.ceil(allPCNRecords.length / recordsPerPage);
+    if (page < 1 || page > totalPages) return;
+
+    currentPage = page;
+    displayPCNHistoryPage(page);
+
+    // Scroll to top of table
+    document.getElementById('pcnHistoryTable').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Add enter key support for search fields
+document.addEventListener('DOMContentLoaded', function() {
+    ['searchPCN', 'searchJob'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) {
+            input.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    searchPCNHistory();
+                }
+            });
+        }
+    });
+});
+
+function displayPCNHistory(data) {
+    const historyBody = document.getElementById('pcnHistoryBody');
+    const recordCount = document.getElementById('pcnRecordCount');
+
+    historyBody.innerHTML = data.map((item, index) => {
+        const generatedDate = item.generated_at ? new Date(item.generated_at).toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        }) : 'N/A';
+
+        const pcbTypeBadge = item.pcb_type ?
+            `<span class="badge bg-${item.pcb_type === 'Bare' ? 'secondary' : item.pcb_type === 'Partial' ? 'warning text-dark' : item.pcb_type === 'Completed' ? 'info' : 'success'}">${item.pcb_type}</span>` :
+            '<span class="text-muted">-</span>';
+
+        const rowClass = index % 2 === 0 ? '' : 'table-light';
+
+        const dateCode = item.date_code || '-';
+        const msdLevel = item.msd_level || '-';
+
+        return `
+            <tr class="${rowClass}">
+                <td class="text-center"><span class="badge bg-primary fs-6">${item.pcn}</span></td>
+                <td><strong>${item.job || '<span class="text-muted">-</span>'}</strong></td>
+                <td class="text-center">${pcbTypeBadge}</td>
+                <td class="text-end"><strong>${item.qty ? item.qty.toLocaleString() : '<span class="text-muted">-</span>'}</strong></td>
+                <td class="text-center"><span class="badge bg-light text-dark border">${item.location || '-'}</span></td>
+                <td class="text-center">${item.work_order ? '<span class="badge bg-warning text-dark">' + item.work_order + '</span>' : '<span class="text-muted">-</span>'}</td>
+                <td class="text-center"><code class="text-primary">${dateCode}</code></td>
+                <td class="text-center"><span class="badge bg-info">${msdLevel}</span></td>
+                <td class="text-center">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button class="btn btn-outline-primary" onclick="silentPrint('${item.pcn}')" title="Print PCN Label">
+                            <i class="bi bi-printer"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="deletePCNFromHistory('${item.pcn}')" title="Delete PCN">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    // Update record count
+    if (recordCount) {
+        recordCount.innerHTML = `<i class="bi bi-info-circle me-1"></i> Total records: <strong>${data.length}</strong>`;
+    }
+}
+
+// Setup event delegation for action buttons (print/delete) - only once
+let actionButtonsInitialized = false;
+
+function setupActionButtons() {
+    if (actionButtonsInitialized) return;
+
+    // Delegate from document body to catch all dynamically added buttons
+    document.body.addEventListener('click', function(e) {
+        const button = e.target.closest('button[data-action]');
+        if (!button) return;
+
+        const pcn = button.getAttribute('data-pcn');
+        const action = button.getAttribute('data-action');
+
+        console.log('Button clicked:', action, 'PCN:', pcn);
+
+        if (action === 'print') {
+            e.preventDefault();
+            e.stopPropagation();
+            printPCNLabel({pcn: pcn});
+        } else if (action === 'delete') {
+            e.preventDefault();
+            e.stopPropagation();
+            deletePCNFromHistory(pcn);
+        }
+    });
+
+    actionButtonsInitialized = true;
+    console.log('Action buttons initialized');
+}
+
+// Silent Print Function - GLOBAL SCOPE with Zebra Browser Print SDK
+window.silentPrint = async function(pcnNumber) {
+    console.log('=== SILENT PRINT INITIATED ===');
+    console.log('PCN Number:', pcnNumber);
+
+    if (!pcnNumber) {
+        console.error('ERROR: No PCN number provided');
+        alert('Error: No PCN number provided');
+        return;
+    }
+
+    // First, try TRUE silent printing with Zebra Browser Print
+    try {
+        console.log('🖨️ Attempting Zebra Browser Print...');
+
+        // Check if BrowserPrint is available
+        if (typeof BrowserPrint === 'undefined') {
+            console.warn('⚠️ Zebra Browser Print SDK not available, falling back to preview');
+            showPrintPreview(pcnNumber);
+            return;
+        }
+
+        // Fetch PCN data for ZPL generation
+        const response = await fetch(`/api/pcn/details/${pcnNumber}`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch PCN details');
+        }
+
+        const result = await response.json();
+        if (!result.success) {
+            throw new Error('PCN not found');
+        }
+
+        const data = result;
+        console.log('📦 PCN Data:', data);
+
+        // Get available Zebra printers
+        BrowserPrint.getDefaultDevice('printer', function(printer) {
+            if (printer && printer.name) {
+                console.log('✅ Zebra Printer Found:', printer.name);
+
+                // Generate ZPL for 4" x 2" label
+                const zpl = generateZPL(data);
+                console.log('📄 Generated ZPL:', zpl);
+
+                // Send ZPL to printer - TRUE SILENT PRINT!
+                printer.send(zpl, function(success) {
+                    console.log('✅ Label sent to printer successfully!');
+                    showSuccess(`Label printing on ${printer.name}`);
+                }, function(error) {
+                    console.error('❌ Print error:', error);
+                    showError('Print failed: ' + error);
+                    // Fallback to preview on error
+                    showPrintPreview(pcnNumber);
+                });
+            } else {
+                console.warn('⚠️ No Zebra printer found, falling back to preview');
+                showPrintPreview(pcnNumber);
+            }
+        }, function(error) {
+            console.warn('⚠️ Zebra printer detection failed:', error);
+            console.log('Falling back to print preview');
+            showPrintPreview(pcnNumber);
+        });
+
+    } catch (error) {
+        console.error('ERROR in silent print:', error);
+        console.log('Falling back to print preview');
+        showPrintPreview(pcnNumber);
+    }
+};
+
+// Fallback: Show print preview (original method)
+function showPrintPreview(pcnNumber) {
+    console.log('📋 Opening print preview...');
+
+    try {
+        // Remove any existing print iframe
+        const existingIframe = document.getElementById('printIframe');
+        const existingBackdrop = document.getElementById('printBackdrop');
+        if (existingIframe) existingIframe.remove();
+        if (existingBackdrop) existingBackdrop.remove();
+
+        // Create backdrop
+        const backdrop = document.createElement('div');
+        backdrop.id = 'printBackdrop';
+        backdrop.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.7);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        `;
+        backdrop.onclick = function() {
+            iframe.remove();
+            backdrop.remove();
+        };
+
+        // Create iframe
+        const iframe = document.createElement('iframe');
+        iframe.id = 'printIframe';
+        iframe.style.cssText = `
+            width: 900px;
+            height: 700px;
+            border: 3px solid #333;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            background-color: white;
+        `;
+
+        document.body.appendChild(backdrop);
+        backdrop.appendChild(iframe);
+        iframe.src = `/print-label/${pcnNumber}`;
+
+        console.log('✅ Print preview opened');
+    } catch (error) {
+        console.error('ERROR creating print preview:', error);
+        alert('Error opening print preview: ' + error.message);
+    }
+}
+
+// Generate ZPL code for Zebra thermal printers (4" x 2" label)
+function generateZPL(data) {
+    const pcn = data.pcn_number || data.pcn || '';
+    const item = data.item || data.job || data.part_number || '';
+    const mpn = data.mpn || '';
+    const po = data.po_number || '';
+    const qty = data.quantity || '0';
+    const dc = data.date_code || '';
+    const msd = data.msd || data.msd_level || '';
+
+    // ZPL for 4" x 2" label (matches bats.png format)
+    return `^XA
+^FO50,30^A0N,30,30^FDPCN^FS
+^FO50,65^A0N,50,50^FD${pcn}^FS
+
+^FO450,30^A0N,30,30^FDQTY:^FS
+^FO450,65^A0N,50,50^FD${qty}^FS
+
+^FO50,140^BY2,2,40^BCN,40,N,N,N^FD${pcn}^FS
+
+^FO50,210^A0N,25,25^FDItem: ${item}^FS
+${mpn ? `^FO50,240^A0N,25,25^FDMPN: ${mpn}^FS` : ''}
+${po ? `^FO50,270^A0N,25,25^FDPO: ${po}^FS` : ''}
+
+${dc ? `^FO550,210^A0N,20,20^FDDCC ${dc}^FS` : ''}
+${msd ? `^FO550,235^A0N,20,20^FDMSD ${msd}^FS` : ''}
+
+^FO50,320^BY3,3,60^BCN,60,Y,N,N^FD${pcn}^FS
+
+^XZ`;
+}
+
+console.log('✅ silentPrint function registered globally');
+
+// Print PCN Label Function
+function printPCNLabel(item) {
+    const pcn = item.pcn || '';
+
+    if (!pcn) {
+        alert('No PCN number available');
+        return;
+    }
+
+    // Silent print directly to printer
+    silentPrint(pcn);
+}
+
+// Delete PCN from History Table
+async function deletePCNFromHistory(pcnNumber) {
+    if (!pcnNumber) {
+        alert('No PCN number provided');
+        return;
+    }
+
+    // Confirm deletion
+    if (!confirm(`Are you sure you want to delete PCN ${pcnNumber}?\n\nThis action cannot be undone. The PCN will be permanently removed from the database.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/pcn/delete/${pcnNumber}`, {
+            method: 'DELETE',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+            // Show success message
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-success alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3';
+            alert.style.zIndex = '9999';
+            alert.innerHTML = `
+                <i class="bi bi-check-circle-fill me-2"></i>
+                <strong>Success!</strong> PCN ${pcnNumber} deleted successfully!
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(alert);
+            setTimeout(() => alert.remove(), 5000);
+
+            // Reload the history table
+            loadPCNHistory();
+        } else {
+            alert(`Failed to delete PCN: ${result.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error deleting PCN:', error);
+        alert('Failed to delete PCN. Please try again.');
+    }
+}
+
+// Auto-load PCN history on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize action buttons first
+    setupActionButtons();
+
+    // Load PCN history automatically after a short delay
+    setTimeout(() => {
+        loadPCNHistory();
+    }, 500);
+});
+</script>
+{% endblock %}

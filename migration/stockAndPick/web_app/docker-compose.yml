@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  # Flask Web Application
+  web_app:
+    build:
+      context: .
+      dockerfile: Dockerfile.webapp
+    container_name: stockandpick_webapp
+    environment:
+      - FLASK_ENV=production
+      - FLASK_DEBUG=False
+      - DATABASE_URL=postgresql://stockpick_user:stockpick_pass@aci-database:5432/pcb_inventory
+    ports:
+      - "5002:5000"
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - aci-network
+
+networks:
+  aci-network:
+    external: true
+    name: db-consolidation_aci-network

@@ -1,0 +1,1072 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);">
+    <div class="col-md-8">
+        <h1 class="h2 mb-2">
+            <i class="bi bi-plus-circle-fill me-2"></i> Stock Electronic Parts
+        </h1>
+        <p class="mb-0 fs-6">Add components to inventory • Manage PCB stock levels • Track locations</p>
+    </div>
+    <div class="col-md-4 text-end">
+        <a href="{{ url_for('inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
+            <i class="bi bi-table"></i> View Inventory
+        </a>
+        <a href="{{ url_for('pick') }}" class="btn btn-light btn-lg fw-bold">
+            <i class="bi bi-dash-circle"></i> Pick Parts
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row g-4">
+        <!-- Stock Form -->
+        <div class="col-xl-7">
+            <div class="card border-0 shadow-lg">
+                <div class="card-header bg-white border-0 pb-0">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="text-primary mb-1">
+                                <i class="bi bi-plus-circle-fill me-2"></i> Add to Inventory
+                            </h4>
+                            <p class="text-muted small mb-0">Fill out the form below to stock new parts</p>
+                        </div>
+                        <div class="badge bg-primary bg-opacity-10 text-primary fs-6 px-3 py-2">
+                            <i class="bi bi-shield-check"></i> Secure
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body pt-4">
+                <form method="POST" class="needs-validation" novalidate>
+                    {{ form.hidden_tag() }}
+                    
+                    <!-- Part Identification Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-primary border-bottom pb-2 mb-3">
+                                <i class="bi bi-tag-fill me-2"></i> Part Identification
+                                <span id="scanIndicator" class="badge bg-primary ms-2" style="display: none;">
+                                    <i class="bi bi-upc-scan"></i> Scanning...
+                                </span>
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="pcnInput" class="form-label fw-semibold text-dark">PCN Number</label>
+                                <input type="text" class="form-control form-control-lg border-2" id="pcnInput" name="pcn_number" placeholder="e.g., 00001, 00523">
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-upc-scan"></i> Part Control Number (optional)
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.mpn.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.mpn(class="form-control form-control-lg border-2", placeholder="e.g., MPN12345, LTC6804-1", id="mpnInput") }}
+                                {% if form.mpn.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.mpn.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-cpu"></i> Manufacturing Part Number from supplier
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Additional Part Info Section -->
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.part_number.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.part_number(class="form-control form-control-lg border-2", placeholder="e.g., 083636, RC0603FR-07383KL", id="partNumberInput") }}
+                                {% if form.part_number.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.part_number.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-tag"></i> Internal part number/component identifier
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.po.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.po(class="form-control form-control-lg border-2", placeholder="e.g., PO-2024-001, Purchase-12345", id="poInput") }}
+                                {% if form.po.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.po.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-receipt"></i> Purchase Order number (optional)
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Component Details Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-primary border-bottom pb-2 mb-3">
+                                <i class="bi bi-cpu-fill me-2"></i> Component Specifications
+                            </h6>
+                        </div>
+                        <div class="col-md-12">
+                            <div class="mb-3">
+                                {{ form.quantity.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    {{ form.quantity(class="form-control form-control-lg border-2", placeholder="Enter quantity", min="1", step="1") }}
+                                    <span class="input-group-text bg-primary text-white fw-semibold">units</span>
+                                </div>
+                                {% if form.quantity.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.quantity.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-plus-circle"></i> Number of parts to add to inventory
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Optional Details Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-secondary border-bottom pb-2 mb-3">
+                                <i class="bi bi-gear-fill me-2"></i> Additional Information
+                                <small class="text-muted fw-normal">(Optional)</small>
+                            </h6>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                {{ form.dc.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.dc(class="form-control border-2", placeholder="e.g., 2024WK01") }}
+                                {% if form.dc.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.dc.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-calendar"></i> Manufacturing date code
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <div class="mb-3">
+                                {{ form.msd.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.msd(class="form-control border-2", placeholder="e.g., Level 3, 168hrs@30°C/60%RH") }}
+                                {% if form.msd.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.msd.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-droplet"></i> Moisture sensitivity device level
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Storage & Security Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-primary border-bottom pb-2 mb-3">
+                                <i class="bi bi-shield-lock-fill me-2"></i> Storage & Security
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.location.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    <span class="input-group-text bg-primary text-white">
+                                        <i class="bi bi-geo-alt-fill"></i>
+                                    </span>
+                                    {{ form.location(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999, A1, Shelf-1, Rack-B2") }}
+                                </div>
+                                {% if form.location.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.location.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-geo-alt"></i> Storage location for these PCBs
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.itar_classification.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.itar_classification(class="form-select form-select-lg border-2", id="itarClassification") }}
+                                {% if form.itar_classification.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.itar_classification.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-shield-check"></i> Export control classification
+                                    {% if not user_can_see_itar %}
+                                        <br><span class="text-danger small">(ITAR items require special authorization)</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Export Notes Section (Hidden by default) -->
+                    <div class="row mb-4" id="exportNotesDiv" style="display: none;">
+                        <div class="col-12">
+                            <div class="alert alert-warning border-2 border-warning">
+                                <h6 class="text-warning mb-3">
+                                    <i class="bi bi-exclamation-triangle-fill me-2"></i> Export Control Notes Required
+                                </h6>
+                                {{ form.export_control_notes.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.export_control_notes(class="form-control border-warning", placeholder="Enter export control notes or restrictions", rows="3") }}
+                                {% if form.export_control_notes.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.export_control_notes.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-warning">
+                                    <i class="bi bi-info-circle"></i> Additional notes about export restrictions or compliance requirements
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Action Buttons -->
+                    <div class="row">
+                        <div class="col-12">
+                            <hr class="mb-4">
+                            <div class="d-flex gap-3 justify-content-between">
+                                <a href="{{ url_for('index') }}" class="btn btn-outline-secondary btn-lg">
+                                    <i class="bi bi-arrow-left"></i> Back to Dashboard
+                                </a>
+                                <div class="d-flex gap-2">
+                                    <button type="reset" class="btn btn-outline-secondary btn-lg">
+                                        <i class="bi bi-arrow-clockwise"></i> Reset Form
+                                    </button>
+                                    {{ form.submit(class="btn btn-primary btn-lg px-5") }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Instructions and Information -->
+    <div class="col-xl-5">
+        <div class="row g-4">
+            <!-- Quick Guide Card -->
+            <div class="col-12">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-header bg-primary text-white border-0">
+                        <h5 class="mb-0">
+                            <i class="bi bi-lightbulb-fill me-2" style="color: #ffffff !important;"></i> Quick Guide
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <div class="d-flex align-items-start">
+                                    <div class="badge bg-primary rounded-pill me-3 p-2">1</div>
+                                    <div>
+                                        <h6 class="mb-1">Part Identification</h6>
+                                        <p class="text-muted mb-0 small">Enter part number & work order</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="d-flex align-items-start">
+                                    <div class="badge bg-primary rounded-pill me-3 p-2">2</div>
+                                    <div>
+                                        <h6 class="mb-1">Component Details</h6>
+                                        <p class="text-muted mb-0 small">Specify type & quantity</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <div class="d-flex align-items-start">
+                                    <div class="badge bg-primary rounded-pill me-3 p-2">3</div>
+                                    <div>
+                                        <h6 class="mb-1">Storage & Security</h6>
+                                        <p class="text-muted mb-0 small">Set location & ITAR classification</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-primary alert-dismissible fade show border-0 mt-3 mb-0" style="background-color: rgba(30, 64, 175, 0.1);">
+                            <i class="bi bi-info-circle"></i>
+                            <small>
+                                <strong>Tip:</strong> Use the <i class="bi bi-upc-scan"></i> scan button for quick part entry
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+</div>
+
+<!-- Recent Stock Operations -->
+<div class="container-fluid mt-5">
+    <div class="row">
+        <div class="col-12">
+            <div class="card border-0 shadow-lg">
+                <div class="card-header bg-primary text-white border-0">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <h5 class="mb-0">
+                            <i class="bi bi-clock-history me-2"></i> Recent Stock Operations
+                        </h5>
+                        <span class="badge bg-white text-primary">Live Updates</span>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div id="recent-stock-operations" class="p-4">
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="text-muted h6">Loading recent operations...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Scanner Modal -->
+<div class="modal fade" id="scannerModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-upc-scan text-primary"></i> Scan Barcode
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="stopScanner()"></button>
+            </div>
+            <div class="modal-body text-center">
+                <div id="scanner" style="width: 100%; height: 400px; border: 2px solid #dee2e6; border-radius: 8px; overflow: hidden;"></div>
+                <div class="mt-3">
+                    <p class="text-muted mb-2">
+                        <i class="bi bi-camera"></i> Position barcode within the camera view
+                    </p>
+                    <p class="small text-info">
+                        Supports most barcode formats including Code 128, EAN, UPC, Code 39, and more
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" onclick="stopScanner()">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Quagga.js for barcode scanning -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<script>
+// ==================== USB HID BARCODE SCANNER SUPPORT ====================
+// USB HID scanners type characters rapidly followed by Enter/Tab
+// This global listener captures barcode input and auto-fills form fields
+
+let scanBuffer = '';
+let scanTimeout = null;
+const SCAN_TIMEOUT_MS = 100; // Time between rapid keystrokes (HID scanners are very fast)
+const MIN_SCAN_LENGTH = 3; // Minimum barcode length
+
+document.addEventListener('keypress', function(e) {
+    // Only capture scans when not typing in a textarea or already focused on form fields
+    const activeElement = document.activeElement;
+    const isFormField = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT');
+
+    // If Enter/Tab is pressed and we have buffered data, it's likely a barcode scan
+    if ((e.key === 'Enter' || e.key === 'Tab') && scanBuffer.length >= MIN_SCAN_LENGTH && !isFormField) {
+        e.preventDefault();
+        console.log('USB HID Barcode detected:', scanBuffer);
+        showScanIndicator();
+        parseAndFillBarcode(scanBuffer.trim());
+        scanBuffer = '';
+        if (scanTimeout) clearTimeout(scanTimeout);
+        hideScanIndicator();
+        return;
+    }
+
+    // Buffer characters for potential barcode scan
+    if (e.key !== 'Enter' && e.key !== 'Tab' && !isFormField) {
+        scanBuffer += e.key;
+
+        // Show scanning indicator
+        if (scanBuffer.length === 1) {
+            showScanIndicator();
+        }
+
+        // Reset buffer after timeout (human typing is slower than scanner)
+        if (scanTimeout) clearTimeout(scanTimeout);
+        scanTimeout = setTimeout(function() {
+            if (scanBuffer.length >= MIN_SCAN_LENGTH) {
+                console.log('USB HID Barcode detected (timeout):', scanBuffer);
+                parseAndFillBarcode(scanBuffer.trim());
+                hideScanIndicator();
+            } else {
+                hideScanIndicator();
+            }
+            scanBuffer = '';
+        }, SCAN_TIMEOUT_MS);
+    }
+});
+
+// Visual feedback functions
+function showScanIndicator() {
+    const indicator = document.getElementById('scanIndicator');
+    if (indicator) {
+        indicator.style.display = 'inline-block';
+    }
+}
+
+function hideScanIndicator() {
+    const indicator = document.getElementById('scanIndicator');
+    if (indicator) {
+        setTimeout(() => {
+            indicator.style.display = 'none';
+        }, 1000);
+    }
+}
+
+// ==================== MAIN INITIALIZATION ====================
+document.addEventListener('DOMContentLoaded', function() {
+    // Load recent stock operations
+    loadRecentStockOperations();
+
+    // Auto-focus on PCN number field (first field)
+    const pcnField = document.getElementById('pcnInput');
+    if (pcnField) {
+        pcnField.focus();
+
+        // Add event listener for manual PCN input to auto-populate fields
+        let pcnInputTimeout = null;
+        pcnField.addEventListener('input', function(e) {
+            const pcnValue = e.target.value.trim();
+
+            // Clear previous timeout
+            if (pcnInputTimeout) {
+                clearTimeout(pcnInputTimeout);
+            }
+
+            // Only fetch if PCN has 1-5 digits (valid PCN range)
+            if (pcnValue && /^\d{1,5}$/.test(pcnValue)) {
+                // Wait 500ms after user stops typing before fetching
+                pcnInputTimeout = setTimeout(function() {
+                    console.log('🔍 Auto-fetching PCN details for:', pcnValue);
+                    fetchAndPopulatePCNDetails(pcnValue);
+                }, 500);
+            }
+        });
+
+        // Also trigger on blur (when user clicks away from field)
+        pcnField.addEventListener('blur', function(e) {
+            const pcnValue = e.target.value.trim();
+            if (pcnValue && /^\d{1,5}$/.test(pcnValue)) {
+                console.log('🔍 Fetching PCN details on blur:', pcnValue);
+                fetchAndPopulatePCNDetails(pcnValue);
+            }
+        });
+    }
+
+    // BARCODE SCANNER SUPPORT: Auto-advance through fields on Enter/Tab
+    // This allows scanning multiple barcodes in sequence to fill multiple fields
+    const scanFields = [
+        'pcnInput',      // PCN Number
+        'mpnInput',      // MPN
+        'partNumberInput', // Part Number/Item
+        'poInput',       // PO
+        'partNumberInput',  // Part Number (also serves as job identifier)
+        'quantity'       // Quantity
+    ];
+
+    scanFields.forEach((fieldId, index) => {
+        const field = document.getElementById(fieldId);
+        if (field) {
+            field.addEventListener('keydown', function(e) {
+                // On Enter key (barcode scanner default)
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // Move to next field
+                    if (index < scanFields.length - 1) {
+                        const nextField = document.getElementById(scanFields[index + 1]);
+                        if (nextField) {
+                            nextField.focus();
+                            nextField.select();
+                        }
+                    }
+                }
+            });
+        }
+    });
+    
+    // Handle ITAR classification change
+    const itarClassification = document.getElementById('itarClassification');
+    const exportNotesDiv = document.getElementById('exportNotesDiv');
+    
+    if (itarClassification && exportNotesDiv) {
+        // Show/hide export notes based on classification
+        function toggleExportNotes() {
+            const classification = itarClassification.value;
+            if (classification === 'ITAR' || classification === 'EAR99' || classification === 'SENSITIVE') {
+                exportNotesDiv.style.display = 'block';
+            } else {
+                exportNotesDiv.style.display = 'none';
+            }
+        }
+        
+        // Initial state
+        toggleExportNotes();
+        
+        // Listen for changes
+        itarClassification.addEventListener('change', toggleExportNotes);
+    }
+    
+    // Add form validation
+    const form = document.querySelector('form');
+    form.addEventListener('submit', function(e) {
+        const partNumber = document.getElementById('partNumberInput').value.trim();
+        const quantity = document.getElementById('quantity').value;
+
+        if (!partNumber) {
+            e.preventDefault();
+            alert('Please enter a part number');
+            document.getElementById('partNumberInput').focus();
+            return false;
+        }
+
+        if (!quantity || quantity < 1) {
+            e.preventDefault();
+            alert('Please enter a valid quantity (1 or more)');
+            document.getElementById('quantity').focus();
+            return false;
+        }
+        
+        // Add confirmation for large quantities
+        if (quantity > 1000) {
+            if (!confirm(`Are you sure you want to stock ${quantity} PCBs? This is a large quantity.`)) {
+                e.preventDefault();
+                return false;
+            }
+        }
+    });
+    
+    // Add keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.key === 'Enter') {
+            form.submit();
+        }
+    });
+});
+
+// Barcode Parser Function
+function parseAndFillBarcode(code) {
+    console.log('🔍🔍🔍 PARSING BARCODE 🔍🔍🔍');
+    console.log('Raw barcode data:', code);
+    console.log('Barcode length:', code.length);
+    console.log('Contains pipe |?:', code.includes('|'));
+    console.log('Character codes:', Array.from(code).map(c => c.charCodeAt(0)).join(','));
+
+    try {
+        // Check if it's JSON format first
+        if (code.startsWith('{') && code.endsWith('}')) {
+            const data = JSON.parse(code);
+            if (data.pcn_number) {
+                document.getElementById('pcnInput').value = data.pcn_number;
+                // Auto-fetch PCN details when PCN is scanned
+                fetchAndPopulatePCNDetails(data.pcn_number);
+            }
+            if (data.job) document.getElementById('partNumberInput').value = data.job;
+            if (data.part_number) document.getElementById('partNumberInput').value = data.part_number;
+            if (data.mpn) document.getElementById('mpnInput').value = data.mpn;
+            if (data.part_number) document.getElementById('partNumberInput').value = data.part_number;
+            if (data.po) document.getElementById('poInput').value = data.po;
+            if (data.quantity) document.getElementById('quantity').value = data.quantity;
+            if (data.dc) document.getElementById('dc').value = data.dc;
+            if (data.location) document.getElementById('location').value = data.location;
+            return;
+        }
+
+        // Check for company barcode format based on patterns seen in barcode.jpeg
+        // Look for patterns like: PN/QTY/TYPE format or structured data
+
+        // Pattern 1: Check for delimited format (pipe, comma, semicolon, space)
+        let parts = [];
+        if (code.includes('|')) {
+            parts = code.split('|');
+        } else if (code.includes(',')) {
+            parts = code.split(',');
+        } else if (code.includes(';')) {
+            parts = code.split(';');
+        } else if (code.includes(' ') && code.split(' ').length >= 3) {
+            parts = code.split(' ').filter(p => p.trim());
+        } else if (code.includes('\n')) {
+            // Multi-line format (newline separated)
+            parts = code.split('\n').filter(p => p.trim());
+        } else if (code.includes('\t')) {
+            // Tab separated
+            parts = code.split('\t').filter(p => p.trim());
+        }
+
+        if (parts.length >= 2) {
+            console.log('Found delimited data:', parts);
+
+            // Check if this is our standardized format: PCN|Job|MPN|PartNumber|QTY|PO|Location|PCBType|DateCode|MSD
+            if (code.includes('|') && parts.length >= 5) {
+                console.log('📦 Detected standardized PCN barcode format!');
+                // Direct mapping - Format: PCN|Job|MPN|PartNumber|QTY|PO|Location|PCBType|DateCode|MSD
+                const pcn = parts[0] ? parts[0].trim().padStart(5, '0') : '';
+                const job = parts[1] ? parts[1].trim() : '';
+                const mpn = parts[2] ? parts[2].trim() : '';
+                const partNumber = parts[3] ? parts[3].trim() : '';
+                const quantity = parts[4] ? parts[4].trim() : '';
+                const po = parts[5] ? parts[5].trim() : '';
+                const location = parts[6] ? parts[6].trim() : '';
+                const pcbType = parts[7] ? parts[7].trim() : '';
+                const dateCode = parts[8] ? parts[8].trim() : '';
+                const msd = parts[9] ? parts[9].trim() : '';
+
+                console.log('✅ Parsed data:', {pcn, job, mpn, partNumber, quantity, po, location, pcbType, dateCode, msd});
+
+                // Fill ALL form fields directly
+                if (pcn) document.getElementById('pcnInput').value = pcn;
+                if (job || partNumber) document.getElementById('partNumberInput').value = job || partNumber;
+                if (mpn) document.getElementById('mpnInput').value = mpn;
+                if (quantity) document.getElementById('quantity').value = quantity;
+                if (po) document.getElementById('poInput').value = po;
+                if (location) document.getElementById('location').value = location;
+                if (dateCode) document.getElementById('dc').value = dateCode;
+                if (msd) document.getElementById('msd').value = msd;
+
+                console.log('🎉 ALL FIELDS FILLED from barcode!');
+                return; // Exit early - we're done!
+            }
+
+            // Fallback to smart parsing for other formats
+            let pcn = '', job = '', mpn = '', partNumber = '', po = '', quantity = '', pcbType = 'Bare', dateCode = '', msd = '';
+
+            for (let i = 0; i < parts.length; i++) {
+                const part = parts[i].trim();
+                if (!part) continue;
+
+                // Look for PCN (1-5 digits - will be padded to 5)
+                // PCN takes priority if it's 5 digits OR the first numeric field
+                if (/^\d{5}$/.test(part) && !pcn) {
+                    pcn = part;
+                    console.log('Found PCN (5 digits):', pcn);
+                }
+                // If first position and 1-4 digits, likely a PCN (not quantity)
+                else if (i === 0 && /^\d{1,4}$/.test(part) && !pcn) {
+                    pcn = part.padStart(5, '0'); // Pad to 5 digits
+                    console.log('Found PCN (padded):', pcn);
+                }
+                // Look for quantity (pure numbers, typically 1-1000, but NOT in first position)
+                else if (/^\d{1,4}$/.test(part) && parseInt(part) > 0 && parseInt(part) <= 10000 && !quantity && i > 0) {
+                    quantity = part;
+                    console.log('Found quantity:', quantity);
+                }
+                // Look for MPN (Manufacturing Part Number - often has specific patterns)
+                else if (/^[A-Za-z0-9]{6,}$/.test(part) && !mpn && part.length > 5) {
+                    mpn = part;
+                    console.log('Found MPN:', mpn);
+                }
+                // Look for job/item numbers (often shorter)
+                else if (/^[A-Za-z0-9]{2,8}$/.test(part) && !job) {
+                    job = part;
+                    console.log('Found job/item:', job);
+                }
+                // Look for part numbers
+                else if (/^[A-Za-z0-9]{4,}$/.test(part) && !partNumber && !mpn) {
+                    partNumber = part;
+                    console.log('Found part number:', partNumber);
+                }
+                // Look for Purchase Order (PO prefix or pattern)
+                else if (/^(PO|po)[A-Za-z0-9\-]{2,}$/i.test(part) || (/^[A-Za-z0-9\-]{4,}$/.test(part) && !po && part.includes('-'))) {
+                    po = part;
+                    console.log('Found PO:', po);
+                }
+                // Look for PCB types
+                else if (/^(bare|partial|completed|ready|assembly)/i.test(part)) {
+                    pcbType = part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+                    console.log('Found PCB type:', pcbType);
+                }
+                // Look for date codes (year/week patterns)
+                else if (/^\d{4}(WK)?\d{1,2}$/.test(part) || /^\d{2}(WK)?\d{1,2}$/.test(part)) {
+                    dateCode = part;
+                    console.log('Found date code:', dateCode);
+                }
+                // Look for MSD levels
+                else if (/^(level\s*)?[1-6]$/i.test(part) || /^\d+hrs?@\d+/i.test(part)) {
+                    msd = part;
+                    console.log('Found MSD:', msd);
+                }
+            }
+
+            // Fill form fields with parsed data
+            if (pcn) {
+                document.getElementById('pcnInput').value = pcn;
+                // Auto-fetch PCN details when PCN is scanned
+                fetchAndPopulatePCNDetails(pcn);
+            }
+            if (job) document.getElementById('partNumberInput').value = job;
+            if (mpn) document.getElementById('mpnInput').value = mpn;
+            if (partNumber) document.getElementById('partNumberInput').value = partNumber;
+            if (po) document.getElementById('poInput').value = po;
+            if (quantity) document.getElementById('quantity').value = quantity;
+            if (dateCode) document.getElementById('dc').value = dateCode;
+            if (msd) document.getElementById('msd').value = msd;
+
+            return;
+        }
+
+        // Pattern 2: Single value - try to determine what it is
+        const trimmedCode = code.trim();
+
+        // Check if it looks like a PCN (5 digits with or without leading zeros)
+        if (/^\d{1,5}$/.test(trimmedCode)) {
+            // Could be a PCN - fill PCN field and auto-fetch details
+            const pcnFormatted = trimmedCode.padStart(5, '0'); // Pad to 5 digits
+            document.getElementById('pcnInput').value = pcnFormatted;
+            console.log('Single numeric value treated as PCN:', pcnFormatted);
+
+            // Auto-fetch PCN details and populate all fields
+            fetchAndPopulatePCNDetails(pcnFormatted);
+        }
+        // If it's a longer numeric code (6+ digits), assume it's a part number
+        else if (/^\d{6,}$/.test(trimmedCode)) {
+            document.getElementById('partNumberInput').value = trimmedCode;
+            console.log('Long numeric value treated as part number:', trimmedCode);
+        }
+        // If it's alphanumeric, assume it's a part number or MPN
+        else {
+            // Try to determine if it's more like an MPN or part number
+            if (trimmedCode.length >= 6 && /[A-Za-z]/.test(trimmedCode)) {
+                document.getElementById('mpnInput').value = trimmedCode;
+                console.log('Alphanumeric value treated as MPN:', trimmedCode);
+            } else {
+                document.getElementById('partNumberInput').value = trimmedCode;
+                console.log('Single value treated as part number:', trimmedCode);
+            }
+        }
+
+    } catch (error) {
+        console.error('Error parsing barcode:', error);
+        // Fallback to simple part number (since that's what user expects)
+        document.getElementById('partNumberInput').value = code;
+    }
+}
+
+// Barcode Scanner Functions
+let scannerActive = false;
+
+function startScanner() {
+    if (scannerActive) return;
+    
+    const modal = new bootstrap.Modal(document.getElementById('scannerModal'));
+    modal.show();
+    
+    scannerActive = true;
+    
+    Quagga.init({
+        inputStream: {
+            name: "Live",
+            type: "LiveStream",
+            target: document.querySelector('#scanner'),
+            constraints: {
+                width: 640,
+                height: 480,
+                facingMode: "environment"
+            }
+        },
+        decoder: {
+            readers: [
+                "code_128_reader",
+                "ean_reader",
+                "ean_8_reader",
+                "code_39_reader",
+                "code_39_vin_reader",
+                "codabar_reader",
+                "upc_reader",
+                "upc_e_reader",
+                "i2of5_reader",
+                "2of5_reader",
+                "code_93_reader"
+            ]
+        },
+        locate: true,
+        locator: {
+            halfSample: true,
+            patchSize: "medium"
+        }
+    }, function(err) {
+        if (err) {
+            console.error('Scanner initialization error:', err);
+            alert('Camera access denied or not available');
+            stopScanner();
+            return;
+        }
+        Quagga.start();
+    });
+    
+    // Handle successful scan
+    Quagga.onDetected(function(data) {
+        const code = data.codeResult.code;
+        parseAndFillBarcode(code);
+        stopScanner();
+    });
+}
+
+function stopScanner() {
+    if (!scannerActive) return;
+    
+    scannerActive = false;
+    Quagga.stop();
+    
+    const modal = bootstrap.Modal.getInstance(document.getElementById('scannerModal'));
+    if (modal) {
+        modal.hide();
+    }
+}
+
+// Add scan all button event listener
+document.addEventListener('DOMContentLoaded', function() {
+    const scanAllBtn = document.getElementById('scanAllBtn');
+    if (scanAllBtn) {
+        scanAllBtn.addEventListener('click', startScanner);
+    }
+});
+
+function loadRecentStockOperations() {
+    fetch('/api/inventory')
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('recent-stock-operations');
+            
+            if (data.success && data.data.length > 0) {
+                // Filter and show recent items (last 5)
+                const recentItems = data.data.slice(0, 5);
+                
+                let html = '<div class="table-responsive"><table class="table table-hover"><thead class="table-light"><tr>';
+                html += '<th>Job</th><th>PCB Type</th><th>Quantity</th><th>Location</th><th>Last Updated</th></tr></thead><tbody>';
+                
+                recentItems.forEach(item => {
+                    const badgeClass = {
+                        'Bare': 'secondary',
+                        'Partial': 'warning',
+                        'Completed': 'info',
+                        'Ready to Ship': 'success'
+                    }[item.pcb_type] || 'secondary';
+                    
+                    html += `<tr>
+                        <td><strong>${item.job}</strong></td>
+                        <td><span class="badge bg-${badgeClass}">${item.pcb_type}</span></td>
+                        <td>${item.qty.toLocaleString()}</td>
+                        <td><code>${item.location}</code></td>
+                        <td class="text-muted small">${moment(item.updated_at).fromNow()}</td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table></div>';
+                container.innerHTML = html;
+            } else {
+                container.innerHTML = `
+                    <div class="text-center py-3">
+                        <i class="bi bi-inbox display-6 text-muted"></i>
+                        <p class="text-muted mt-2">No inventory items found</p>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error loading recent operations:', error);
+            document.getElementById('recent-stock-operations').innerHTML = `
+                <div class="text-center py-3">
+                    <i class="bi bi-exclamation-triangle text-warning"></i>
+                    <p class="text-muted mt-2">Error loading recent operations</p>
+                </div>
+            `;
+        });
+}
+
+// Function to fetch PCN details and auto-populate form fields
+async function fetchAndPopulatePCNDetails(pcnNumber) {
+    if (!pcnNumber) return;
+
+    console.log('🔍 Fetching PCN details for:', pcnNumber);
+
+    try {
+        const response = await fetch(`/api/pcn/details/${pcnNumber}`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'Cache-Control': 'no-cache'
+            }
+        });
+
+        if (!response.ok) {
+            console.warn(`PCN ${pcnNumber} not found in database`);
+            return;
+        }
+
+        const result = await response.json();
+
+        if (result.success) {
+            console.log('PCN details fetched:', result);
+
+            // Show a visual indicator that data is being auto-filled
+            const pcnInput = document.getElementById('pcnInput');
+            if (pcnInput) {
+                pcnInput.classList.add('border-success');
+                pcnInput.classList.add('border-3');
+                setTimeout(() => {
+                    pcnInput.classList.remove('border-success');
+                    pcnInput.classList.remove('border-3');
+                }, 2000);
+            }
+
+            // Auto-populate form fields with fetched data (ALWAYS overwrite to ensure data is filled)
+            console.log('=== STARTING AUTO-FILL ===');
+
+            if (result.part_number) {
+                const partInput = document.getElementById('partNumberInput');
+                if (partInput) {
+                    partInput.value = result.part_number;
+                    console.log('✅ Filled Part Number:', result.part_number);
+                } else {
+                    console.error('❌ Part Number field not found!');
+                }
+            } else {
+                console.log('⚠️ No part_number in result');
+            }
+
+            if (result.mpn) {
+                const mpnInput = document.getElementById('mpnInput');
+                if (mpnInput) {
+                    mpnInput.value = result.mpn;
+                    console.log('✅ Filled MPN:', result.mpn);
+                } else {
+                    console.error('❌ MPN field not found!');
+                }
+            } else {
+                console.log('⚠️ No mpn in result');
+            }
+
+            if (result.po_number || result.work_order) {
+                const poInput = document.getElementById('poInput');
+                if (poInput) {
+                    poInput.value = result.po_number || result.work_order;
+                    console.log('✅ Filled PO:', result.po_number || result.work_order);
+                } else {
+                    console.error('❌ PO field not found!');
+                }
+            } else {
+                console.log('⚠️ No po_number or work_order in result');
+            }
+
+            if (result.quantity) {
+                const qtyInput = document.getElementById('quantity');
+                if (qtyInput) {
+                    qtyInput.value = result.quantity;
+                    console.log('✅ Filled Quantity:', result.quantity);
+                } else {
+                    console.error('❌ Quantity field not found!');
+                }
+            } else {
+                console.log('⚠️ No quantity in result');
+            }
+
+            if (result.date_code) {
+                const dcInput = document.getElementById('dc');
+                if (dcInput) {
+                    dcInput.value = result.date_code;
+                    console.log('✅ Filled Date Code:', result.date_code);
+                } else {
+                    console.error('❌ Date Code field not found!');
+                }
+            } else {
+                console.log('⚠️ No date_code in result');
+            }
+
+            if (result.msd) {
+                const msdInput = document.getElementById('msd');
+                if (msdInput) {
+                    msdInput.value = result.msd;
+                    console.log('✅ Filled MSD:', result.msd);
+                } else {
+                    console.error('❌ MSD field not found!');
+                }
+            } else {
+                console.log('⚠️ No msd in result');
+            }
+
+            if (result.location) {
+                const locationInput = document.getElementById('location');
+                if (locationInput) {
+                    locationInput.value = result.location;
+                    console.log('✅ Filled Location:', result.location);
+                } else {
+                    console.error('❌ Location field not found!');
+                }
+            } else {
+                console.log('⚠️ No location in result');
+            }
+
+            console.log('=== AUTO-FILL COMPLETE ===');
+
+            // Show success notification
+            const notification = document.createElement('div');
+            notification.className = 'alert alert-success alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3';
+            notification.style.zIndex = '9999';
+            notification.innerHTML = `
+                <i class="bi bi-check-circle-fill me-2"></i>
+                <strong>PCN Data Loaded!</strong> Fields auto-populated from PCN ${pcnNumber}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 4000);
+
+        } else {
+            console.warn('PCN lookup failed:', result.error);
+        }
+    } catch (error) {
+        console.error('Error fetching PCN details:', error);
+    }
+}
+</script>
+{% endblock %}
