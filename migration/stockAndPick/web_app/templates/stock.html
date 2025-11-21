@@ -9,7 +9,7 @@
         <p class="mb-0 fs-6">Add components to inventory • Manage PCB stock levels • Track locations</p>
     </div>
     <div class="col-md-4 text-end">
-        <a href="{{ url_for('inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
+        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
             <i class="bi bi-table"></i> View Inventory
         </a>
         <a href="{{ url_for('pick') }}" class="btn btn-light btn-lg fw-bold">
@@ -199,7 +199,7 @@
                                     <span class="input-group-text bg-primary text-white">
                                         <i class="bi bi-geo-alt-fill"></i>
                                     </span>
-                                    {{ form.location(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999, A1, Shelf-1, Rack-B2") }}
+                                    {{ form.location(class="form-control form-control-lg border-2", placeholder="e.g., 1101101, 1201201, Receiving Area") }}
                                 </div>
                                 {% if form.location.errors %}
                                     <div class="invalid-feedback d-block">
@@ -209,7 +209,7 @@
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-geo-alt"></i> Storage location for these PCBs
+                                    <i class="bi bi-geo-alt"></i> Warehouse storage location (from tblLoc)
                                 </div>
                             </div>
                         </div>
@@ -330,35 +330,31 @@
                     </div>
                 </div>
             </div>
-            
-        </div>
-    </div>
-</div>
 
-<!-- Recent Stock Operations -->
-<div class="container-fluid mt-5">
-    <div class="row">
-        <div class="col-12">
-            <div class="card border-0 shadow-lg">
-                <div class="card-header bg-primary text-white border-0">
-                    <div class="d-flex align-items-center justify-content-between">
-                        <h5 class="mb-0">
-                            <i class="bi bi-clock-history me-2"></i> Recent Stock Operations
-                        </h5>
-                        <span class="badge bg-white text-primary">Live Updates</span>
+            <!-- Warehouse Inventory - Below Quick Guide -->
+            <div class="col-12 mt-3">
+                <div class="card border-0 shadow-sm">
+                    <div class="card-header bg-primary text-white border-0 py-2">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <h6 class="mb-0">
+                                <i class="bi bi-box-seam me-2"></i> Warehouse Inventory
+                            </h6>
+                            <span class="badge bg-white text-primary small">Live</span>
+                        </div>
                     </div>
-                </div>
-                <div class="card-body p-0">
-                    <div id="recent-stock-operations" class="p-4">
-                        <div class="text-center py-4">
-                            <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
-                                <span class="visually-hidden">Loading...</span>
+                    <div class="card-body p-0">
+                        <div id="recent-stock-operations" class="p-2" style="max-height: 300px; overflow-y: auto;">
+                            <div class="text-center py-3">
+                                <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="text-muted small mb-0 mt-2">Loading...</p>
                             </div>
-                            <p class="text-muted h6">Loading recent operations...</p>
                         </div>
                     </div>
                 </div>
             </div>
+
         </div>
     </div>
 </div>
@@ -873,42 +869,33 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function loadRecentStockOperations() {
-    fetch('/api/inventory')
+    fetch('/api/warehouse-inventory/recent?limit=10')
         .then(response => response.json())
         .then(data => {
             const container = document.getElementById('recent-stock-operations');
-            
+
             if (data.success && data.data.length > 0) {
-                // Filter and show recent items (last 5)
-                const recentItems = data.data.slice(0, 5);
-                
                 let html = '<div class="table-responsive"><table class="table table-hover"><thead class="table-light"><tr>';
-                html += '<th>Job</th><th>PCB Type</th><th>Quantity</th><th>Location</th><th>Last Updated</th></tr></thead><tbody>';
-                
-                recentItems.forEach(item => {
-                    const badgeClass = {
-                        'Bare': 'secondary',
-                        'Partial': 'warning',
-                        'Completed': 'info',
-                        'Ready to Ship': 'success'
-                    }[item.pcb_type] || 'secondary';
-                    
+                html += '<th>Item</th><th>PCN</th><th>MPN</th><th>On Hand Qty</th><th>Location</th><th>PO</th></tr></thead><tbody>';
+
+                data.data.forEach(item => {
                     html += `<tr>
-                        <td><strong>${item.job}</strong></td>
-                        <td><span class="badge bg-${badgeClass}">${item.pcb_type}</span></td>
-                        <td>${item.qty.toLocaleString()}</td>
-                        <td><code>${item.location}</code></td>
-                        <td class="text-muted small">${moment(item.updated_at).fromNow()}</td>
+                        <td><strong>${item.item || '-'}</strong></td>
+                        <td><code>${item.pcn || '-'}</code></td>
+                        <td>${item.mpn || '-'}</td>
+                        <td><span class="badge bg-primary">${item.onhandqty ? item.onhandqty.toLocaleString() : 0}</span></td>
+                        <td><code>${item.location || '-'}</code></td>
+                        <td class="text-muted small">${item.po || '-'}</td>
                     </tr>`;
                 });
-                
+
                 html += '</tbody></table></div>';
                 container.innerHTML = html;
             } else {
                 container.innerHTML = `
                     <div class="text-center py-3">
                         <i class="bi bi-inbox display-6 text-muted"></i>
-                        <p class="text-muted mt-2">No inventory items found</p>
+                        <p class="text-muted mt-2">No warehouse inventory items found</p>
                     </div>
                 `;
             }
@@ -918,7 +905,7 @@ function loadRecentStockOperations() {
             document.getElementById('recent-stock-operations').innerHTML = `
                 <div class="text-center py-3">
                     <i class="bi bi-exclamation-triangle text-warning"></i>
-                    <p class="text-muted mt-2">Error loading recent operations</p>
+                    <p class="text-muted mt-2">Error loading warehouse inventory</p>
                 </div>
             `;
         });

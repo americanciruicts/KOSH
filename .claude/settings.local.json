@@ -38,7 +38,8 @@
       "Bash(/tmp/pcb_data.sql)",
       "Bash(cd:*)",
       "Bash(echo:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(xargs sed -i \"s/url_for(''''inventory'''')/url_for(''''pcb_inventory'''')/g\")"
     ],
     "deny": [],
     "ask": []

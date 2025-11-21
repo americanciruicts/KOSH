@@ -1,0 +1,431 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #059669 0%, #10b981 100%);">
+    <div class="col-md-8">
+        <h1 class="h2 mb-2 text-white">
+            <i class="bi bi-arrow-counterclockwise me-2"></i> Restock Parts
+        </h1>
+        <p class="mb-0 fs-6 text-white">Return parts from MFG floor to Count Area • Traceability maintained • Audit tracked</p>
+    </div>
+    <div class="col-md-4 text-end">
+        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
+            <i class="bi bi-table"></i> View Inventory
+        </a>
+        <a href="{{ url_for('pick') }}" class="btn btn-light btn-lg fw-bold">
+            <i class="bi bi-dash-circle"></i> Pick Parts
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Info Banner -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="alert alert-info border-0 shadow-sm">
+                <div class="d-flex align-items-start">
+                    <i class="bi bi-info-circle-fill me-3 fs-4"></i>
+                    <div>
+                        <h5 class="alert-heading mb-2">Restock Workflow</h5>
+                        <p class="mb-1"><strong>Step 1:</strong> Parts are picked from Receiving Area → moved to MFG Floor</p>
+                        <p class="mb-1"><strong>Step 2:</strong> After job completion, restock moves parts from MFG Floor → Count Area</p>
+                        <p class="mb-0"><strong>Step 3:</strong> Parts can then be moved from Count Area to final storage location</p>
+                        <small class="text-muted d-block mt-2">
+                            <i class="bi bi-shield-check"></i> MFG Qty will decrease | On Hand Qty will increase | Location set to "Count Area"
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Restock Form -->
+        <div class="col-xl-7">
+            <div class="card border-0 shadow-lg">
+                <div class="card-header bg-white border-0 pb-0">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="text-success mb-1">
+                                <i class="bi bi-arrow-counterclockwise me-2"></i> Restock from MFG Floor
+                            </h4>
+                            <p class="text-muted small mb-0">Return parts to Count Area after job completion</p>
+                        </div>
+                        <div class="badge bg-success bg-opacity-10 text-success fs-6 px-3 py-2">
+                            <i class="bi bi-shield-check"></i> Validated
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body pt-4">
+                <form method="POST" id="restockForm">
+                    {{ form.hidden_tag() }}
+
+                    <!-- Part Identification Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-success border-bottom pb-2 mb-3">
+                                <i class="bi bi-search me-2"></i> Identify Parts to Restock
+                            </h6>
+                            <p class="text-muted small mb-3">
+                                <i class="bi bi-info-circle"></i> Enter either PCN Number or Item Number (at least one is required)
+                            </p>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.pcn.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.pcn(class="form-control form-control-lg border-2", placeholder="e.g., 12345") }}
+                                {% if form.pcn.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.pcn.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <small class="text-muted">Search by PCN to find parts on MFG floor</small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.item.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.item(class="form-control form-control-lg border-2", placeholder="e.g., 8128L-40") }}
+                                {% if form.item.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.item.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <small class="text-muted">Or search by Item Number</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Quantity Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-success border-bottom pb-2 mb-3">
+                                <i class="bi bi-123 me-2"></i> Restock Quantity
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.quantity.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.quantity(class="form-control form-control-lg border-2", placeholder="Enter quantity") }}
+                                {% if form.quantity.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.quantity.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <small class="text-muted">
+                                    <i class="bi bi-info-circle"></i> Must not exceed MFG Qty available
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <div class="row">
+                        <div class="col-12">
+                            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                                <button type="reset" class="btn btn-light btn-lg px-5">
+                                    <i class="bi bi-arrow-counterclockwise"></i> Clear
+                                </button>
+                                {{ form.submit(class="btn btn-success btn-lg px-5 shadow") }}
+                            </div>
+                        </div>
+                    </div>
+                </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Information Panel -->
+        <div class="col-xl-5">
+            <!-- Part Details Card (appears after autofill) -->
+            <div class="card border-0 shadow-sm mb-4" id="partDetailsCard" style="display: none;">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-info-circle me-2"></i> Part Details
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-2">
+                        <div class="col-6"><strong>PCN:</strong></div>
+                        <div class="col-6 text-end" id="detail-pcn">-</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-6"><strong>Item Number:</strong></div>
+                        <div class="col-6 text-end" id="detail-item">-</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-6"><strong>MPN:</strong></div>
+                        <div class="col-6 text-end" id="detail-mpn">-</div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-6"><strong>Date Code:</strong></div>
+                        <div class="col-6 text-end" id="detail-dc">-</div>
+                    </div>
+                    <div class="row mb-2 pb-2 border-bottom">
+                        <div class="col-6"><strong>Current Location:</strong></div>
+                        <div class="col-6 text-end" id="detail-location">-</div>
+                    </div>
+                    <div class="row mb-2 mt-3">
+                        <div class="col-6"><strong>On Hand Qty:</strong></div>
+                        <div class="col-6 text-end"><span class="badge bg-info" id="detail-onhand">0</span></div>
+                    </div>
+                    <div class="row mb-2">
+                        <div class="col-6"><strong>MFG Qty:</strong></div>
+                        <div class="col-6 text-end"><span class="badge bg-warning" id="detail-mfg">0</span></div>
+                    </div>
+                    <div class="alert alert-warning mt-3 mb-0" id="no-mfg-warning" style="display: none;">
+                        <i class="bi bi-exclamation-triangle"></i> <strong>Warning:</strong> No MFG quantity available to restock!
+                    </div>
+                    <div class="alert alert-success mt-3 mb-0" id="mfg-available" style="display: none;">
+                        <i class="bi bi-check-circle"></i> <strong>Available to restock:</strong> <span id="available-qty">0</span> units
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Stats -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-info-circle me-2"></i> Restock Information
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3 pb-3 border-bottom">
+                        <h6 class="text-success mb-2">
+                            <i class="bi bi-arrow-left-right"></i> Inventory Movement
+                        </h6>
+                        <p class="mb-1 small"><strong>From:</strong> MFG Floor (mfg_qty decreases)</p>
+                        <p class="mb-0 small"><strong>To:</strong> Count Area (onhandqty increases)</p>
+                    </div>
+                    <div class="mb-3 pb-3 border-bottom">
+                        <h6 class="text-success mb-2">
+                            <i class="bi bi-shield-check"></i> Traceability
+                        </h6>
+                        <p class="mb-1 small">✓ Transaction type: RESTOCK</p>
+                        <p class="mb-1 small">✓ User ID tracked automatically</p>
+                        <p class="mb-0 small">✓ Timestamp recorded</p>
+                    </div>
+                    <div>
+                        <h6 class="text-success mb-2">
+                            <i class="bi bi-diagram-3"></i> Next Steps
+                        </h6>
+                        <p class="mb-0 small">After restocking to Count Area, parts can be moved to their final warehouse location using the inventory management system.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Restock Activity -->
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0 text-dark">
+                        <i class="bi bi-clock-history"></i> Recent Restock Activity
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted small text-center mb-0">
+                        <i class="bi bi-info-circle"></i> Recent restock transactions will appear here
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Form styling */
+.form-control:focus {
+    border-color: #10b981;
+    box-shadow: 0 0 0 0.2rem rgba(16, 185, 129, 0.25);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    border: none;
+}
+
+.btn-success:hover {
+    background: linear-gradient(135deg, #047857 0%, #059669 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+}
+</style>
+
+<script>
+// Auto-clear form after successful submission
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      {% if category == 'success' %}
+        // Form will be cleared automatically by redirect
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+// Autofill functionality
+let autofillTimeout = null;
+const pcnInput = document.getElementById('{{ form.pcn.id }}');
+const itemInput = document.getElementById('{{ form.item.id }}');
+const partDetailsCard = document.getElementById('partDetailsCard');
+
+// Function to fetch and display part details
+function fetchPartDetails(pcn, item) {
+    // Clear previous details
+    partDetailsCard.style.display = 'none';
+
+    if (!pcn && !item) {
+        return;
+    }
+
+    // Build query parameters
+    const params = new URLSearchParams();
+    if (pcn) params.append('pcn', pcn);
+    if (item) params.append('item', item);
+
+    // Show loading state
+    partDetailsCard.style.display = 'block';
+    document.getElementById('detail-pcn').textContent = 'Loading...';
+
+    // Fetch part details
+    fetch(`/api/get-part-details?${params.toString()}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const partData = data.data;
+
+                // Populate part details
+                document.getElementById('detail-pcn').textContent = partData.pcn;
+                document.getElementById('detail-item').textContent = partData.item;
+                document.getElementById('detail-mpn').textContent = partData.mpn || '-';
+                document.getElementById('detail-dc').textContent = partData.dc || '-';
+                document.getElementById('detail-location').textContent = partData.location_to || '-';
+                document.getElementById('detail-onhand').textContent = partData.onhandqty.toLocaleString();
+                document.getElementById('detail-mfg').textContent = partData.mfg_qty.toLocaleString();
+                document.getElementById('available-qty').textContent = partData.mfg_qty.toLocaleString();
+
+                // Auto-fill the other field (PCN or Item)
+                if (pcn && !itemInput.value) {
+                    itemInput.value = partData.item;
+                } else if (item && !pcnInput.value) {
+                    pcnInput.value = partData.pcn;
+                }
+
+                // Show/hide warnings
+                if (partData.has_mfg_qty) {
+                    document.getElementById('no-mfg-warning').style.display = 'none';
+                    document.getElementById('mfg-available').style.display = 'block';
+                } else {
+                    document.getElementById('no-mfg-warning').style.display = 'block';
+                    document.getElementById('mfg-available').style.display = 'none';
+                }
+
+                partDetailsCard.style.display = 'block';
+            } else {
+                // Hide details card on error
+                partDetailsCard.style.display = 'none';
+                console.error('Error fetching part details:', data.error);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching part details:', error);
+            partDetailsCard.style.display = 'none';
+        });
+}
+
+// Add event listeners for autofill with debounce
+pcnInput.addEventListener('input', function() {
+    clearTimeout(autofillTimeout);
+    const pcnValue = this.value.trim();
+
+    if (pcnValue.length >= 3) {
+        autofillTimeout = setTimeout(() => {
+            fetchPartDetails(pcnValue, null);
+        }, 500); // Wait 500ms after user stops typing
+    } else {
+        partDetailsCard.style.display = 'none';
+    }
+});
+
+itemInput.addEventListener('input', function() {
+    clearTimeout(autofillTimeout);
+    const itemValue = this.value.trim();
+
+    if (itemValue.length >= 3) {
+        autofillTimeout = setTimeout(() => {
+            fetchPartDetails(null, itemValue);
+        }, 500); // Wait 500ms after user stops typing
+    } else {
+        partDetailsCard.style.display = 'none';
+    }
+});
+
+// Clear autofill when switching between fields
+pcnInput.addEventListener('focus', function() {
+    if (this.value.trim()) {
+        itemInput.value = '';
+    }
+});
+
+itemInput.addEventListener('focus', function() {
+    if (this.value.trim()) {
+        pcnInput.value = '';
+    }
+});
+
+// Form validation
+document.getElementById('restockForm').addEventListener('submit', function(e) {
+    const pcn = document.getElementById('{{ form.pcn.id }}').value;
+    const item = document.getElementById('{{ form.item.id }}').value;
+    const quantity = document.getElementById('{{ form.quantity.id }}').value;
+
+    if (!pcn && !item) {
+        e.preventDefault();
+        alert('Please enter either a PCN Number or Item Number');
+        return false;
+    }
+
+    if (!quantity || quantity <= 0) {
+        e.preventDefault();
+        alert('Please enter a valid quantity');
+        return false;
+    }
+
+    // Check if MFG qty is sufficient
+    const mfgQty = parseInt(document.getElementById('detail-mfg').textContent.replace(/,/g, '')) || 0;
+    if (mfgQty === 0) {
+        e.preventDefault();
+        alert('No MFG quantity available to restock!');
+        return false;
+    }
+
+    if (parseInt(quantity) > mfgQty) {
+        e.preventDefault();
+        alert(`Insufficient MFG quantity. Available: ${mfgQty}, Requested: ${quantity}`);
+        return false;
+    }
+
+    // Confirmation dialog
+    const confirmMsg = `Are you sure you want to restock ${quantity} units from MFG Floor to Count Area?`;
+    if (!confirm(confirmMsg)) {
+        e.preventDefault();
+        return false;
+    }
+});
+</script>
+{% endblock %}

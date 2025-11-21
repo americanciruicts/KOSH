@@ -2009,6 +2009,8 @@ def pcn_history():
 @csrf.exempt
 def api_generate_pcn():
     """API endpoint to generate new PCN"""
+    conn = None
+    cursor = None
     try:
         data = request.get_json()
 
@@ -2110,12 +2112,15 @@ def api_generate_pcn():
             })
 
         except Exception as e:
-            conn.rollback()
+            if conn:
+                conn.rollback()
             logger.error(f"Error generating PCN: {e}")
             return jsonify({'error': str(e)}), 500
         finally:
-            cursor.close()
-            db_manager.return_connection(conn)
+            if cursor:
+                cursor.close()
+            if conn:
+                db_manager.return_connection(conn)
 
     except Exception as e:
         logger.error(f"Error in PCN generation endpoint: {e}")
@@ -2124,6 +2129,8 @@ def api_generate_pcn():
 @app.route('/api/pcn/details/<pcn_number>', methods=['GET'])
 def api_get_pcn_details(pcn_number):
     """API endpoint to get PCN details by PCN number - for auto-populating fields on scan"""
+    conn = None
+    cursor = None
     try:
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -2189,8 +2196,10 @@ def api_get_pcn_details(pcn_number):
             return jsonify({'success': False, 'error': 'PCN not found'}), 404
 
         finally:
-            cursor.close()
-            db_manager.return_connection(conn)
+            if cursor:
+                cursor.close()
+            if conn:
+                db_manager.return_connection(conn)
 
     except Exception as e:
         logger.error(f"Error fetching PCN details: {e}")
@@ -2199,6 +2208,8 @@ def api_get_pcn_details(pcn_number):
 @app.route('/api/pcn/list', methods=['GET'])
 def api_list_pcn():
     """API endpoint to list PCN records"""
+    conn = None
+    cursor = None
     try:
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -2232,8 +2243,10 @@ def api_list_pcn():
             })
 
         finally:
-            cursor.close()
-            db_manager.return_connection(conn)
+            if cursor:
+                cursor.close()
+            if conn:
+                db_manager.return_connection(conn)
 
     except Exception as e:
         logger.error(f"Error listing PCN records: {e}")
@@ -2243,6 +2256,8 @@ def api_list_pcn():
 @csrf.exempt
 def api_delete_pcn(pcn_number):
     """API endpoint to delete a PCN record"""
+    conn = None
+    cursor = None
     try:
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -2304,12 +2319,15 @@ def api_delete_pcn(pcn_number):
             })
 
         except Exception as e:
-            conn.rollback()
+            if conn:
+                conn.rollback()
             logger.error(f"Error deleting PCN {pcn_number}: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
         finally:
-            cursor.close()
-            db_manager.return_connection(conn)
+            if cursor:
+                cursor.close()
+            if conn:
+                db_manager.return_connection(conn)
 
     except Exception as e:
         logger.error(f"Error in PCN delete endpoint: {e}")
@@ -2543,6 +2561,8 @@ def api_po_search():
 @app.route('/print-label/<pcn_number>')
 def print_label(pcn_number):
     """Dedicated print page for barcode label"""
+    conn = None
+    cursor = None
     try:
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -2593,8 +2613,10 @@ def print_label(pcn_number):
             return response
 
         finally:
-            cursor.close()
-            db_manager.return_connection(conn)
+            if cursor:
+                cursor.close()
+            if conn:
+                db_manager.return_connection(conn)
 
     except Exception as e:
         logger.error(f"Error loading print label: {e}")
@@ -2603,6 +2625,8 @@ def print_label(pcn_number):
 @app.route('/print-label/<pcn_number>/zpl')
 def generate_zpl_label(pcn_number):
     """Generate ZPL code for Zebra ZP450 printer (3x1 inch label)"""
+    conn = None
+    cursor = None
     try:
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -2688,8 +2712,10 @@ def generate_zpl_label(pcn_number):
             return response
 
         finally:
-            cursor.close()
-            db_manager.return_connection(conn)
+            if cursor:
+                cursor.close()
+            if conn:
+                db_manager.return_connection(conn)
 
     except Exception as e:
         logger.error(f"Error generating ZPL: {e}")

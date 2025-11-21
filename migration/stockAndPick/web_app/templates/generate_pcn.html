@@ -411,17 +411,8 @@
                         <div class="col-md-4">
                             <input type="text" class="form-control" id="searchPCN" placeholder="Search by PCN number...">
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-4">
                             <input type="text" class="form-control" id="searchJob" placeholder="Search by Job...">
-                        </div>
-                        <div class="col-md-3">
-                            <select class="form-select" id="searchPCBType">
-                                <option value="">All PCB Types</option>
-                                <option value="Bare">Bare</option>
-                                <option value="Partial">Partial</option>
-                                <option value="Completed">Completed</option>
-                                <option value="Ready to Ship">Ready to Ship</option>
-                            </select>
                         </div>
                         <div class="col-md-2">
                             <button class="btn btn-primary w-100" onclick="searchPCNHistory()">
@@ -445,8 +436,8 @@
                                 <tr>
                                     <th class="text-center" style="width: 80px;">PCN</th>
                                     <th>Job Number</th>
-                                    <th class="text-center" style="width: 100px;">PCB Type</th>
-                                    <th class="text-center" style="width: 80px;">Quantity</th>
+                                    <th class="text-center" style="width: 80px;">On Hand Qty</th>
+                                    <th class="text-center" style="width: 80px;">MFG Qty</th>
                                     <th class="text-center" style="width: 100px;">Location</th>
                                     <th class="text-center" style="width: 100px;">Work Order</th>
                                     <th class="text-center" style="width: 100px;">Date Code</th>
@@ -456,7 +447,7 @@
                             </thead>
                             <tbody id="pcnHistoryBody">
                                 <tr>
-                                    <td colspan="9" class="text-center text-muted py-4">
+                                    <td colspan="10" class="text-center text-muted py-4">
                                         Click "Refresh" to load PCN history
                                     </td>
                                 </tr>
@@ -591,8 +582,26 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 500);
 
             // Auto-refresh PCN history table to show the new PCN
+            // Use longer delay to ensure database commit completes
             setTimeout(() => {
+                console.log('🔄 Auto-refreshing PCN history to show newly generated PCN:', result.pcn_number);
                 loadPCNHistory();
+                // Scroll to the PCN History table to show the new entry
+                setTimeout(() => {
+                    const historySection = document.getElementById('pcnHistoryTable');
+                    if (historySection) {
+                        historySection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        // Highlight the first row briefly to show the new PCN
+                        const firstRow = document.querySelector('#pcnHistoryBody tr:first-child');
+                        if (firstRow) {
+                            firstRow.style.backgroundColor = '#d4edda';
+                            firstRow.style.transition = 'background-color 0.3s ease';
+                            setTimeout(() => {
+                                firstRow.style.backgroundColor = '';
+                            }, 3000);
+                        }
+                    }
+                }, 800);
             }, 1000);
 
         } catch (error) {
@@ -871,7 +880,7 @@ function loadPCNHistory() {
 
     // Fetch ALL records (no limit) with cache-busting
     const timestamp = Date.now();
-    fetch(`/api/pcn/history?limit=10000&_=${timestamp}`, {
+    fetch(`/api/pcn/history?limit=100000&_=${timestamp}`, {
         method: 'GET',
         credentials: 'same-origin',
         headers: {
@@ -912,7 +921,6 @@ function loadPCNHistory() {
 function searchPCNHistory() {
     const pcn = document.getElementById('searchPCN').value.trim();
     const job = document.getElementById('searchJob').value.trim();
-    const pcbType = document.getElementById('searchPCBType').value;
 
     const historyLoading = document.getElementById('pcnHistoryLoading');
     const historyTable = document.getElementById('pcnHistoryTable');
@@ -920,7 +928,7 @@ function searchPCNHistory() {
     const historyBody = document.getElementById('pcnHistoryBody');
 
     // If all filters are empty, just load all records
-    if (!pcn && !job && !pcbType) {
+    if (!pcn && !job) {
         loadPCNHistory();
         return;
     }
@@ -934,7 +942,7 @@ function searchPCNHistory() {
     let url = `/api/pcn/history?limit=10000&_=${timestamp}`;
     if (pcn) url += '&pcn=' + encodeURIComponent(pcn);
     if (job) url += '&job=' + encodeURIComponent(job);
-    if (pcbType) url += '&pcb_type=' + encodeURIComponent(pcbType);
+
 
     fetch(url, {
         method: 'GET',
@@ -1100,21 +1108,19 @@ function displayPCNHistory(data) {
             minute: '2-digit'
         }) : 'N/A';
 
-        const pcbTypeBadge = item.pcb_type ?
-            `<span class="badge bg-${item.pcb_type === 'Bare' ? 'secondary' : item.pcb_type === 'Partial' ? 'warning text-dark' : item.pcb_type === 'Completed' ? 'info' : 'success'}">${item.pcb_type}</span>` :
-            '<span class="text-muted">-</span>';
-
         const rowClass = index % 2 === 0 ? '' : 'table-light';
 
-        const dateCode = item.date_code || '-';
-        const msdLevel = item.msd_level || '-';
+        const dateCode = item.dc || item.date_code || '-';
+        const msdLevel = item.msd || item.msd_level || '-';
+        const quantity = item.quantity || item.qty || 0;
+        const mfgQty = item.mfg_qty || 0;
 
         return `
             <tr class="${rowClass}">
                 <td class="text-center"><span class="badge bg-primary fs-6">${item.pcn}</span></td>
                 <td><strong>${item.job || '<span class="text-muted">-</span>'}</strong></td>
-                <td class="text-center">${pcbTypeBadge}</td>
-                <td class="text-end"><strong>${item.qty ? item.qty.toLocaleString() : '<span class="text-muted">-</span>'}</strong></td>
+                <td class="text-end"><strong>${quantity ? quantity.toLocaleString() : '<span class="text-muted">0</span>'}</strong></td>
+                <td class="text-end"><strong class="${mfgQty > 0 ? 'text-warning' : 'text-muted'}">${mfgQty ? mfgQty.toLocaleString() : '0'}</strong></td>
                 <td class="text-center"><span class="badge bg-light text-dark border">${item.location || '-'}</span></td>
                 <td class="text-center">${item.work_order ? '<span class="badge bg-warning text-dark">' + item.work_order + '</span>' : '<span class="text-muted">-</span>'}</td>
                 <td class="text-center"><code class="text-primary">${dateCode}</code></td>
@@ -1393,6 +1399,28 @@ async function deletePCNFromHistory(pcnNumber) {
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize action buttons first
     setupActionButtons();
+
+    // Add Enter key support for search inputs
+    const searchPCNInput = document.getElementById('searchPCN');
+    const searchJobInput = document.getElementById('searchJob');
+
+    if (searchPCNInput) {
+        searchPCNInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchPCNHistory();
+            }
+        });
+    }
+
+    if (searchJobInput) {
+        searchJobInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchPCNHistory();
+            }
+        });
+    }
 
     // Load PCN history automatically after a short delay
     setTimeout(() => {

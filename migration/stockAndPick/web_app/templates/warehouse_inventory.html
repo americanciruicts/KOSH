@@ -1,0 +1,674 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="professional-header mb-5">
+    <div class="d-flex justify-content-between align-items-start">
+        <div>
+            <div class="d-flex align-items-center gap-3 mb-2">
+                <div class="header-icon">
+                    <i class="bi bi-building"></i>
+                </div>
+                <div>
+                    <h1 class="mb-1" style="font-size: 2rem; font-weight: 600; color: var(--text-primary);">Warehouse Inventory</h1>
+                    <p class="text-muted mb-0" style="font-size: 0.95rem;">Data from Access Database (.mdb file)</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.professional-header {
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.header-icon {
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, var(--brand-primary), var(--card-accent-2));
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 1.75rem;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Stats Cards -->
+<div class="row mb-4 justify-content-center">
+    <div class="col-md-5">
+        <div class="card border-0 shadow-lg overflow-hidden" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); border-radius: 16px; position: relative;">
+            <!-- Decorative background pattern -->
+            <div style="position: absolute; top: -50px; right: -50px; width: 200px; height: 200px; background: rgba(255, 255, 255, 0.05); border-radius: 50%;"></div>
+            <div style="position: absolute; bottom: -30px; left: -30px; width: 150px; height: 150px; background: rgba(255, 255, 255, 0.05); border-radius: 50%;"></div>
+
+            <div class="card-body py-4 px-4" style="position: relative; z-index: 1;">
+                <div class="d-flex align-items-center justify-content-between">
+                    <!-- Icon Section -->
+                    <div class="d-flex align-items-center justify-content-center" style="width: 80px; height: 80px; background: rgba(255, 255, 255, 0.15); border-radius: 16px; backdrop-filter: blur(10px);">
+                        <i class="bi bi-boxes text-white" style="font-size: 2.5rem;"></i>
+                    </div>
+
+                    <!-- Stats Section -->
+                    <div class="text-end flex-grow-1 ms-3">
+                        <p class="text-white mb-2" style="font-size: 0.75rem; opacity: 0.85; text-transform: uppercase; letter-spacing: 1px; font-weight: 600;">
+                            <i class="bi bi-archive-fill me-1"></i>Total Inventory
+                        </p>
+                        <h1 class="mb-0 fw-bold text-white" style="font-size: 3rem; line-height: 1; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);">
+                            {{ '{:,}'.format(total_records|default(0)|int) }}
+                        </h1>
+                        <small class="text-white d-block mt-1" style="opacity: 0.8; font-size: 0.8rem; font-weight: 500;">
+                            warehouse records
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters and Controls -->
+<div class="card modern-card border-0 shadow-sm mb-3" style="border-radius: 10px;">
+    <div class="card-body" style="padding: 1.25rem;">
+        <form method="GET" class="row g-3">
+            <div class="col-md-2">
+                <label for="search_pcn" class="form-label small fw-semibold mb-2" style="color: #475569;">PCN</label>
+                <input type="text" class="form-control" id="search_pcn" name="search_pcn"
+                       value="{{ request.args.get('search_pcn', '') }}" placeholder="Search PCN..." style="border-radius: 6px;">
+            </div>
+            <div class="col-md-3">
+                <label for="search_item" class="form-label small fw-semibold mb-2" style="color: #475569;">Item Number</label>
+                <input type="text" class="form-control" id="search_item" name="search_item"
+                       value="{{ request.args.get('search_item', '') }}" placeholder="Search by item..." style="border-radius: 6px;">
+            </div>
+            <div class="col-md-2">
+                <label for="search_location" class="form-label small fw-semibold mb-2" style="color: #475569;">Location</label>
+                <input type="text" class="form-control" id="search_location" name="search_location"
+                       value="{{ request.args.get('search_location', '') }}" placeholder="Location..." style="border-radius: 6px;">
+            </div>
+            <div class="col-md-2">
+                <label for="per_page" class="form-label small fw-semibold mb-2" style="color: #475569;">Per Page</label>
+                <select class="form-select" id="per_page" name="per_page" style="border-radius: 6px;">
+                    <option value="10" {% if pagination.per_page == 10 %}selected{% endif %}>10</option>
+                    <option value="25" {% if pagination.per_page == 25 %}selected{% endif %}>25</option>
+                    <option value="50" {% if pagination.per_page == 50 %}selected{% endif %}>50</option>
+                    <option value="100" {% if pagination.per_page == 100 %}selected{% endif %}>100</option>
+                    <option value="200" {% if pagination.per_page == 200 %}selected{% endif %}>200</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-semibold mb-2" style="color: #475569; opacity: 0;">Actions</label>
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary px-3">
+                        <i class="bi bi-search me-1"></i> Search
+                    </button>
+                    <button type="button" class="btn btn-success px-3" onclick="window.location.reload();" title="Reload to see latest updates">
+                        <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+                    </button>
+                    <a href="{{ url_for('warehouse_inventory') }}" class="btn btn-outline-secondary px-3">
+                        <i class="bi bi-x-circle me-1"></i> Clear
+                    </a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Inventory Table -->
+<div class="card modern-card border-0 shadow-sm" style="border-radius: 10px; overflow: hidden;">
+    <div class="card-header modern-card-header" style="background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); border-bottom: 2px solid #3b82f6; padding: 1rem 1.5rem;">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h5 class="mb-0" style="color: #1e293b; font-weight: 600; font-size: 1.1rem;">
+                    <i class="bi bi-table me-2" style="color: #3b82f6;"></i>Inventory Table
+                </h5>
+                <small style="color: #64748b; font-size: 0.8rem;">
+                    <i class="bi bi-info-circle me-1"></i>Click "Refresh" button to see latest updates
+                </small>
+            </div>
+            <div style="color: #475569; font-size: 0.9rem; font-weight: 600;">
+                <i class="bi bi-file-text me-2" style="color: #3b82f6;"></i>Page {{ pagination.page }} of {{ '{:,}'.format(pagination.total_pages) }}
+            </div>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        {% if inventory and inventory|length > 0 %}
+        <div class="table-responsive">
+            <table class="table table-hover table-striped mb-0">
+                <thead style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); color: white;">
+                    <tr>
+                        <th style="border: none; font-weight: 600; padding: 14px;">PCN</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Item Number</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">MPN</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">DC</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">On hand qty</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Loc_From</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Loc_To</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">MFG_Qty</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">MSD</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">PO</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Cost</th>
+                        <th class="text-center" style="border: none; font-weight: 600; padding: 14px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in inventory %}
+                    <tr>
+                        <td>{{ row.PCN if row.PCN else '-' }}</td>
+                        <td>{{ row.Item if row.Item else '-' }}</td>
+                        <td>{{ row.MPN if row.MPN else '-' }}</td>
+                        <td>{{ row.DC if row.DC else '-' }}</td>
+                        <td>{{ row.OnHandQty if row.OnHandQty else '-' }}</td>
+                        <td>{{ row.Loc_From.replace('Receiving Area', 'Rec Area') if row.Loc_From else '-' }}</td>
+                        <td>{{ row.Loc_To.replace('Receiving Area', 'Rec Area') if row.Loc_To else '-' }}</td>
+                        <td>{{ row.MFG_Qty if row.MFG_Qty else '-' }}</td>
+                        <td>{{ row.MSD.replace('Level', 'Lvl') if row.MSD else '-' }}</td>
+                        <td>{{ row.PO if row.PO else '-' }}</td>
+                        <td>{{ row.Cost if row.Cost else '-' }}</td>
+                        <td class="text-center">
+                            <div class="btn-group btn-group-sm" role="group">
+                                <button type="button" class="btn btn-outline-success" title="Stock"
+                                        onclick="stockItem('{{ row.Item }}', '{{ row.PCN }}', '{{ row.MPN }}')">
+                                    <i class="bi bi-plus-circle"></i>
+                                </button>
+                                <button type="button" class="btn btn-outline-danger" title="Pick"
+                                        onclick="pickItem('{{ row.Item }}', '{{ row.PCN }}', '{{ row.MPN }}')">
+                                    <i class="bi bi-dash-circle"></i>
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" title="Edit"
+                                        onclick="editItem('{{ row.Item }}', '{{ row.PCN }}', '{{ row.MPN }}')">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Advanced Pagination -->
+        {% if pagination.total_pages > 1 %}
+        <div class="card-footer bg-light">
+            <nav aria-label="Inventory pagination">
+                <ul class="pagination justify-content-center mb-3">
+                    <!-- Previous button -->
+                    <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                        <a class="page-link" href="{% if pagination.has_prev %}{{ url_for('warehouse_inventory', page=pagination.prev_num, per_page=pagination.per_page) }}{% else %}#{% endif %}"
+                           {% if not pagination.has_prev %}tabindex="-1" aria-disabled="true"{% endif %}>
+                            <i class="bi bi-chevron-left"></i> Previous
+                        </a>
+                    </li>
+
+                    <!-- First page -->
+                    {% if pagination.page > 3 %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=1, per_page=pagination.per_page) }}">1</a>
+                    </li>
+                    {% if pagination.page > 4 %}
+                    <li class="page-item disabled">
+                        <span class="page-link">...</span>
+                    </li>
+                    {% endif %}
+                    {% endif %}
+
+                    <!-- Page numbers -->
+                    {% for page_num in pagination.pages %}
+                    <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=page_num, per_page=pagination.per_page) }}">
+                            {{ page_num }}
+                        </a>
+                    </li>
+                    {% endfor %}
+
+                    <!-- Last page -->
+                    {% if pagination.page < pagination.total_pages - 2 %}
+                    {% if pagination.page < pagination.total_pages - 3 %}
+                    <li class="page-item disabled">
+                        <span class="page-link">...</span>
+                    </li>
+                    {% endif %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=pagination.total_pages, per_page=pagination.per_page) }}">{{ pagination.total_pages }}</a>
+                    </li>
+                    {% endif %}
+
+                    <!-- Next button -->
+                    <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                        <a class="page-link" href="{% if pagination.has_next %}{{ url_for('warehouse_inventory', page=pagination.next_num, per_page=pagination.per_page) }}{% else %}#{% endif %}"
+                           {% if not pagination.has_next %}tabindex="-1" aria-disabled="true"{% endif %}>
+                            Next <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </li>
+                </ul>
+
+                <!-- Jump to page -->
+                <div class="d-flex justify-content-center align-items-center mb-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="text-muted small">Jump to page:</span>
+                        <input type="number" class="form-control form-control-sm" style="width: 80px;"
+                               id="jumpToPageInput"
+                               min="1" max="{{ pagination.total_pages }}" value="{{ pagination.page }}"
+                               onchange="jumpToPage(this.value)">
+                        <span class="text-muted small">of {{ pagination.total_pages }}</span>
+                    </div>
+                </div>
+
+                <!-- Records info -->
+                <div class="text-center">
+                    <small class="text-muted">
+                        Showing {{ ((pagination.page - 1) * pagination.per_page) + 1 }} to
+                        {{ [pagination.page * pagination.per_page, pagination.total]|min }} of
+                        {{ pagination.total }} records
+                    </small>
+                </div>
+            </nav>
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox text-muted" style="font-size: 3rem;"></i>
+            <p class="text-muted mt-3">No warehouse inventory data found</p>
+            <p class="small text-muted">The warehouse inventory table (tblWhse_Inventory) appears to be empty</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="editModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editModalLabel">
+                    <i class="bi bi-pencil-fill me-2"></i>Edit Warehouse Item
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editForm">
+                    <input type="hidden" id="edit_id" value="">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="edit_pcn" class="form-label fw-semibold">PCN</label>
+                            <input type="text" class="form-control bg-light" id="edit_pcn" readonly>
+                            <small class="text-muted">Cannot be changed</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit_item" class="form-label fw-semibold">Item Number</label>
+                            <input type="text" class="form-control bg-light" id="edit_item" readonly>
+                            <small class="text-muted">Cannot be changed</small>
+                        </div>
+                        <div class="col-md-12">
+                            <label for="edit_mpn" class="form-label fw-semibold">MPN (Manufacturer Part Number)</label>
+                            <input type="text" class="form-control bg-light" id="edit_mpn" readonly>
+                            <small class="text-muted">Cannot be changed</small>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit_dc" class="form-label fw-semibold">Date Code</label>
+                            <input type="text" class="form-control" id="edit_dc">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit_onhandqty" class="form-label fw-semibold">On Hand Quantity</label>
+                            <input type="number" class="form-control" id="edit_onhandqty">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit_loc_from" class="form-label fw-semibold">Location From</label>
+                            <input type="text" class="form-control" id="edit_loc_from">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit_location" class="form-label fw-semibold">Location To</label>
+                            <input type="text" class="form-control" id="edit_location">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit_mfg_qty" class="form-label fw-semibold">MFG Quantity</label>
+                            <input type="number" class="form-control" id="edit_mfg_qty">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit_msd" class="form-label fw-semibold">MSD (Moisture Sensitive)</label>
+                            <input type="text" class="form-control" id="edit_msd">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="edit_po" class="form-label fw-semibold">PO (Purchase Order)</label>
+                            <input type="text" class="form-control" id="edit_po">
+                        </div>
+                        <div class="col-md-12">
+                            <label for="edit_cost" class="form-label fw-semibold">Cost</label>
+                            <input type="text" class="form-control" id="edit_cost">
+                        </div>
+                    </div>
+                    <div class="alert alert-warning mt-3 mb-0">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Note:</strong> PCN, Item Number, and MPN cannot be modified. You can edit all other fields.
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    <i class="bi bi-x-circle me-1"></i> Cancel
+                </button>
+                <button type="button" class="btn btn-primary" onclick="saveEdit()">
+                    <i class="bi bi-save me-1"></i> Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Modal styling - backdrop disabled in JavaScript */
+.modal {
+    z-index: 1050 !important;
+}
+
+.modal.show {
+    display: block !important;
+}
+
+.modal-dialog {
+    margin: 1.75rem auto !important;
+}
+
+.modal-content {
+    background-color: #fff !important;
+    border: 1px solid rgba(0,0,0,.2) !important;
+    border-radius: 0.5rem !important;
+    box-shadow: 0 0.5rem 1rem rgba(0,0,0,.5) !important;
+}
+
+.modern-card {
+    border-radius: 0.75rem;
+    overflow: hidden;
+}
+
+.modern-card-header {
+    border-bottom: 2px solid var(--border-color);
+    padding: 1rem 1.5rem;
+}
+
+.icon-circle {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+}
+
+.table thead th {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+.table tbody tr {
+    transition: all 0.2s ease;
+}
+
+.table tbody tr:hover {
+    background-color: var(--table-hover) !important;
+    transform: scale(1.01);
+}
+</style>
+
+<script>
+// Jump to page functionality
+function jumpToPage(page) {
+    page = parseInt(page);
+    if (page < 1 || page > {{ pagination.total_pages if pagination else 1 }}) {
+        showError('Invalid page number');
+        return;
+    }
+
+    const url = new URL(window.location);
+    url.searchParams.set('page', page);
+    window.location.href = url.toString();
+}
+
+// Handle Enter key in jump to page input
+document.addEventListener('DOMContentLoaded', function() {
+    // Clean up any stuck modal backdrops or states on page load
+    const backdrops = document.querySelectorAll('.modal-backdrop');
+    backdrops.forEach(backdrop => backdrop.remove());
+
+    // Remove modal-open class from body if present
+    document.body.classList.remove('modal-open');
+
+    // Reset modal styles
+    document.body.style.overflow = '';
+    document.body.style.paddingRight = '';
+
+    const jumpInput = document.getElementById('jumpToPageInput');
+    if (jumpInput) {
+        jumpInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                jumpToPage(this.value);
+            }
+        });
+    }
+
+    // Add modal cleanup event listeners
+    const editModal = document.getElementById('editModal');
+    if (editModal) {
+        editModal.addEventListener('hidden.bs.modal', function () {
+            // Ensure complete cleanup when modal is closed
+            document.body.classList.remove('modal-open');
+            document.body.style.overflow = '';
+            document.body.style.paddingRight = '';
+
+            // Remove any leftover backdrops
+            const backdrops = document.querySelectorAll('.modal-backdrop');
+            backdrops.forEach(backdrop => backdrop.remove());
+        });
+    }
+
+});
+
+// Action button functions
+function stockItem(jobNumber, pcn, mpn) {
+    // Redirect to stock page with pre-filled data
+    const stockUrl = "{{ url_for('stock') }}" +
+                     `?job=${encodeURIComponent(jobNumber)}` +
+                     `&pcn=${encodeURIComponent(pcn)}` +
+                     `&part_number=${encodeURIComponent(mpn)}`;
+    window.location.href = stockUrl;
+}
+
+function pickItem(jobNumber, pcn, mpn) {
+    // Redirect to pick page with pre-filled data
+    const pickUrl = "{{ url_for('pick') }}" +
+                    `?job=${encodeURIComponent(jobNumber)}` +
+                    `&pcn=${encodeURIComponent(pcn)}` +
+                    `&part_number=${encodeURIComponent(mpn)}`;
+    window.location.href = pickUrl;
+}
+
+function editItem(jobNumber, pcn, mpn) {
+    console.log('Edit button clicked:', {jobNumber, pcn, mpn});
+
+    // Fetch the full record data
+    const url = `/api/warehouse-inventory/item?item=${encodeURIComponent(jobNumber)}&pcn=${encodeURIComponent(pcn)}`;
+    console.log('Fetching from:', url);
+
+    fetch(url)
+        .then(response => {
+            console.log('Response status:', response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log('Response data:', data);
+
+            if (data.success && data.item) {
+                // Populate modal fields (PCN first, then Item)
+                document.getElementById('edit_pcn').value = data.item.PCN || '';
+                document.getElementById('edit_item').value = data.item.Item || '';
+                document.getElementById('edit_mpn').value = data.item.MPN || '';
+                document.getElementById('edit_dc').value = data.item.DC || '';
+                document.getElementById('edit_onhandqty').value = data.item.OnHandQty || '';
+                document.getElementById('edit_loc_from').value = data.item.Loc_From || '';
+                document.getElementById('edit_location').value = data.item.Loc_To || '';
+                document.getElementById('edit_mfg_qty').value = data.item.MFG_Qty || '';
+                document.getElementById('edit_msd').value = data.item.MSD || '';
+                document.getElementById('edit_po').value = data.item.PO || '';
+                document.getElementById('edit_cost').value = data.item.Cost || '';
+
+                console.log('Fields populated, showing modal');
+
+                // Show modal using Bootstrap 5 - removed static backdrop
+                const modalElement = document.getElementById('editModal');
+                console.log('Modal element:', modalElement);
+
+                // Force remove any existing modal instances first
+                const existingModal = bootstrap.Modal.getInstance(modalElement);
+                if (existingModal) {
+                    existingModal.dispose();
+                }
+
+                // Create modal WITHOUT backdrop to prevent blocking clicks
+                const editModal = new bootstrap.Modal(modalElement, {
+                    backdrop: false,
+                    keyboard: true
+                });
+                console.log('Modal instance created:', editModal);
+
+                editModal.show();
+
+                // Verify modal is shown
+                setTimeout(() => {
+                    const isShown = modalElement.classList.contains('show');
+                    console.log('Modal shown status:', isShown);
+                    console.log('Modal classes:', modalElement.className);
+                    console.log('Modal style:', modalElement.style.cssText);
+                }, 500);
+
+                console.log('Modal show() called');
+            } else {
+                console.error('API returned error:', data.message);
+                alert('Failed to load item data: ' + (data.message || 'Unknown error'));
+            }
+        })
+        .catch(error => {
+            console.error('Error loading item:', error);
+            alert('Error loading item data: ' + error.message);
+        });
+}
+
+function saveEdit() {
+    console.log('Save button clicked');
+
+    const itemData = {
+        item: document.getElementById('edit_item').value,
+        pcn: document.getElementById('edit_pcn').value,
+        mpn: document.getElementById('edit_mpn').value,
+        dc: document.getElementById('edit_dc').value,
+        onhandqty: document.getElementById('edit_onhandqty').value,
+        loc_from: document.getElementById('edit_loc_from').value,
+        loc_to: document.getElementById('edit_location').value,
+        mfg_qty: document.getElementById('edit_mfg_qty').value,
+        msd: document.getElementById('edit_msd').value,
+        po: document.getElementById('edit_po').value,
+        cost: document.getElementById('edit_cost').value
+    };
+
+    console.log('Saving data:', itemData);
+
+    fetch('/api/warehouse-inventory/update', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify(itemData)
+    })
+    .then(response => {
+        console.log('Save response status:', response.status);
+
+        // Check if response is OK before parsing JSON
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        // Check if response is actually JSON
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+            throw new Error('Server returned non-JSON response');
+        }
+
+        return response.json();
+    })
+    .then(data => {
+        console.log('Save response data:', data);
+
+        if (data.success) {
+            // Close modal
+            const editModal = bootstrap.Modal.getInstance(document.getElementById('editModal'));
+            if (editModal) {
+                editModal.hide();
+            }
+
+            // Show success message and reload page
+            alert('Item updated successfully!');
+            window.location.reload();
+        } else {
+            alert('Failed to update item: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .catch(error => {
+        console.error('Error updating item:', error);
+        alert('Error updating item: ' + error.message);
+    });
+}
+
+function showError(message) {
+    // Create and show error alert
+    const alertHtml = `
+        <div class="alert alert-danger alert-dismissible fade show position-fixed"
+             style="top: 20px; right: 20px; z-index: 9999; min-width: 300px;" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i>
+            <strong>Error:</strong> ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', alertHtml);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        const alerts = document.querySelectorAll('.alert');
+        if (alerts.length > 0) {
+            alerts[alerts.length - 1].remove();
+        }
+    }, 5000);
+}
+
+function showSuccess(message) {
+    // Create and show success alert
+    const alertHtml = `
+        <div class="alert alert-success alert-dismissible fade show position-fixed"
+             style="top: 20px; right: 20px; z-index: 9999; min-width: 300px;" role="alert">
+            <i class="bi bi-check-circle-fill me-2"></i>
+            <strong>Success:</strong> ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', alertHtml);
+
+    // Auto-remove after 3 seconds
+    setTimeout(() => {
+        const alerts = document.querySelectorAll('.alert');
+        if (alerts.length > 0) {
+            alerts[alerts.length - 1].remove();
+        }
+    }, 3000);
+}
+</script>
+{% endblock %}

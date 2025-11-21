@@ -101,7 +101,7 @@
             <i class="bi bi-funnel text-primary"></i>
             <h5 class="mb-0">Advanced Filters</h5>
         </div>
-        <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('filterForm').reset(); window.location.href='{{ url_for('inventory') }}'">
+        <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('filterForm').reset(); window.location.href='{{ url_for('pcb_inventory') }}'">
             <i class="bi bi-arrow-clockwise me-1"></i> Reset
         </button>
     </div>
@@ -165,7 +165,7 @@
                 <button type="submit" class="btn btn-primary me-2">
                     <i class="bi bi-search"></i> Search
                 </button>
-                <a href="{{ url_for('inventory') }}" class="btn btn-outline-secondary">
+                <a href="{{ url_for('pcb_inventory') }}" class="btn btn-outline-secondary">
                     <i class="bi bi-x-circle"></i> Clear
                 </a>
             </div>
@@ -264,8 +264,8 @@
                                 </span>
                             </td>
                             <td>
-                                <strong class="{% if item.qty < 50 %}text-warning{% elif item.qty < 20 %}text-danger{% else %}text-success{% endif %}">
-                                    {{ '{:,}'.format(item.qty) }}
+                                <strong class="{% if item.qty and item.qty < 50 %}text-warning{% elif item.qty and item.qty < 20 %}text-danger{% elif item.qty %}text-success{% else %}text-muted{% endif %}">
+                                    {{ '{:,}'.format(item.qty) if item.qty is not none else 'N/A' }}
                                 </strong>
                             </td>
                             <td>
@@ -327,7 +327,7 @@
                     <tfoot class="table-light">
                         <tr>
                             <td colspan="2"><strong>Total Items:</strong></td>
-                            <td><strong>{{ '{:,}'.format(inventory | sum(attribute='qty')) }}</strong></td>
+                            <td><strong>{{ '{:,}'.format(inventory | selectattr('qty', 'defined') | selectattr('qty', 'ne', none) | sum(attribute='qty', start=0)) }}</strong></td>
                             <td colspan="6"></td>
                         </tr>
                     </tfoot>
@@ -340,7 +340,7 @@
                 <ul class="pagination justify-content-center">
                     <!-- Previous button -->
                     <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
-                        <a class="page-link" href="{% if pagination.has_prev %}{{ url_for('inventory', page=pagination.prev_num, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}{% else %}#{% endif %}" 
+                        <a class="page-link" href="{% if pagination.has_prev %}{{ url_for('pcb_inventory', page=pagination.prev_num, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}{% else %}#{% endif %}" 
                            {% if not pagination.has_prev %}tabindex="-1" aria-disabled="true"{% endif %}>
                             <i class="bi bi-chevron-left"></i> Previous
                         </a>
@@ -349,7 +349,7 @@
                     <!-- First page -->
                     {% if pagination.page > 3 %}
                     <li class="page-item">
-                        <a class="page-link" href="{{ url_for('inventory', page=1, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}">1</a>
+                        <a class="page-link" href="{{ url_for('pcb_inventory', page=1, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}">1</a>
                     </li>
                     {% if pagination.page > 4 %}
                     <li class="page-item disabled">
@@ -361,7 +361,7 @@
                     <!-- Page numbers -->
                     {% for page_num in pagination.pages %}
                     <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
-                        <a class="page-link" href="{{ url_for('inventory', page=page_num, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}">
+                        <a class="page-link" href="{{ url_for('pcb_inventory', page=page_num, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}">
                             {{ page_num }}
                         </a>
                     </li>
@@ -375,13 +375,13 @@
                     </li>
                     {% endif %}
                     <li class="page-item">
-                        <a class="page-link" href="{{ url_for('inventory', page=pagination.total_pages, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}">{{ pagination.total_pages }}</a>
+                        <a class="page-link" href="{{ url_for('pcb_inventory', page=pagination.total_pages, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}">{{ pagination.total_pages }}</a>
                     </li>
                     {% endif %}
                     
                     <!-- Next button -->
                     <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
-                        <a class="page-link" href="{% if pagination.has_next %}{{ url_for('inventory', page=pagination.next_num, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}{% else %}#{% endif %}"
+                        <a class="page-link" href="{% if pagination.has_next %}{{ url_for('pcb_inventory', page=pagination.next_num, per_page=pagination.per_page, job=search_job, pcb_type=search_pcb_type, sort=sort_by, order=sort_order) }}{% else %}#{% endif %}"
                            {% if not pagination.has_next %}tabindex="-1" aria-disabled="true"{% endif %}>
                             Next <i class="bi bi-chevron-right"></i>
                         </a>
@@ -405,7 +405,7 @@
                 {% if search_job or search_pcb_type %}
                     <p class="text-muted">
                         Try adjusting your search criteria or 
-                        <a href="{{ url_for('inventory') }}">view all items</a>
+                        <a href="{{ url_for('pcb_inventory') }}">view all items</a>
                     </p>
                 {% else %}
                     <p class="text-muted">Get started by stocking your first PCB</p>
@@ -433,7 +433,7 @@
         <div class="card text-center h-100">
             <div class="card-body">
                 <h5 class="card-title text-muted mb-3">Total Quantity</h5>
-                <h3 class="text-success">{{ '{:,}'.format(inventory | sum(attribute='qty')) }}</h3>
+                <h3 class="text-success">{{ '{:,}'.format(inventory | selectattr('qty', 'defined') | selectattr('qty', 'ne', none) | sum(attribute='qty', start=0)) }}</h3>
             </div>
         </div>
     </div>
