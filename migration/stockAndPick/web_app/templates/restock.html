@@ -41,6 +41,23 @@
         </div>
     </div>
 
+    <!-- Print Label Button (shows after successful restock) -->
+    {% if request.args.get('restocked_pcn') %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="alert alert-success alert-persistent border-0 shadow-sm text-center py-3">
+                <i class="bi bi-check-circle-fill fs-4 me-2"></i>
+                <strong>Restock Complete!</strong> PCN <strong>{{ request.args.get('restocked_pcn') }}</strong>
+                <button type="button"
+                        onclick="window.open('{{ url_for('print_label', pcn_number=request.args.get('restocked_pcn')) }}', 'PrintLabel', 'width=800,height=600,scrollbars=yes,resizable=yes'); return false;"
+                        class="btn btn-success shadow-sm ms-3">
+                    <i class="bi bi-printer-fill me-2"></i> Print Label
+                </button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <div class="row g-4">
         <!-- Restock Form -->
         <div class="col-xl-7">
@@ -406,19 +423,8 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
         return false;
     }
 
-    // Check if MFG qty is sufficient
-    const mfgQty = parseInt(document.getElementById('detail-mfg').textContent.replace(/,/g, '')) || 0;
-    if (mfgQty === 0) {
-        e.preventDefault();
-        alert('No MFG quantity available to restock!');
-        return false;
-    }
-
-    if (parseInt(quantity) > mfgQty) {
-        e.preventDefault();
-        alert(`Insufficient MFG quantity. Available: ${mfgQty}, Requested: ${quantity}`);
-        return false;
-    }
+    // Allow any quantity for physical count corrections
+    // No MFG quantity validation - users can adjust based on actual counts
 
     // Confirmation dialog
     const confirmMsg = `Are you sure you want to restock ${quantity} units from MFG Floor to Count Area?`;

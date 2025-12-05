@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KOSH Logo Options</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 40px;
+            font-size: 3rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-bottom: 50px;
+        }
+        .logo-card {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .logo-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.4);
+        }
+        .logo-preview {
+            width: 100%;
+            height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+        .logo-preview img {
+            width: 120px;
+            height: 120px;
+        }
+        h3 {
+            color: #1e293b;
+            margin-bottom: 10px;
+            font-size: 1.5rem;
+        }
+        p {
+            color: #64748b;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+        .navbar-preview {
+            background: linear-gradient(to right, #1e40af, #3b82f6);
+            padding: 15px 30px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            margin-top: 15px;
+        }
+        .navbar-preview img {
+            width: 45px;
+            height: 45px;
+            margin-right: 15px;
+        }
+        .navbar-preview span {
+            color: white;
+            font-weight: 900;
+            font-size: 2rem;
+            letter-spacing: 3px;
+        }
+        .pros {
+            background: #ecfdf5;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #10b981;
+            margin-top: 15px;
+        }
+        .pros ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        .pros li:before {
+            content: "✓ ";
+            color: #10b981;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 KOSH Logo Options</h1>
+
+        <div class="grid">
+            <!-- Option 1: Stacked -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <img src="kosh-logo-stacked.svg" alt="Stacked Logo">
+                </div>
+                <h3>1. Stacked Shelves</h3>
+                <p>Three layered shelves representing organized warehouse inventory with support pillars.</p>
+                <div class="navbar-preview">
+                    <img src="kosh-logo-stacked.svg" alt="Preview">
+                    <span>KOSH</span>
+                </div>
+                <div class="pros">
+                    <ul>
+                        <li>Clean and professional</li>
+                        <li>Clearly represents inventory</li>
+                        <li>Scales well at small sizes</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Option 2: Grid -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <img src="kosh-logo-grid.svg" alt="Grid Logo">
+                </div>
+                <h3>2. Dashboard Grid</h3>
+                <p>9-square grid with highlighted center, representing inventory dashboard and data tracking.</p>
+                <div class="navbar-preview">
+                    <img src="kosh-logo-grid.svg" alt="Preview">
+                    <span>KOSH</span>
+                </div>
+                <div class="pros">
+                    <ul>
+                        <li>Modern and tech-forward</li>
+                        <li>Suggests data/analytics</li>
+                        <li>Memorable pattern</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Option 3: Box -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <img src="kosh-logo-box.svg" alt="Box Logo">
+                </div>
+                <h3>3. Verified Box</h3>
+                <p>Isometric 3D box with checkmark overlay, representing quality-controlled inventory.</p>
+                <div class="navbar-preview">
+                    <img src="kosh-logo-box.svg" alt="Preview">
+                    <span>KOSH</span>
+                </div>
+                <div class="pros">
+                    <ul>
+                        <li>Shows quality control</li>
+                        <li>3D depth adds interest</li>
+                        <li>Professional appearance</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Option 4: Lettermark -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <img src="kosh-logo-lettermark.svg" alt="Lettermark Logo">
+                </div>
+                <h3>4. K Lettermark</h3>
+                <p>Stylized letter K with horizontal shelf lines inside, combining branding with function.</p>
+                <div class="navbar-preview">
+                    <img src="kosh-logo-lettermark.svg" alt="Preview">
+                    <span>KOSH</span>
+                </div>
+                <div class="pros">
+                    <ul>
+                        <li>Strong brand identity</li>
+                        <li>Unique and distinctive</li>
+                        <li>Works standalone</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Option 5: Barcode -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <img src="kosh-logo-barcode.svg" alt="Barcode Logo">
+                </div>
+                <h3>5. Barcode Scanner</h3>
+                <p>Barcode with scan line and corner brackets, directly representing inventory scanning.</p>
+                <div class="navbar-preview">
+                    <img src="kosh-logo-barcode.svg" alt="Preview">
+                    <span>KOSH</span>
+                </div>
+                <div class="pros">
+                    <ul>
+                        <li>Industry-specific</li>
+                        <li>Instantly recognizable</li>
+                        <li>Tech-focused look</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Option 6: Modern Abstract -->
+            <div class="logo-card">
+                <div class="logo-preview">
+                    <img src="kosh-logo-modern.svg" alt="Modern Logo">
+                </div>
+                <h3>6. Modern Abstract</h3>
+                <p>Overlapping rounded rectangles with connection points, representing inventory flow.</p>
+                <div class="navbar-preview">
+                    <img src="kosh-logo-modern.svg" alt="Preview">
+                    <span>KOSH</span>
+                </div>
+                <div class="pros">
+                    <ul>
+                        <li>Contemporary design</li>
+                        <li>Shows connectivity</li>
+                        <li>Dynamic and vibrant</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; color: white; font-size: 1.2rem;">
+            <p>💡 <strong>My Recommendations:</strong> Options #1 (Stacked), #2 (Grid), or #3 (Box)</p>
+            <p style="margin-top: 10px; opacity: 0.9;">Open this file in your browser to preview all logos!</p>
+        </div>
+    </div>
+</body>
+</html>

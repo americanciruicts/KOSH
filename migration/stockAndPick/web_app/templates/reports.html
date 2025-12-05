@@ -413,7 +413,7 @@
                                 {% for entry in audit_log %}
                                 <tr>
                                     <td class="text-muted small">
-                                        {{ entry.timestamp.strftime('%m/%d %H:%M') if entry.timestamp else 'N/A' }}
+                                        {{ entry.timestamp if entry.timestamp else 'N/A' }}
                                     </td>
                                     <td>
                                         <span class="badge {% if entry.operation == 'STOCK' %}bg-success{% else %}bg-danger{% endif %}">
@@ -430,7 +430,7 @@
                                         {{ '+' if entry.quantity_change > 0 else '' }}{{ entry.quantity_change }}
                                     </td>
                                     <td>{{ entry.new_quantity }}</td>
-                                    <td><code class="small">{{ entry.location or 'N/A' }}</code></td>
+                                    <td><code class="small">{{ entry.loc_to or entry.loc_from or 'N/A' }}</code></td>
                                 </tr>
                                 {% endfor %}
                             </tbody>

@@ -6,7 +6,7 @@
         <h1 class="h2 mb-2">
             <i class="bi bi-plus-circle-fill me-2"></i> Stock Electronic Parts
         </h1>
-        <p class="mb-0 fs-6">Add components to inventory • Manage PCB stock levels • Track locations</p>
+        <p class="mb-0 fs-6">Add components to inventory • Manage stock levels • Track locations</p>
     </div>
     <div class="col-md-4 text-end">
         <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
@@ -576,7 +576,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Add confirmation for large quantities
         if (quantity > 1000) {
-            if (!confirm(`Are you sure you want to stock ${quantity} PCBs? This is a large quantity.`)) {
+            if (!confirm(`Are you sure you want to stock ${quantity} units? This is a large quantity.`)) {
                 e.preventDefault();
                 return false;
             }

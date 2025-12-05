@@ -81,10 +81,15 @@
                 <input type="text" class="form-control" id="search_pcn" name="search_pcn"
                        value="{{ request.args.get('search_pcn', '') }}" placeholder="Search PCN..." style="border-radius: 6px;">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label for="search_item" class="form-label small fw-semibold mb-2" style="color: #475569;">Item Number</label>
                 <input type="text" class="form-control" id="search_item" name="search_item"
                        value="{{ request.args.get('search_item', '') }}" placeholder="Search by item..." style="border-radius: 6px;">
+            </div>
+            <div class="col-md-2">
+                <label for="search_mpn" class="form-label small fw-semibold mb-2" style="color: #475569;">MPN</label>
+                <input type="text" class="form-control" id="search_mpn" name="search_mpn"
+                       value="{{ request.args.get('search_mpn', '') }}" placeholder="Search MPN..." style="border-radius: 6px;">
             </div>
             <div class="col-md-2">
                 <label for="search_location" class="form-label small fw-semibold mb-2" style="color: #475569;">Location</label>
@@ -148,7 +153,7 @@
                         <th style="border: none; font-weight: 600; padding: 14px;">DC</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">On hand qty</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">Loc_From</th>
-                        <th style="border: none; font-weight: 600; padding: 14px;">Loc_To</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Location</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MFG_Qty</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MSD</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">PO</th>
@@ -322,7 +327,7 @@
                             <input type="text" class="form-control" id="edit_loc_from">
                         </div>
                         <div class="col-md-6">
-                            <label for="edit_location" class="form-label fw-semibold">Location To</label>
+                            <label for="edit_location" class="form-label fw-semibold">Location</label>
                             <input type="text" class="form-control" id="edit_location">
                         </div>
                         <div class="col-md-6">

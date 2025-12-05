@@ -94,7 +94,7 @@
                             <div class="mb-3">
                                 <label for="pcnInput" class="form-label fw-semibold text-dark">PCN Number</label>
                                 <div class="input-group">
-                                    <input type="text" class="form-control form-control-lg border-2" id="pcnInput" name="pcn_number" placeholder="e.g., 00001, 00523">
+                                    <input type="text" class="form-control form-control-lg border-2" id="pcnInput" name="pcn" placeholder="e.g., 00001, 00523">
                                     <button type="button" class="btn btn-primary" id="checkInventoryBtn">
                                         <i class="bi bi-search"></i>
                                     </button>
@@ -382,6 +382,14 @@ document.addEventListener('DOMContentLoaded', function() {
         return;
     }
 
+    // Clear form on page load/refresh to prevent stale data
+    console.log('🔄 Resetting form on page load');
+    form.reset();
+    // Clear any cached inventory check data
+    currentInventoryCheck = null;
+    hideAvailableQuantity();
+    hideExpirationWarning();
+
     // Auto-focus on PCN number field (first field) if no other element is focused
     const pcnInput = document.getElementById('pcnInput');
     if (pcnInput && (!document.activeElement || document.activeElement === document.body)) {
@@ -481,6 +489,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function checkInventory() {
     const partNumberInput = document.getElementById('partNumberInput');
+    const pcnInput = document.getElementById('pcnInput');
 
     if (!partNumberInput) {
         console.error('Form elements not found in checkInventory');
@@ -488,9 +497,10 @@ function checkInventory() {
     }
 
     const job = partNumberInput.value.trim();
+    const pcn = pcnInput ? pcnInput.value.trim() : '';
     const pcbType = 'Bare';  // Default since field was removed
 
-    console.log('Checking inventory for:', { job, pcbType });
+    console.log('Checking inventory for:', { job, pcn, pcbType });
 
     if (!job) {
         console.log('Missing job, hiding quantity display');
@@ -502,7 +512,12 @@ function checkInventory() {
     // Show loading state
     showAvailableQuantity('Checking inventory...', 'info');
 
-    const searchUrl = `/api/search?job=${encodeURIComponent(job)}`;
+    // IMPORTANT: If PCN is specified, check inventory for that specific PCN only
+    let searchUrl = `/api/search?job=${encodeURIComponent(job)}`;
+    if (pcn) {
+        searchUrl += `&pcn=${encodeURIComponent(pcn)}`;
+        console.log('🔍 Checking specific PCN:', pcn);
+    }
     console.log('Fetching:', searchUrl);
 
     fetch(searchUrl)
@@ -688,7 +703,7 @@ function performQuickSearch() {
         .then(data => {
             if (data.success && data.data.length > 0) {
                 let html = '<div class="table-responsive"><table class="table table-sm table-hover">';
-                html += '<thead><tr><th>PCB Type</th><th>Qty</th><th>Location</th><th>Action</th></tr></thead><tbody>';
+                html += '<thead><tr><th>Item</th><th>Qty</th><th>Location</th><th>Action</th></tr></thead><tbody>';
                 
                 data.data.forEach(item => {
                     const badgeClass = {
@@ -765,9 +780,8 @@ function showConfirmationModal() {
 
                     // Use native browser confirm dialog
                     const remaining = currentInventoryCheck.qty - quantity;
-                    const message = `Are you sure you want to pick the following PCBs?\n\n` +
-                                  `Job: ${job}\n` +
-                                  `PCB Type: ${pcbType}\n` +
+                    const message = `Are you sure you want to pick the following items?\n\n` +
+                                  `Item: ${job}\n` +
                                   `Quantity: ${quantity}\n` +
                                   `Remaining After Pick: ${remaining}\n\n` +
                                   `This action cannot be undone, but is logged in the audit trail.`;
@@ -796,9 +810,8 @@ function showConfirmationModal() {
 
     // Use native browser confirm dialog
     const remaining = currentInventoryCheck.qty - quantity;
-    const message = `Are you sure you want to pick the following PCBs?\n\n` +
-                  `Job: ${job}\n` +
-                  `PCB Type: ${pcbType}\n` +
+    const message = `Are you sure you want to pick the following items?\n\n` +
+                  `Item: ${job}\n` +
                   `Quantity: ${quantity}\n` +
                   `Remaining After Pick: ${remaining}\n\n` +
                   `This action cannot be undone, but is logged in the audit trail.`;
@@ -1181,6 +1194,14 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
             }
 
             console.log('=== AUTO-FILL COMPLETE ===');
+
+            // IMPORTANT: Auto-check inventory after PCN autofill to get TOTAL available quantity
+            // This ensures validation uses the correct total, not just the PCN's individual quantity
+            const partNumber = result.job || result.part_number;
+            if (partNumber) {
+                console.log('🔍 Auto-checking inventory for item:', partNumber);
+                checkInventory();
+            }
 
             // Show success notification
             const notification = document.createElement('div');

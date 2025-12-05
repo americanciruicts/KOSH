@@ -39,7 +39,13 @@
       "Bash(cd:*)",
       "Bash(echo:*)",
       "Bash(find:*)",
-      "Bash(xargs sed -i \"s/url_for(''''inventory'''')/url_for(''''pcb_inventory'''')/g\")"
+      "Bash(xargs sed -i \"s/url_for(''''inventory'''')/url_for(''''pcb_inventory'''')/g\")",
+      "Bash(pkill:*)",
+      "Bash(pip3.9 install:*)",
+      "Bash(kill:*)",
+      "Bash(ss:*)",
+      "Bash(sudo kill:*)",
+      "Bash(ps:*)"
     ],
     "deny": [],
     "ask": []
