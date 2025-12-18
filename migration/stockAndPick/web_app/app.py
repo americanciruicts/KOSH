@@ -417,13 +417,61 @@ class DatabaseManager:
         finally:
             if conn:
                 self.return_connection(conn)
-    
+
+    def validate_location(self, location: str) -> bool:
+        """Check if a location exists in tblLoc table or is a valid text location."""
+        if not location or location.strip() == '':
+            return False
+
+        location = location.strip()
+
+        # Allow standard text locations (these are used throughout the system)
+        standard_locations = [
+            'Receiving Area', 'Rec Area',
+            'Count Area',
+            'Stock Room',
+            'MFG Floor'
+        ]
+
+        # Case-insensitive check for standard locations
+        if location in standard_locations or location.lower() in [loc.lower() for loc in standard_locations]:
+            return True
+
+        # For numeric locations, check if they exist in tblLoc
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Check if location exists in tblLoc table
+            cursor.execute("""
+                SELECT COUNT(*) FROM pcb_inventory."tblLoc"
+                WHERE location::text = %s
+            """, (location,))
+
+            count = cursor.fetchone()[0]
+            return count > 0
+        except Exception as e:
+            logger.error(f"Error validating location: {e}")
+            return False
+        finally:
+            if conn:
+                cursor.close()
+                self.return_connection(conn)
+
     def stock_pcb(self, job: str, pcb_type: str, quantity: int, location: str,
                   itar_classification: str = 'NONE', user_role: str = 'USER',
                   itar_auth: bool = False, username: str = 'system', work_order: str = None,
                   dc: str = None, msd: str = None, pcn: int = None, mpn: str = None,
                   part_number: str = None) -> Dict[str, Any]:
         """Stock PCB using the PostgreSQL stored procedure with all fields."""
+        # Validate location exists
+        if not self.validate_location(location):
+            return {
+                'success': False,
+                'error': f'Location "{location}" does not exist. Please verify the location code and try again.'
+            }
+
         conn = None
         try:
             # Call the PostgreSQL function with all 14 parameters
@@ -434,46 +482,73 @@ class DatabaseManager:
 
             # Also update warehouse inventory - UPSERT to handle duplicates
             if result.get('success'):
+                # Extract PCN from result if not provided
+                if not pcn:
+                    pcn = result.get('pcn')
+
+                # Validate PCN exists before warehouse update
+                if not pcn:
+                    logger.error("Stock succeeded but PCN is missing - cannot update warehouse")
+                    return {
+                        'success': False,
+                        'error': 'Stock operation succeeded but PCN is missing. Please contact support.'
+                    }
+
                 conn = self.get_connection()
                 cursor = conn.cursor()
                 try:
+                    # First check if record exists
                     cursor.execute("""
-                        INSERT INTO pcb_inventory."tblWhse_Inventory"
-                        (item, pcn, mpn, dc, onhandqty, loc_to, msd, po, loc_from, mfg_qty)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, '-', 0)
-                        ON CONFLICT (item, pcn, mpn)
-                        DO UPDATE SET
-                            onhandqty = "tblWhse_Inventory".onhandqty + EXCLUDED.onhandqty,
-                            loc_to = EXCLUDED.loc_to,
-                            dc = COALESCE(EXCLUDED.dc, "tblWhse_Inventory".dc),
-                            msd = COALESCE(EXCLUDED.msd, "tblWhse_Inventory".msd),
-                            po = COALESCE(EXCLUDED.po, "tblWhse_Inventory".po),
-                            migrated_at = CURRENT_TIMESTAMP
-                    """, (
-                        job,
-                        pcn,
-                        mpn or '',
-                        dc,
-                        quantity,
-                        location,
-                        msd,
-                        work_order
-                    ))
+                        SELECT id, onhandqty, mpn, dc, msd, po
+                        FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE item = %s AND pcn = %s
+                        LIMIT 1
+                    """, (job, pcn))
+                    existing = cursor.fetchone()
+
+                    if existing:
+                        # Update existing record - move from Count Area to location
+                        cursor.execute("""
+                            UPDATE pcb_inventory."tblWhse_Inventory"
+                            SET loc_to = %s,
+                                loc_from = CASE WHEN loc_from = '-' THEN 'Count Area' ELSE loc_from END,
+                                dc = COALESCE(%s, dc),
+                                msd = COALESCE(%s, msd),
+                                po = COALESCE(%s, po),
+                                mpn = COALESCE(%s, mpn),
+                                migrated_at = CURRENT_TIMESTAMP
+                            WHERE item = %s AND pcn = %s
+                        """, (location, dc, msd, work_order, mpn, job, pcn))
+                        logger.info(f"Updated warehouse inventory for item {job}, PCN {pcn} - moved to location {location}")
+                    else:
+                        # Insert new record
+                        cursor.execute("""
+                            INSERT INTO pcb_inventory."tblWhse_Inventory"
+                            (item, pcn, mpn, dc, onhandqty, loc_to, msd, po, loc_from, mfg_qty, migrated_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Receiving Area', 0, CURRENT_TIMESTAMP)
+                        """, (job, pcn, mpn or '', dc, quantity, location, msd, work_order))
+                        logger.info(f"Inserted new warehouse inventory for item {job}, PCN {pcn} at location {location}")
+
                     conn.commit()
-                    logger.info(f"Updated warehouse inventory for item {job}, PCN {pcn} (UPSERT)")
+
+                    # Clear cache after successful update
+                    cache.delete_memoized(self.get_current_inventory)
+                    cache.delete('stats_summary')
                 except Exception as e:
-
                     if conn:
-
                         conn.rollback()
                     logger.error(f"Failed to update warehouse inventory: {e}")
+                    # Clear cache even on failure to prevent stale data
+                    cache.delete_memoized(self.get_current_inventory)
+                    cache.delete('stats_summary')
+                    return {
+                        'success': False,
+                        'error': f'Stock operation succeeded but warehouse update failed: {str(e)}'
+                    }
                 finally:
                     cursor.close()
                     self.return_connection(conn)
 
-            # Clear cache after inventory change
-            cache.delete_memoized(self.get_current_inventory)
-            cache.delete('stats_summary')
             return result
         except Exception as e:
             error_msg = get_safe_error_message(e, "stock operation")
@@ -664,6 +739,13 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             try:
+                # Validate quantity
+                if quantity is None or quantity <= 0:
+                    return {
+                        'success': False,
+                        'error': f'Invalid quantity: {quantity}. Quantity must be greater than 0.'
+                    }
+
                 # Determine search criteria
                 if pcn:
                     where_clause = "pcn = %s"
@@ -1839,6 +1921,13 @@ def part_number_change():
                 WHERE pcn = %s
             ''', (new_part_number, pcn))
 
+            # Check if update succeeded
+            rows_updated = cursor.rowcount
+            if rows_updated == 0:
+                conn.rollback()
+                flash(f'Failed to update PCN {pcn}. No rows were modified.', 'danger')
+                return render_template('part_number_change.html')
+
             # Log the change in transaction table
             cursor.execute('''
                 INSERT INTO pcb_inventory."tblTransaction"
@@ -2431,6 +2520,16 @@ def update_warehouse_item():
                 except (ValueError, TypeError):
                     return None
 
+            # Validate quantities are not negative
+            onhand_qty = to_int_or_none(data.get('onhandqty'))
+            mfg_qty = to_int_or_none(data.get('mfg_qty'))
+
+            if onhand_qty is not None and onhand_qty < 0:
+                return jsonify({'success': False, 'message': 'On-hand quantity cannot be negative'}), 400
+
+            if mfg_qty is not None and mfg_qty < 0:
+                return jsonify({'success': False, 'message': 'MFG quantity cannot be negative'}), 400
+
             # Update warehouse inventory record
             cursor.execute("""
                 UPDATE pcb_inventory."tblWhse_Inventory"
@@ -2445,10 +2544,10 @@ def update_warehouse_item():
                 WHERE item::text = %s AND pcn::text = %s AND mpn::text = %s
             """, (
                 data.get('dc') or None,
-                to_int_or_none(data.get('onhandqty')),
+                onhand_qty,
                 data.get('loc_from') or None,
                 data.get('loc_to') or None,
-                to_int_or_none(data.get('mfg_qty')),
+                mfg_qty,
                 data.get('msd') or None,
                 data.get('po') or None,
                 to_float_or_none(data.get('cost')),
@@ -3182,10 +3281,16 @@ def pcn_history():
                                ELSE
                                    tran_time
                            END as tran_time,
-                           loc_from, loc_to, wo, po
+                           loc_from, loc_to, wo, po,
+                           -- Create sortable timestamp for ORDER BY
+                           CASE
+                               WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN tran_time::timestamptz
+                               WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
+                               ELSE NULL
+                           END as sort_time
                     FROM pcb_inventory."tblTransaction"
                     WHERE pcn = %s
-                    ORDER BY tran_time DESC NULLS LAST, id DESC
+                    ORDER BY sort_time DESC NULLS LAST, id DESC
                 """
                 cur.execute(query, (int(search_pcn),))
                 transactions = [dict(row) for row in cur.fetchall()]

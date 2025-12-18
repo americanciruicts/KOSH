@@ -13,6 +13,9 @@ WTForms==3.0.1
 # PostgreSQL database adapter
 psycopg2-binary==2.9.7
 
+# Password hashing
+bcrypt==4.0.1
+
 # Additional utilities
 python-dotenv==1.0.0
 Werkzeug==2.3.7

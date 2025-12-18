@@ -257,28 +257,4 @@ Based on testing of previous PCB system, KOSH 2.0 addresses:
 
 ---
 
-## 10. Glossary
-
-- **PCN** - Part Change Notice: Unique identifier for tracking parts
-- **MFN** - Manufacturer Part Number
-- **SMT** - Surface Mount Technology
-- **PTH** - Plated Through Hole
-- **BOM** - Bill of Materials
-- **MSD** - Moisture Sensitive Device
-- **DC** - Date Code
-- **ACI** - Company-created parts designation
-
----
-
-## 11. Approval Signatures
-
-| Role | Name | Signature | Date |
-|------|------|-----------|------|
-| Business Owner | | | |
-| Project Sponsor | | | |
-| IT Manager | | | |
-| Warehouse Manager | | | |
-
----
-
 **END OF DOCUMENT**

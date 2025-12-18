@@ -297,6 +297,7 @@
 
 // Autofill functionality
 let autofillTimeout = null;
+let isAutoFilling = false; // Flag to prevent input event loops
 const pcnInput = document.getElementById('{{ form.pcn.id }}');
 const itemInput = document.getElementById('{{ form.item.id }}');
 const partDetailsCard = document.getElementById('partDetailsCard');
@@ -337,11 +338,14 @@ function fetchPartDetails(pcn, item) {
                 document.getElementById('available-qty').textContent = partData.mfg_qty.toLocaleString();
 
                 // Auto-fill the other field (PCN or Item)
-                if (pcn && !itemInput.value) {
+                // Always update with fetched data to ensure accuracy
+                isAutoFilling = true; // Prevent input event from triggering another fetch
+                if (pcn) {
                     itemInput.value = partData.item;
-                } else if (item && !pcnInput.value) {
+                } else if (item) {
                     pcnInput.value = partData.pcn;
                 }
+                setTimeout(() => { isAutoFilling = false; }, 100); // Reset flag after a short delay
 
                 // Show/hide warnings
                 if (partData.has_mfg_qty) {
@@ -367,6 +371,8 @@ function fetchPartDetails(pcn, item) {
 
 // Add event listeners for autofill with debounce
 pcnInput.addEventListener('input', function() {
+    if (isAutoFilling) return; // Skip if this is from autofill
+
     clearTimeout(autofillTimeout);
     const pcnValue = this.value.trim();
 
@@ -380,6 +386,8 @@ pcnInput.addEventListener('input', function() {
 });
 
 itemInput.addEventListener('input', function() {
+    if (isAutoFilling) return; // Skip if this is from autofill
+
     clearTimeout(autofillTimeout);
     const itemValue = this.value.trim();
 
@@ -389,19 +397,6 @@ itemInput.addEventListener('input', function() {
         }, 500); // Wait 500ms after user stops typing
     } else {
         partDetailsCard.style.display = 'none';
-    }
-});
-
-// Clear autofill when switching between fields
-pcnInput.addEventListener('focus', function() {
-    if (this.value.trim()) {
-        itemInput.value = '';
-    }
-});
-
-itemInput.addEventListener('focus', function() {
-    if (this.value.trim()) {
-        pcnInput.value = '';
     }
 });
 

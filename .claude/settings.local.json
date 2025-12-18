@@ -45,7 +45,21 @@
       "Bash(kill:*)",
       "Bash(ss:*)",
       "Bash(sudo kill:*)",
-      "Bash(ps:*)"
+      "Bash(ps:*)",
+      "Bash(systemctl list-timers:*)",
+      "Bash(systemctl is-enabled:*)",
+      "Bash(systemctl:*)",
+      "Bash(journalctl:*)",
+      "Bash(loginctl show-user:*)",
+      "Bash(sudo loginctl enable-linger:*)",
+      "Bash(ip addr:*)",
+      "Bash(xargs:*)",
+      "Bash(grep:*)",
+      "Bash(paste - -)",
+      "Bash(for f in *.html)",
+      "Bash(done)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker run:*)"
     ],
     "deny": [],
     "ask": []
