@@ -59,7 +59,9 @@
       "Bash(for f in *.html)",
       "Bash(done)",
       "Bash(docker-compose up:*)",
-      "Bash(docker run:*)"
+      "Bash(docker run:*)",
+      "Bash(for page in \"\" \"stock\" \"generate-pcn\" \"restock\" \"part-number-change\" \"warehouse-inventory\" \"pcn-history\" \"reports\")",
+      "Bash(do echo \"Testing /$page:\")"
     ],
     "deny": [],
     "ask": []

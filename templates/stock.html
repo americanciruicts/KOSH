@@ -6,10 +6,10 @@
         <h1 class="h2 mb-2">
             <i class="bi bi-plus-circle-fill me-2"></i> Stock Electronic Parts
         </h1>
-        <p class="mb-0 fs-6">Add components to inventory • Manage PCB stock levels • Track locations</p>
+        <p class="mb-0 fs-6">Add components to inventory • Manage stock levels • Track locations</p>
     </div>
     <div class="col-md-4 text-end">
-        <a href="{{ url_for('inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
+        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
             <i class="bi bi-table"></i> View Inventory
         </a>
         <a href="{{ url_for('pick') }}" class="btn btn-light btn-lg fw-bold">
@@ -122,7 +122,7 @@
                                 <i class="bi bi-cpu-fill me-2"></i> Component Specifications
                             </h6>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-12">
                             <div class="mb-3">
                                 {{ form.quantity.label(class="form-label fw-semibold text-dark") }}
                                 <div class="input-group">
@@ -189,46 +189,48 @@
                     <div class="row mb-4">
                         <div class="col-12">
                             <h6 class="text-primary border-bottom pb-2 mb-3">
-                                <i class="bi bi-shield-lock-fill me-2"></i> Storage & Security
+                                <i class="bi bi-arrow-left-right me-2"></i> Location Movement
                             </h6>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                {{ form.location.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.location_from.label(class="form-label fw-semibold text-dark") }}
                                 <div class="input-group">
-                                    <span class="input-group-text bg-primary text-white">
-                                        <i class="bi bi-geo-alt-fill"></i>
+                                    <span class="input-group-text bg-info text-white">
+                                        <i class="bi bi-box-arrow-in-right"></i>
                                     </span>
-                                    {{ form.location(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999, A1, Shelf-1, Rack-B2") }}
+                                    {{ form.location_from(class="form-control form-control-lg border-2", placeholder="e.g., Receiving Area, Vendor, Supplier") }}
                                 </div>
-                                {% if form.location.errors %}
+                                {% if form.location_from.errors %}
                                     <div class="invalid-feedback d-block">
-                                        {% for error in form.location.errors %}
+                                        {% for error in form.location_from.errors %}
                                             <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
                                         {% endfor %}
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-geo-alt"></i> Storage location for these PCBs
+                                    <i class="bi bi-arrow-right"></i> Where parts are coming from
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                {{ form.itar_classification.label(class="form-label fw-semibold text-dark") }}
-                                {{ form.itar_classification(class="form-select form-select-lg border-2", id="itarClassification") }}
-                                {% if form.itar_classification.errors %}
+                                {{ form.location_to.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    <span class="input-group-text bg-success text-white">
+                                        <i class="bi bi-box-arrow-right"></i>
+                                    </span>
+                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999, A1, Shelf-1, Rack-B2") }}
+                                </div>
+                                {% if form.location_to.errors %}
                                     <div class="invalid-feedback d-block">
-                                        {% for error in form.itar_classification.errors %}
+                                        {% for error in form.location_to.errors %}
                                             <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
                                         {% endfor %}
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-shield-check"></i> Export control classification
-                                    {% if not user_can_see_itar %}
-                                        <br><span class="text-danger small">(ITAR items require special authorization)</span>
-                                    {% endif %}
+                                    <i class="bi bi-arrow-right"></i> Destination storage location
                                 </div>
                             </div>
                         </div>
@@ -330,73 +332,31 @@
                     </div>
                 </div>
             </div>
-            
-            <!-- PCB Types Reference Card -->
-            <div class="col-12">
-                <div class="card border-0 shadow-sm h-100">
-                    <div class="card-header bg-primary text-white border-0">
-                        <h5 class="mb-0">
-                            <i class="bi bi-cpu-fill me-2"></i> PCB Assembly Stages
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="row g-2">
-                            <div class="col-6">
-                                <div class="p-2 rounded text-center border">
-                                    <span class="badge bg-secondary mb-2 w-100">Bare</span>
-                                    <p class="small mb-0 text-muted">Basic PCB<br>No components</p>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <div class="p-2 rounded text-center border">
-                                    <span class="badge bg-secondary mb-2 w-100">Partial</span>
-                                    <p class="small mb-0 text-muted">Some components<br>In assembly</p>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <div class="p-2 rounded text-center border">
-                                    <span class="badge bg-secondary mb-2 w-100">Completed</span>
-                                    <p class="small mb-0 text-muted">Fully assembled<br>All components</p>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <div class="p-2 rounded text-center border">
-                                    <span class="badge bg-secondary mb-2 w-100">Ready to Ship</span>
-                                    <p class="small mb-0 text-muted">Final stage<br>Ready for delivery</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
 
-<!-- Recent Stock Operations -->
-<div class="container-fluid mt-5">
-    <div class="row">
-        <div class="col-12">
-            <div class="card border-0 shadow-lg">
-                <div class="card-header bg-primary text-white border-0">
-                    <div class="d-flex align-items-center justify-content-between">
-                        <h5 class="mb-0">
-                            <i class="bi bi-clock-history me-2"></i> Recent Stock Operations
-                        </h5>
-                        <span class="badge bg-white text-primary">Live Updates</span>
+            <!-- Warehouse Inventory - Below Quick Guide -->
+            <div class="col-12 mt-3">
+                <div class="card border-0 shadow-sm">
+                    <div class="card-header bg-primary text-white border-0 py-2">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <h6 class="mb-0">
+                                <i class="bi bi-box-seam me-2"></i> Warehouse Inventory
+                            </h6>
+                            <span class="badge bg-white text-primary small">Live</span>
+                        </div>
                     </div>
-                </div>
-                <div class="card-body p-0">
-                    <div id="recent-stock-operations" class="p-4">
-                        <div class="text-center py-4">
-                            <div class="spinner-border text-primary mb-3" role="status" style="width: 3rem; height: 3rem;">
-                                <span class="visually-hidden">Loading...</span>
+                    <div class="card-body p-0">
+                        <div id="recent-stock-operations" class="p-2" style="max-height: 300px; overflow-y: auto;">
+                            <div class="text-center py-3">
+                                <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="text-muted small mb-0 mt-2">Loading...</p>
                             </div>
-                            <p class="text-muted h6">Loading recent operations...</p>
                         </div>
                     </div>
                 </div>
             </div>
+
         </div>
     </div>
 </div>
@@ -513,30 +473,33 @@ document.addEventListener('DOMContentLoaded', function() {
     if (pcnField) {
         pcnField.focus();
 
-        // Auto-fill when PCN field loses focus (user tabs away or clicks elsewhere)
-        let lastPcnValue = '';
-        pcnField.addEventListener('blur', function() {
-            const pcnValue = pcnField.value.trim();
-            if (pcnValue && pcnValue !== lastPcnValue) {
-                console.log('PCN field blur event, fetching details for:', pcnValue);
-                fetchAndPopulatePCNDetails(pcnValue);
-                lastPcnValue = pcnValue;
+        // Add event listener for manual PCN input to auto-populate fields
+        let pcnInputTimeout = null;
+        pcnField.addEventListener('input', function(e) {
+            const pcnValue = e.target.value.trim();
+
+            // Clear previous timeout
+            if (pcnInputTimeout) {
+                clearTimeout(pcnInputTimeout);
+            }
+
+            // Only fetch if PCN has 1-5 digits (valid PCN range)
+            if (pcnValue && /^\d{1,5}$/.test(pcnValue)) {
+                // Wait 500ms after user stops typing before fetching
+                pcnInputTimeout = setTimeout(function() {
+                    console.log('🔍 Auto-fetching PCN details for:', pcnValue);
+                    fetchAndPopulatePCNDetails(pcnValue);
+                }, 500);
             }
         });
 
-        // Also trigger on input change (after a short delay for typing)
-        let inputTimeout = null;
-        pcnField.addEventListener('input', function() {
-            clearTimeout(inputTimeout);
-            inputTimeout = setTimeout(function() {
-                const pcnValue = pcnField.value.trim();
-                // Only auto-fetch if it looks like a valid PCN (digits, 1-5 chars)
-                if (pcnValue && /^\d{1,5}$/.test(pcnValue) && pcnValue !== lastPcnValue) {
-                    console.log('PCN field input detected, fetching details for:', pcnValue);
-                    fetchAndPopulatePCNDetails(pcnValue);
-                    lastPcnValue = pcnValue;
-                }
-            }, 500); // Wait 500ms after last keystroke
+        // Also trigger on blur (when user clicks away from field)
+        pcnField.addEventListener('blur', function(e) {
+            const pcnValue = e.target.value.trim();
+            if (pcnValue && /^\d{1,5}$/.test(pcnValue)) {
+                console.log('🔍 Fetching PCN details on blur:', pcnValue);
+                fetchAndPopulatePCNDetails(pcnValue);
+            }
         });
     }
 
@@ -558,15 +521,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 // On Enter key (barcode scanner default)
                 if (e.key === 'Enter') {
                     e.preventDefault();
-
-                    // SPECIAL HANDLING FOR PCN FIELD: Auto-fill all fields when PCN is entered
-                    if (fieldId === 'pcnInput' && field.value.trim()) {
-                        console.log('PCN field Enter pressed, fetching details for:', field.value.trim());
-                        fetchAndPopulatePCNDetails(field.value.trim());
-                        // Don't move to next field yet - let auto-fill complete first
-                        return;
-                    }
-
                     // Move to next field
                     if (index < scanFields.length - 1) {
                         const nextField = document.getElementById(scanFields[index + 1]);
@@ -624,7 +578,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Add confirmation for large quantities
         if (quantity > 1000) {
-            if (!confirm(`Are you sure you want to stock ${quantity} PCBs? This is a large quantity.`)) {
+            if (!confirm(`Are you sure you want to stock ${quantity} units? This is a large quantity.`)) {
                 e.preventDefault();
                 return false;
             }
@@ -662,7 +616,6 @@ function parseAndFillBarcode(code) {
             if (data.part_number) document.getElementById('partNumberInput').value = data.part_number;
             if (data.po) document.getElementById('poInput').value = data.po;
             if (data.quantity) document.getElementById('quantity').value = data.quantity;
-            // PCB Type field removed
             if (data.dc) document.getElementById('dc').value = data.dc;
             if (data.location) document.getElementById('location').value = data.location;
             return;
@@ -716,7 +669,6 @@ function parseAndFillBarcode(code) {
                 if (quantity) document.getElementById('quantity').value = quantity;
                 if (po) document.getElementById('poInput').value = po;
                 if (location) document.getElementById('location').value = location;
-                // PCB Type field removed
                 if (dateCode) document.getElementById('dc').value = dateCode;
                 if (msd) document.getElementById('msd').value = msd;
 
@@ -767,7 +719,11 @@ function parseAndFillBarcode(code) {
                     po = part;
                     console.log('Found PO:', po);
                 }
-                // PCB Type parsing removed - field no longer needed
+                // Look for PCB types
+                else if (/^(bare|partial|completed|ready|assembly)/i.test(part)) {
+                    pcbType = part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+                    console.log('Found PCB type:', pcbType);
+                }
                 // Look for date codes (year/week patterns)
                 else if (/^\d{4}(WK)?\d{1,2}$/.test(part) || /^\d{2}(WK)?\d{1,2}$/.test(part)) {
                     dateCode = part;
@@ -791,7 +747,6 @@ function parseAndFillBarcode(code) {
             if (partNumber) document.getElementById('partNumberInput').value = partNumber;
             if (po) document.getElementById('poInput').value = po;
             if (quantity) document.getElementById('quantity').value = quantity;
-            // PCB Type field removed
             if (dateCode) document.getElementById('dc').value = dateCode;
             if (msd) document.getElementById('msd').value = msd;
 
@@ -916,42 +871,33 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function loadRecentStockOperations() {
-    fetch('/api/inventory')
+    fetch('/api/warehouse-inventory/recent?limit=10')
         .then(response => response.json())
         .then(data => {
             const container = document.getElementById('recent-stock-operations');
-            
+
             if (data.success && data.data.length > 0) {
-                // Filter and show recent items (last 5)
-                const recentItems = data.data.slice(0, 5);
-                
                 let html = '<div class="table-responsive"><table class="table table-hover"><thead class="table-light"><tr>';
-                html += '<th>Job</th><th>PCB Type</th><th>Quantity</th><th>Location</th><th>Last Updated</th></tr></thead><tbody>';
-                
-                recentItems.forEach(item => {
-                    const badgeClass = {
-                        'Bare': 'secondary',
-                        'Partial': 'warning',
-                        'Completed': 'info',
-                        'Ready to Ship': 'success'
-                    }[item.pcb_type] || 'secondary';
-                    
+                html += '<th>Item</th><th>PCN</th><th>MPN</th><th>On Hand Qty</th><th>Location</th><th>PO</th></tr></thead><tbody>';
+
+                data.data.forEach(item => {
                     html += `<tr>
-                        <td><strong>${item.job}</strong></td>
-                        <td><span class="badge bg-${badgeClass}">${item.pcb_type}</span></td>
-                        <td>${item.qty.toLocaleString()}</td>
-                        <td><code>${item.location}</code></td>
-                        <td class="text-muted small">${moment(item.updated_at).fromNow()}</td>
+                        <td><strong>${item.item || '-'}</strong></td>
+                        <td><code>${item.pcn || '-'}</code></td>
+                        <td>${item.mpn || '-'}</td>
+                        <td><span class="badge bg-primary">${item.onhandqty ? item.onhandqty.toLocaleString() : 0}</span></td>
+                        <td><code>${item.location || '-'}</code></td>
+                        <td class="text-muted small">${item.po || '-'}</td>
                     </tr>`;
                 });
-                
+
                 html += '</tbody></table></div>';
                 container.innerHTML = html;
             } else {
                 container.innerHTML = `
                     <div class="text-center py-3">
                         <i class="bi bi-inbox display-6 text-muted"></i>
-                        <p class="text-muted mt-2">No inventory items found</p>
+                        <p class="text-muted mt-2">No warehouse inventory items found</p>
                     </div>
                 `;
             }
@@ -961,7 +907,7 @@ function loadRecentStockOperations() {
             document.getElementById('recent-stock-operations').innerHTML = `
                 <div class="text-center py-3">
                     <i class="bi bi-exclamation-triangle text-warning"></i>
-                    <p class="text-muted mt-2">Error loading recent operations</p>
+                    <p class="text-muted mt-2">Error loading warehouse inventory</p>
                 </div>
             `;
         });
@@ -971,7 +917,7 @@ function loadRecentStockOperations() {
 async function fetchAndPopulatePCNDetails(pcnNumber) {
     if (!pcnNumber) return;
 
-    console.log('🔍 Auto-fill: Fetching PCN details for:', pcnNumber);
+    console.log('🔍 Fetching PCN details for:', pcnNumber);
 
     try {
         const response = await fetch(`/api/pcn/details/${pcnNumber}`, {
@@ -1030,16 +976,16 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
                 console.log('⚠️ No mpn in result');
             }
 
-            if (result.po_number) {
+            if (result.po_number || result.work_order) {
                 const poInput = document.getElementById('poInput');
                 if (poInput) {
-                    poInput.value = result.po_number;
-                    console.log('✅ Filled PO:', result.po_number);
+                    poInput.value = result.po_number || result.work_order;
+                    console.log('✅ Filled PO:', result.po_number || result.work_order);
                 } else {
                     console.error('❌ PO field not found!');
                 }
             } else {
-                console.log('⚠️ No po_number in result');
+                console.log('⚠️ No po_number or work_order in result');
             }
 
             if (result.quantity) {
@@ -1089,8 +1035,6 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
             } else {
                 console.log('⚠️ No location in result');
             }
-
-            // PCB Type field removed - no longer needed
 
             console.log('=== AUTO-FILL COMPLETE ===');
 

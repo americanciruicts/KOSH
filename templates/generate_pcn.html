@@ -211,9 +211,17 @@
                                     <label for="mpnInput" class="form-label">
                                         <i class="bi bi-gear-wide-connected me-1"></i> MPN
                                     </label>
-                                    <input type="text" class="form-control form-control-lg" id="mpnInput" name="mpn"
-                                           placeholder="e.g., LTC6804-1">
-                                    <div class="form-text text-muted">Manufacturer Part Number</div>
+                                    <select class="form-select form-select-lg" id="mpnInput" name="mpn">
+                                        <option value="">Select MPN or type custom...</option>
+                                    </select>
+                                    <input type="text" class="form-control form-control-lg mt-2" id="mpnCustomInput"
+                                           name="mpn_custom" placeholder="Or enter custom MPN..." style="display:none;">
+                                    <div class="form-text text-muted">
+                                        <span id="mpnLoadingText" style="display:none;">
+                                            <i class="bi bi-hourglass-split"></i> Loading MPNs from BOM...
+                                        </span>
+                                        <span id="mpnHelpText">Manufacturer Part Number - Select from BOM or enter custom</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -513,6 +521,166 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let currentPCNData = null;
 
+    // MPN Dropdown Population Logic
+    const partNumberInput = document.getElementById('partNumberInput');
+    const mpnInput = document.getElementById('mpnInput');
+    const mpnCustomInput = document.getElementById('mpnCustomInput');
+    const mpnLoadingText = document.getElementById('mpnLoadingText');
+    const mpnHelpText = document.getElementById('mpnHelpText');
+
+    // Debug: Check if elements exist
+    console.log('MPN dropdown elements:', {
+        partNumberInput: !!partNumberInput,
+        mpnInput: !!mpnInput,
+        mpnCustomInput: !!mpnCustomInput,
+        mpnLoadingText: !!mpnLoadingText,
+        mpnHelpText: !!mpnHelpText
+    });
+
+    // Exit if required elements don't exist
+    if (!partNumberInput || !mpnInput) {
+        console.error('Required elements not found for MPN dropdown');
+        return;
+    }
+
+    // Debounce function to avoid too many API calls
+    let debounceTimer;
+    function debounce(func, delay) {
+        return function(...args) {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => func.apply(this, args), delay);
+        };
+    }
+
+    // Function to load MPN options from BOM
+    async function loadMPNOptions(partNumber) {
+        console.log('🔍 loadMPNOptions called with:', partNumber);
+
+        if (!partNumber || partNumber.trim() === '') {
+            // Reset dropdown if part number is empty
+            mpnInput.innerHTML = '<option value="">Select MPN or type custom...</option>';
+            mpnHelpText.textContent = 'Manufacturer Part Number - Select from BOM or enter custom';
+            mpnHelpText.style.color = '';
+            return;
+        }
+
+        // Show loading indicator
+        mpnLoadingText.style.display = 'inline';
+        mpnHelpText.style.display = 'none';
+        mpnInput.disabled = true;
+        mpnInput.style.backgroundColor = '#f3f4f6';
+
+        try {
+            const url = `/api/bom/mpns/${encodeURIComponent(partNumber.trim())}`;
+            console.log('📡 Fetching MPNs from:', url);
+
+            const response = await fetch(url, {
+                credentials: 'same-origin'
+            });
+
+            console.log('✅ Response status:', response.status);
+
+            // Check if response is OK
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+            console.log('📦 API result:', result);
+            console.log(`📊 Found ${result.count} MPN(s) for part ${partNumber}`);
+
+            // Clear existing options
+            mpnInput.innerHTML = '';
+
+            if (result.success && result.mpns && result.mpns.length > 0) {
+                // Add default option
+                mpnInput.innerHTML = '<option value="">Select MPN from BOM...</option>';
+
+                // Add MPNs from BOM - only show MPN number
+                result.mpns.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.mpn;
+                    option.textContent = item.mpn;
+                    mpnInput.appendChild(option);
+                });
+
+                // Add "Custom Entry" option
+                const customOption = document.createElement('option');
+                customOption.value = '__CUSTOM__';
+                customOption.textContent = '➕ Enter Custom MPN...';
+                mpnInput.appendChild(customOption);
+
+                mpnHelpText.textContent = `✅ ${result.mpns.length} MPN(s) found in BOM - Select from dropdown`;
+                mpnHelpText.style.color = '#10b981';
+                console.log('✨ Dropdown populated successfully');
+            } else {
+                // No MPNs found, allow custom entry
+                mpnInput.innerHTML = '<option value="__CUSTOM__">➕ Enter Custom MPN...</option>';
+                mpnHelpText.textContent = '⚠️ No MPNs found in BOM for this part - Enter custom value';
+                mpnHelpText.style.color = '#f59e0b';
+                console.log('⚠️ No MPNs found for part', partNumber);
+            }
+
+        } catch (error) {
+            console.error('❌ Error loading MPNs:', error);
+            mpnInput.innerHTML = '<option value="__CUSTOM__">➕ Enter Custom MPN...</option>';
+            mpnHelpText.textContent = '❌ Error loading MPNs - Enter custom value';
+            mpnHelpText.style.color = '#ef4444';
+        } finally {
+            // Hide loading indicator
+            mpnLoadingText.style.display = 'none';
+            mpnHelpText.style.display = 'inline';
+            mpnInput.disabled = false;
+            mpnInput.style.backgroundColor = '';
+        }
+    }
+
+    // Debounced version for input event
+    const debouncedLoadMPNOptions = debounce(function(partNumber) {
+        if (partNumber && partNumber.trim().length >= 2) {
+            loadMPNOptions(partNumber);
+        }
+    }, 500); // Wait 500ms after user stops typing
+
+    // Listen for Part Number input (as user types)
+    partNumberInput.addEventListener('input', function() {
+        console.log('⌨️ Part number input event fired');
+        debouncedLoadMPNOptions(this.value.trim());
+    });
+
+    // Listen for Part Number changes (blur - when field loses focus)
+    partNumberInput.addEventListener('blur', function() {
+        console.log('👁️ Part number blur event fired');
+        const partNumber = this.value.trim();
+        if (partNumber) {
+            loadMPNOptions(partNumber);
+        }
+    });
+
+    // Also listen on change event
+    partNumberInput.addEventListener('change', function() {
+        console.log('🔄 Part number change event fired');
+        const partNumber = this.value.trim();
+        if (partNumber) {
+            loadMPNOptions(partNumber);
+        }
+    });
+
+    // Handle MPN dropdown selection
+    mpnInput.addEventListener('change', function() {
+        if (this.value === '__CUSTOM__') {
+            // Show custom input field
+            mpnCustomInput.style.display = 'block';
+            mpnCustomInput.focus();
+            // Clear the select value so form validation works
+            this.value = '';
+        } else {
+            // Hide custom input field
+            mpnCustomInput.style.display = 'none';
+            mpnCustomInput.value = '';
+        }
+    });
+
     // Handle form submission
     form.addEventListener('submit', async function(e) {
         e.preventDefault();
@@ -524,6 +692,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const formData = new FormData(form);
         const data = Object.fromEntries(formData.entries());
+
+        // Handle custom MPN input if user entered a custom value
+        if (mpnCustomInput.value.trim() !== '') {
+            data.mpn = mpnCustomInput.value.trim();
+        }
+        // Remove mpn_custom field as it's only for UI
+        delete data.mpn_custom;
 
         // Use part_number as item (since we removed the duplicate field)
         if (data.part_number) {

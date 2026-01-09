@@ -3150,6 +3150,7 @@ def api_source_table_data(table_name):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/generate-pcn')
+@require_auth
 def generate_pcn():
     """Generate PCN page"""
     return render_template('generate_pcn.html')
@@ -3506,6 +3507,14 @@ def api_generate_pcn():
             logger.info(f"Added/Updated PCN {pcn_number} in warehouse inventory")
 
             # Also insert into tblTransaction for PCN history tracking
+            # Convert date_code to integer if it's numeric, otherwise set to NULL
+            dc_value = None
+            if data.get('date_code'):
+                dc_str = str(data.get('date_code')).strip()
+                if dc_str.isdigit():
+                    dc_value = int(dc_str)
+                # If not numeric, leave as NULL since tblTransaction.dc is INTEGER
+
             cursor.execute("""
                 INSERT INTO pcb_inventory."tblTransaction"
                 (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
@@ -3515,7 +3524,7 @@ def api_generate_pcn():
                 data.get('item'),
                 pcn_number,
                 data.get('mpn'),
-                data.get('date_code'),
+                dc_value,  # Use converted integer value or NULL
                 data.get('quantity', 0),
                 '-',  # location from
                 data.get('location', 'Receiving Area'),  # location to - defaults to Receiving Area

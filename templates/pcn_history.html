@@ -1,149 +1,70 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+<div class="row align-items-center mb-3 p-2 rounded-3 shadow" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);">
     <div class="col-12">
-        <h1 class="h2 mb-2">
-            <i class="bi bi-clock-history me-2"></i> PCN History Lookup
+        <h1 class="h4 mb-0 fw-bold" style="color: white !important;">
+            <i class="bi bi-clock-history me-2"></i> Transaction History
         </h1>
-        <p class="mb-0 fs-6">Search and view PCN transaction history</p>
     </div>
 </div>
 {% endblock %}
 
 {% block content %}
-<!-- Search Section -->
-<div class="row mb-4">
-    <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-header bg-primary text-white">
-                <h5 class="mb-0">
-                    <i class="bi bi-search"></i> Search PCN Numbers
-                </h5>
+<!-- PCN Search & Info -->
+<div class="card border-0 shadow mb-3 rounded-3">
+    <div class="card-body p-3">
+        <form method="get" action="{{ url_for('pcn_history') }}" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label for="pcn" class="form-label fw-bold mb-1" style="font-size: 0.95rem;">
+                    <i class="bi bi-upc-scan me-1"></i>PCN:
+                </label>
+                <input type="number" class="form-control form-control-lg" id="pcn" name="pcn"
+                       value="{{ search_pcn }}" placeholder="Enter PCN" autofocus
+                       style="font-size: 1.1rem; font-weight: 600;">
             </div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-8">
-                        <div class="input-group input-group-lg">
-                            <span class="input-group-text">
-                                <i class="bi bi-upc-scan"></i>
-                            </span>
-                            <input type="text"
-                                   class="form-control"
-                                   id="pcnSearchInput"
-                                   placeholder="Enter PCN Number (e.g., 12345)"
-                                   autocomplete="off">
-                        </div>
-                        <small class="text-muted">
-                            <i class="bi bi-info-circle"></i> Search by PCN number or leave blank to see all
-                        </small>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary btn-lg w-100"
+                        style="background: #1e40af; border: none;">
+                    <i class="bi bi-search me-1"></i> Search
+                </button>
+            </div>
+            {% if pcn_info %}
+            <div class="col-md-6">
+                <div class="d-flex align-items-center flex-wrap gap-2 p-2 rounded" style="background: linear-gradient(to right, #f8fafc, #f1f5f9); border-left: 3px solid #3b82f6;">
+                    <div class="d-flex align-items-center gap-1">
+                        <small class="text-muted" style="font-weight: 600;">DESC:</small>
+                        <strong style="color: #1e40af; font-size: 0.95rem;">{{ pcn_info.item }}</strong>
                     </div>
-                    <div class="col-md-4">
-                        <button class="btn btn-primary btn-lg w-100" onclick="searchPCN()">
-                            <i class="bi bi-search"></i> Search
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Advanced Filters (Collapsible) -->
-                <div class="mt-3">
-                    <a class="text-primary" data-bs-toggle="collapse" href="#advancedFilters" role="button" aria-expanded="false">
-                        <i class="bi bi-funnel"></i> Advanced Filters
-                    </a>
-                    <div class="collapse mt-3" id="advancedFilters">
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label">Item/Job Number</label>
-                                <input type="text" class="form-control" id="filterItem" placeholder="Item or job number">
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Transaction Type</label>
-                                <select class="form-select" id="filterTransType">
-                                    <option value="">All Types</option>
-                                    <option value="PICK">PICK</option>
-                                    <option value="STOCK">STOCK</option>
-                                    <option value="Receipt">Receipt</option>
-                                    <option value="Transfer">Transfer</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="mt-3">
-                            <button class="btn btn-secondary" onclick="applyFilters()">
-                                <i class="bi bi-funnel-fill"></i> Apply Filters
-                            </button>
-                            <button class="btn btn-outline-secondary" onclick="clearFilters()">
-                                <i class="bi bi-x-circle"></i> Clear
-                            </button>
-                        </div>
-                    </div>
+                    <span class="badge bg-primary shadow-sm" style="font-size: 0.8rem; padding: 0.35rem 0.6rem;">MPN: {{ pcn_info.mpn or 'N/A' }}</span>
+                    <span class="badge bg-success shadow-sm" style="font-size: 0.8rem; padding: 0.35rem 0.6rem;">Qty: {{ pcn_info.onhandqty }}</span>
+                    <span class="badge bg-info shadow-sm" style="font-size: 0.8rem; padding: 0.35rem 0.6rem;"><i class="bi bi-geo-alt me-1"></i>{{ pcn_info.loc_to }}</span>
                 </div>
             </div>
-        </div>
+            {% endif %}
+        </form>
     </div>
 </div>
 
 <!-- Results Section -->
-<div class="row">
+{% if transactions %}
+<!-- Stats Bar -->
+<div class="row mb-2">
     <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">
-                    <i class="bi bi-list-ul"></i> PCN History Results
-                </h5>
-                <span class="badge bg-secondary" id="resultCount">0 results</span>
-            </div>
-            <div class="card-body">
-                <!-- Loading State -->
-                <div id="loadingState" class="text-center py-5" style="display: none;">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
+        <div class="card border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);">
+            <div class="card-body py-2">
+                <div class="row text-center">
+                    <div class="col-md-4">
+                        <h5 class="mb-0 fw-bold" style="color: white !important;">{{ transactions|length }}</h5>
+                        <small style="color: white !important; opacity: 0.9;">Total</small>
                     </div>
-                    <p class="text-muted mt-2">Searching PCN history...</p>
-                </div>
-
-                <!-- Empty State -->
-                <div id="emptyState" class="text-center py-5">
-                    <i class="bi bi-inbox display-4 text-muted"></i>
-                    <h5 class="text-muted mt-3">No PCN history found</h5>
-                    <p class="text-muted">Enter a PCN number above to search or leave blank to view all</p>
-                </div>
-
-                <!-- Results Table -->
-                <div id="resultsTable" style="display: none;">
-                    <div class="table-responsive">
-                        <table class="table table-hover table-striped">
-                            <thead class="table-dark">
-                                <tr>
-                                    <th>PCN Number</th>
-                                    <th>Job Number</th>
-                                    <th>PCB Type</th>
-                                    <th>MPN</th>
-                                    <th>Date Code</th>
-                                    <th>MSD Level</th>
-                                    <th>Location From</th>
-                                    <th>Location To</th>
-                                    <th>Work Order</th>
-                                    <th>Quantity</th>
-                                    <th>Transaction Type</th>
-                                    <th>Transaction Time</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="resultsBody">
-                                <!-- Results will be inserted here -->
-                            </tbody>
-                        </table>
+                    <div class="col-md-4 border-start border-end border-white border-opacity-25">
+                        <h5 class="mb-0 fw-bold" style="color: white !important;">{{ transactions|selectattr('trantype', 'equalto', 'STOCK')|list|length + transactions|selectattr('trantype', 'equalto', 'RESTOCK')|list|length }}</h5>
+                        <small style="color: white !important; opacity: 0.9;">Stock</small>
                     </div>
-
-                    <!-- Pagination Controls -->
-                    <div id="paginationControls" class="mt-3 d-flex justify-content-between align-items-center">
-                        <button class="btn btn-secondary" onclick="previousPage()" id="prevBtn">
-                            <i class="bi bi-chevron-left"></i> Previous
-                        </button>
-                        <span id="pageInfo" class="text-muted">Page 1 of 1</span>
-                        <button class="btn btn-secondary" onclick="nextPage()" id="nextBtn">
-                            Next <i class="bi bi-chevron-right"></i>
-                        </button>
+                    <div class="col-md-4">
+                        <h5 class="mb-0 fw-bold" style="color: white !important;">{{ transactions|selectattr('trantype', 'equalto', 'PICK')|list|length }}</h5>
+                        <small style="color: white !important; opacity: 0.9;">Pick</small>
                     </div>
                 </div>
             </div>
@@ -151,616 +72,240 @@
     </div>
 </div>
 
-<!-- Statistics Cards -->
-<div class="row mt-4">
-    <div class="col-md-3">
-        <div class="card text-center bg-primary text-white">
-            <div class="card-body">
-                <i class="bi bi-upc-scan display-4"></i>
-                <h4 class="mt-2" id="totalPCNs">0</h4>
-                <p class="card-text">Total PCN Transactions</p>
-            </div>
-        </div>
+<!-- Transaction Table -->
+<div class="card border-0 shadow rounded-3">
+    <div class="card-header text-white border-0 py-2" style="background: #1e40af;">
+        <h6 class="mb-0 fw-bold"><i class="bi bi-journal-text me-2"></i>Transaction Timeline</h6>
     </div>
-    <div class="col-md-3">
-        <div class="card text-center bg-success text-white">
-            <div class="card-body">
-                <i class="bi bi-box-seam display-4"></i>
-                <h4 class="mt-2" id="totalQty">0</h4>
-                <p class="card-text">Total Quantity</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-center bg-info text-white">
-            <div class="card-body">
-                <i class="bi bi-briefcase display-4"></i>
-                <h4 class="mt-2" id="uniqueItems">0</h4>
-                <p class="card-text">Unique Items</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-center bg-warning text-dark">
-            <div class="card-body">
-                <i class="bi bi-arrow-repeat display-4"></i>
-                <h4 class="mt-2" id="uniquePCNs">0</h4>
-                <p class="card-text">Unique PCNs</p>
-            </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" style="font-size: 0.9rem;">
+                <thead style="background: linear-gradient(to bottom, #f1f5f9, #e2e8f0);">
+                    <tr>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Tran Time</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Tran</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Item</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">MPN</th>
+                        <th class="py-2 px-3 text-center" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Qty</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">From</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">To</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">WO</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">PO</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for txn in transactions %}
+                    <tr style="{% if loop.index % 2 == 0 %}background: #f8fafc;{% endif %} border-left: 3px solid {% if txn.trantype == 'STOCK' %}#10b981{% elif txn.trantype == 'PICK' %}#f59e0b{% elif txn.trantype == 'RESTOCK' %}#06b6d4{% else %}#6b7280{% endif %}; color: #475569;">
+                        <td class="py-2 px-3" style="color: #64748b;">{{ txn.tran_time or txn.migrated_at or '-' }}</td>
+                        <td class="py-2 px-3">
+                            <span class="badge shadow-sm {% if txn.trantype == 'STOCK' %}bg-success{% elif txn.trantype == 'PICK' %}bg-warning text-dark{% elif txn.trantype == 'RESTOCK' %}bg-info{% else %}bg-secondary{% endif %}"
+                                  style="font-size: 0.75rem; min-width: 60px; padding: 0.35rem 0.5rem; font-weight: 600;">
+                                {{ txn.trantype or 'N/A' }}
+                            </span>
+                        </td>
+                        <td class="py-2 px-3"><strong style="color: #3b82f6;">{{ txn.item or '-' }}</strong></td>
+                        <td class="py-2 px-3"><code style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.85rem; font-weight: 600;">{{ txn.mpn or '-' }}</code></td>
+                        <td class="py-2 px-3 text-center">
+                            <strong style="color: #2563eb; font-size: 0.95rem;">{{ txn.tranqty or 0 }}</strong>
+                        </td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ txn.loc_from or '-' }}</td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ txn.loc_to or '-' }}</td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ txn.wo or '-' }}</td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ txn.po or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
 
-<!-- Edit Transaction Modal -->
-<div class="modal fade" id="editTransactionModal" tabindex="-1" aria-labelledby="editTransactionModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header bg-warning text-dark">
-                <h5 class="modal-title" id="editTransactionModalLabel">
-                    <i class="bi bi-pencil-square"></i> Edit Transaction Record
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div class="alert alert-warning" role="alert">
-                    <i class="bi bi-exclamation-triangle"></i>
-                    <strong>Warning:</strong> Editing transaction history records will modify audit trail data. Only make changes if absolutely necessary.
-                </div>
-                <form id="editTransactionForm">
-                    <input type="hidden" id="edit_id" name="id">
+{% elif search_pcn %}
+<div class="card border-0 shadow-lg rounded-4">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-search" style="font-size: 4rem; color: #cbd5e1;"></i>
+        <h4 class="mt-3 text-muted">No Results Found</h4>
+        <p class="text-muted mb-0">No transaction history found for PCN <strong>{{ search_pcn }}</strong></p>
+    </div>
+</div>
+{% else %}
+<div class="card border-0 shadow-lg rounded-4" style="background: linear-gradient(135deg, #f8fafc 0%, #e0f2fe 100%);">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-search" style="font-size: 4rem; color: #3b82f6;"></i>
+        <h4 class="mt-3" style="color: #1e40af;">Ready to Search</h4>
+        <p class="text-muted mb-0">Enter a PCN number above to view its complete transaction history</p>
+    </div>
+</div>
+{% endif %}
 
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="edit_pcn" class="form-label fw-bold">PCN Number</label>
-                            <input type="number" class="form-control" id="edit_pcn" placeholder="Optional">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="edit_job" class="form-label fw-bold">Job/Item Number *</label>
-                            <input type="text" class="form-control" id="edit_job" required>
-                        </div>
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="edit_quantity" class="form-label fw-bold">Quantity *</label>
-                            <input type="number" class="form-control" id="edit_quantity" required>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="edit_trans_type" class="form-label fw-bold">Transaction Type *</label>
-                            <select class="form-select" id="edit_trans_type" required>
-                                <option value="PICK">PICK</option>
-                                <option value="STOCK">STOCK</option>
-                                <option value="INDF">INDF (Inbound)</option>
-                                <option value="PTWY">PTWY (Put Away)</option>
-                                <option value="RNDT">RNDT (Return)</option>
-                                <option value="ADJT">ADJT (Adjustment)</option>
-                                <option value="UPDATE">UPDATE</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="edit_location_from" class="form-label fw-bold">Location From</label>
-                            <input type="text" class="form-control" id="edit_location_from">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="edit_location_to" class="form-label fw-bold">Location To</label>
-                            <input type="text" class="form-control" id="edit_location_to">
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        <label for="edit_work_order" class="form-label fw-bold">Work Order</label>
-                        <input type="text" class="form-control" id="edit_work_order">
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-warning" onclick="saveTransactionEdit()">
-                    <i class="bi bi-save"></i> Save Changes
-                </button>
-            </div>
+<!-- Transaction Type Vocabulary -->
+<div class="card border-0 shadow-sm mt-4">
+    <div class="card-header bg-light">
+        <h6 class="mb-0">
+            <i class="bi bi-book"></i> Transaction Type Vocabulary
+        </h6>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: none;">
+            <table class="table table-sm table-bordered mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 100px;">Type</th>
+                        <th>Meaning</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="badge bg-success">STOCK</span></td>
+                        <td>Parts added to inventory</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-danger">PICK</span></td>
+                        <td>Parts removed from inventory</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-warning text-dark">RESTOCK</span></td>
+                        <td>Parts returned to inventory</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-primary">GEN</span></td>
+                        <td>PCN label generated</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-secondary">UPDATE</span></td>
+                        <td>Record updated</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-info">ADJT</span></td>
+                        <td>Inventory adjustment</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-dark">SCRA</span></td>
+                        <td>Parts scrapped</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-secondary">PTWY</span></td>
+                        <td>Put away to storage</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-secondary">INDF</span></td>
+                        <td>Indefinite status</td>
+                    </tr>
+                    <tr>
+                        <td><span class="badge bg-secondary">RNDT</span></td>
+                        <td>Random/miscellaneous</td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
 
 <style>
-/* Modal z-index and backdrop fixes */
-#editTransactionModal {
-    z-index: 999999 !important;
-    pointer-events: auto !important;
+.table-responsive {
+    max-height: 65vh;
+    overflow-y: auto;
+    border-radius: 0 0 1rem 1rem;
 }
-#editTransactionModal .modal-dialog {
-    z-index: 1000000 !important;
-    pointer-events: auto !important;
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: linear-gradient(to bottom, #f1f5f9, #e2e8f0) !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
-#editTransactionModal .modal-content {
-    z-index: 1000001 !important;
-    position: relative;
-    pointer-events: auto !important;
-    background: white !important;
-    box-shadow: 0 0 50px rgba(0,0,0,0.5) !important;
+
+.table tbody tr {
+    transition: all 0.2s ease;
 }
-#editTransactionModal .modal-content * {
-    pointer-events: auto !important;
+
+.table tbody tr:hover {
+    background-color: #dbeafe !important;
+    transform: translateX(4px);
+    box-shadow: 0 2px 12px rgba(59, 130, 246, 0.15);
+}
+
+.form-control:focus {
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 0.25rem rgba(59, 130, 246, 0.25) !important;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4) !important;
+}
+
+.badge {
+    transition: all 0.2s;
+}
+
+/* Dark Mode Styles */
+[data-theme="dark"] .table thead th {
+    background: linear-gradient(to bottom, #1e293b, #334155) !important;
+    color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .table tbody tr {
+    color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .table tbody tr:nth-child(even) {
+    background: #1e293b !important;
+}
+
+[data-theme="dark"] .table tbody tr:hover {
+    background-color: #334155 !important;
+    box-shadow: 0 2px 12px rgba(59, 130, 246, 0.25);
+}
+
+[data-theme="dark"] .table tbody td {
+    color: #cbd5e1 !important;
+    border-color: #334155;
+}
+
+[data-theme="dark"] .table tbody strong {
+    color: #60a5fa !important;
+}
+
+[data-theme="dark"] code {
+    background: #1e293b !important;
+    color: #60a5fa !important;
+}
+
+[data-theme="dark"] .card {
+    background: #1e293b !important;
+}
+
+[data-theme="dark"] .card-header {
+    background: #334155 !important;
+}
+
+[data-theme="dark"] .form-control {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+
+[data-theme="dark"] .form-control::placeholder {
+    color: #64748b !important;
+}
+
+[data-theme="dark"] label {
+    color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .bg-light {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+
+[data-theme="dark"] .text-muted {
+    color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .bi-search {
+    color: #60a5fa !important;
 }
 </style>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-let allPCNData = [];
-let currentPage = 1;
-const rowsPerPage = 10;
-
-// Load all PCN history on page load
-document.addEventListener('DOMContentLoaded', function() {
-    loadPCNHistory();
-
-    // Enable enter key for search
-    document.getElementById('pcnSearchInput').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            searchPCN();
-        }
-    });
-});
-
-function loadPCNHistory() {
-    showLoading();
-
-    // Add cache buster to force fresh data
-    const cacheBuster = Date.now();
-    fetch(`/api/pcn/history?limit=10000&_=${cacheBuster}`)
-        .then(response => response.json())
-        .then(data => {
-            console.log('PCN History API Response:', data);
-            if (data.success) {
-                allPCNData = data.data;
-                console.log('Loaded records:', allPCNData.length);
-                console.log('First record sample:', allPCNData[0]);
-                currentPage = 1;
-                displayResults(allPCNData);
-                updateStatistics(allPCNData);
-            } else {
-                showError('Failed to load PCN history: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(error => {
-            console.error('Error loading PCN history:', error);
-            showError('Error loading PCN history');
-        });
-}
-
-function searchPCN() {
-    currentPage = 1;
-    displayResults(getFilteredData());
-}
-
-function applyFilters() {
-    currentPage = 1;
-    displayResults(getFilteredData());
-}
-
-function clearFilters() {
-    document.getElementById('filterItem').value = '';
-    document.getElementById('filterTransType').value = '';
-    document.getElementById('pcnSearchInput').value = '';
-    currentPage = 1;
-    displayResults(allPCNData);
-}
-
-function displayResults(data) {
-    hideLoading();
-
-    const resultsBody = document.getElementById('resultsBody');
-    const resultsTable = document.getElementById('resultsTable');
-    const emptyState = document.getElementById('emptyState');
-    const resultCount = document.getElementById('resultCount');
-
-    if (!data || data.length === 0) {
-        resultsTable.style.display = 'none';
-        emptyState.style.display = 'block';
-        resultCount.textContent = '0 results';
-        return;
-    }
-
-    resultsTable.style.display = 'block';
-    emptyState.style.display = 'none';
-
-    // Calculate pagination
-    const totalPages = Math.ceil(data.length / rowsPerPage);
-    const startIndex = (currentPage - 1) * rowsPerPage;
-    const endIndex = startIndex + rowsPerPage;
-    const paginatedData = data.slice(startIndex, endIndex);
-
-    resultCount.textContent = `Showing ${startIndex + 1}-${Math.min(endIndex, data.length)} of ${data.length} result${data.length !== 1 ? 's' : ''}`;
-
-    // Sort by transaction time (newest first)
-    data.sort((a, b) => {
-        const timeA = a.transaction_time || '';
-        const timeB = b.transaction_time || '';
-        return timeB.localeCompare(timeA);
-    });
-
-    console.log('Displaying page:', currentPage, 'of', totalPages, '- Showing records:', startIndex, 'to', endIndex);
-    console.log('Sample item for display:', paginatedData[0]);
-
-    resultsBody.innerHTML = paginatedData.map((item, index) => {
-        const transType = item.transaction_type || 'N/A';
-        const typeBadge = getTransactionBadge(transType);
-
-        // Debug log for first item
-        if (index === 0) {
-            console.log('Rendering first row with data:', {
-                pcn: item.pcn,
-                job_number: item.job_number,
-                quantity: item.quantity,
-                location_from: item.location_from,
-                location_to: item.location_to,
-                work_order: item.work_order
-            });
-        }
-
-        return `
-            <tr>
-                <td>
-                    <span class="badge bg-primary">
-                        <i class="bi bi-upc-scan"></i> ${item.pcn || 'N/A'}
-                    </span>
-                </td>
-                <td><strong>${item.job_number || 'N/A'}</strong></td>
-                <td><span class="badge bg-${item.pcb_type === 'Bare' ? 'secondary' : item.pcb_type === 'Partial' ? 'warning' : item.pcb_type === 'Completed' ? 'info' : 'success'}">${item.pcb_type || 'N/A'}</span></td>
-                <td><code>${item.mpn || 'N/A'}</code></td>
-                <td><code class="text-primary">${item.date_code || 'N/A'}</code></td>
-                <td><span class="badge bg-${item.msd_level ? (item.msd_level <= 3 ? 'success' : 'warning') : 'secondary'}">${item.msd_level || 'N/A'}</span></td>
-                <td><code class="text-muted">${item.location_from || 'N/A'}</code></td>
-                <td><code class="text-muted">${item.location_to || 'N/A'}</code></td>
-                <td><small>${item.work_order || '-'}</small></td>
-                <td><strong>${item.quantity ? item.quantity.toLocaleString() : '0'}</strong></td>
-                <td>
-                    <span class="badge ${typeBadge}">${transType}</span>
-                </td>
-                <td><small>${item.transaction_time || 'N/A'}</small></td>
-                <td>
-                    <div class="btn-group btn-group-sm" role="group">
-                        <button class="btn btn-outline-primary" onclick="viewDetails('${item.id}')" title="View Details">
-                            <i class="bi bi-eye"></i>
-                        </button>
-                        <button class="btn btn-outline-warning" onclick="editRecord('${item.id}')" title="Edit">
-                            <i class="bi bi-pencil"></i>
-                        </button>
-                        <button class="btn btn-outline-info" onclick="printDetails('${item.id}')" title="Print">
-                            <i class="bi bi-printer"></i>
-                        </button>
-                        <button class="btn btn-outline-danger" onclick="deleteRecord('${item.id}', '${item.pcn}')" title="Delete">
-                            <i class="bi bi-trash"></i>
-                        </button>
-                    </div>
-                </td>
-            </tr>
-        `;
-    }).join('');
-
-    // Update pagination controls
-    updatePaginationControls(data.length);
-}
-
-function updatePaginationControls(totalRecords) {
-    const totalPages = Math.ceil(totalRecords / rowsPerPage);
-    document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages}`;
-    document.getElementById('prevBtn').disabled = currentPage === 1;
-    document.getElementById('nextBtn').disabled = currentPage === totalPages;
-    document.getElementById('paginationControls').style.display = totalPages > 1 ? 'flex' : 'none';
-}
-
-function previousPage() {
-    if (currentPage > 1) {
-        currentPage--;
-        displayResults(getFilteredData());
-    }
-}
-
-function nextPage() {
-    const totalPages = Math.ceil(getFilteredData().length / rowsPerPage);
-    if (currentPage < totalPages) {
-        currentPage++;
-        displayResults(getFilteredData());
-    }
-}
-
-function getFilteredData() {
-    const searchTerm = document.getElementById('pcnSearchInput').value.trim();
-    const itemFilter = document.getElementById('filterItem').value.trim().toUpperCase();
-    const transTypeFilter = document.getElementById('filterTransType').value;
-
-    let filtered = [...allPCNData];
-
-    if (searchTerm) {
-        filtered = filtered.filter(item =>
-            item.pcn && item.pcn.toString().includes(searchTerm)
-        );
-    }
-
-    if (itemFilter) {
-        filtered = filtered.filter(item =>
-            item.item && item.item.toUpperCase().includes(itemFilter)
-        );
-    }
-
-    if (transTypeFilter) {
-        filtered = filtered.filter(item =>
-            item.transaction_type && item.transaction_type === transTypeFilter
-        );
-    }
-
-    return filtered;
-}
-
-function getTransactionBadge(transType) {
-    if (transType.includes('PICK')) return 'bg-danger';
-    if (transType.includes('STOCK')) return 'bg-success';
-    if (transType.includes('Receipt')) return 'bg-info';
-    if (transType.includes('Transfer')) return 'bg-warning text-dark';
-    return 'bg-secondary';
-}
-
-function updateStatistics(data) {
-    const totalQty = data.reduce((sum, item) => sum + (item.quantity || 0), 0);
-    const uniqueItems = [...new Set(data.map(item => item.item).filter(Boolean))].length;
-    const uniquePCNs = [...new Set(data.map(item => item.pcn).filter(Boolean))].length;
-
-    document.getElementById('totalPCNs').textContent = data.length.toLocaleString();
-    document.getElementById('totalQty').textContent = totalQty.toLocaleString();
-    document.getElementById('uniqueItems').textContent = uniqueItems.toLocaleString();
-    document.getElementById('uniquePCNs').textContent = uniquePCNs.toLocaleString();
-}
-
-function viewDetails(itemId) {
-    const item = allPCNData.find(i => i.id == itemId);
-    if (item) {
-        const details = `
-            <div class="row">
-                <div class="col-md-6">
-                    <p><strong>PCN Number:</strong> ${item.pcn || 'N/A'}</p>
-                    <p><strong>Job Number:</strong> ${item.item || 'N/A'}</p>
-                    <p><strong>MPN:</strong> ${item.mpn || 'N/A'}</p>
-                    <p><strong>Date Code:</strong> ${item.dc || 'N/A'}</p>
-                    <p><strong>Quantity:</strong> ${item.quantity || 0}</p>
-                </div>
-                <div class="col-md-6">
-                    <p><strong>Transaction Type:</strong> ${item.transaction_type || 'N/A'}</p>
-                    <p><strong>Transaction Time:</strong> ${item.transaction_time || 'N/A'}</p>
-                    <p><strong>Location From:</strong> ${item.location_from || 'N/A'}</p>
-                    <p><strong>Location To:</strong> ${item.location_to || 'N/A'}</p>
-                    <p><strong>Work Order:</strong> ${item.work_order || 'N/A'}</p>
-                    <p><strong>User:</strong> ${item.user_id || 'N/A'}</p>
-                </div>
-            </div>
-        `;
-
-        // Create a modal-like view
-        const modalHTML = `
-            <div class="modal fade" id="viewModal" tabindex="-1">
-                <div class="modal-dialog modal-lg">
-                    <div class="modal-content">
-                        <div class="modal-header bg-primary text-white">
-                            <h5 class="modal-title"><i class="bi bi-info-circle"></i> PCN Transaction Details</h5>
-                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">${details}</div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Remove existing modal if any
-        const existingModal = document.getElementById('viewModal');
-        if (existingModal) existingModal.remove();
-
-        // Add modal to page and show it
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
-        const modal = new bootstrap.Modal(document.getElementById('viewModal'));
-        modal.show();
-    }
-}
-
-function printDetails(itemId) {
-    const item = allPCNData.find(i => i.id == itemId);
-    if (item) {
-        const printWindow = window.open('', '_blank');
-        printWindow.document.write(`
-            <html>
-            <head>
-                <title>PCN ${item.pcn || 'N/A'} - Transaction Details</title>
-                <style>
-                    body { font-family: Arial, sans-serif; padding: 20px; }
-                    h2 { color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
-                    .details { margin-top: 20px; }
-                    .row { display: flex; margin-bottom: 10px; }
-                    .label { font-weight: bold; width: 200px; }
-                    .value { flex: 1; }
-                    @media print {
-                        button { display: none; }
-                    }
-                </style>
-            </head>
-            <body>
-                <h2>PCN Transaction Details</h2>
-                <div class="details">
-                    <div class="row"><div class="label">PCN Number:</div><div class="value">${item.pcn || 'N/A'}</div></div>
-                    <div class="row"><div class="label">Job Number:</div><div class="value">${item.item || 'N/A'}</div></div>
-                    <div class="row"><div class="label">MPN:</div><div class="value">${item.mpn || 'N/A'}</div></div>
-                    <div class="row"><div class="label">Date Code:</div><div class="value">${item.dc || 'N/A'}</div></div>
-                    <div class="row"><div class="label">Quantity:</div><div class="value">${item.quantity || 0}</div></div>
-                    <div class="row"><div class="label">Transaction Type:</div><div class="value">${item.transaction_type || 'N/A'}</div></div>
-                    <div class="row"><div class="label">Transaction Time:</div><div class="value">${item.transaction_time || 'N/A'}</div></div>
-                    <div class="row"><div class="label">Location From:</div><div class="value">${item.location_from || 'N/A'}</div></div>
-                    <div class="row"><div class="label">Location To:</div><div class="value">${item.location_to || 'N/A'}</div></div>
-                    <div class="row"><div class="label">Work Order:</div><div class="value">${item.work_order || 'N/A'}</div></div>
-                    <div class="row"><div class="label">User:</div><div class="value">${item.user_id || 'N/A'}</div></div>
-                </div>
-                <button onclick="window.print()" style="margin-top: 20px; padding: 10px 20px; background: #667eea; color: white; border: none; border-radius: 5px; cursor: pointer;">Print</button>
-            </body>
-            </html>
-        `);
-        printWindow.document.close();
-    }
-}
-
-function editRecord(itemId) {
-    const item = allPCNData.find(i => i.id == itemId);
-    if (!item) {
-        alert('Transaction record not found!');
-        return;
-    }
-
-    // Populate the edit modal
-    document.getElementById('edit_id').value = item.id;
-    document.getElementById('edit_pcn').value = item.pcn || '';
-    document.getElementById('edit_job').value = item.job_number || '';
-    document.getElementById('edit_quantity').value = item.quantity || 0;
-    document.getElementById('edit_location_from').value = item.location_from || '';
-    document.getElementById('edit_location_to').value = item.location_to || '';
-    document.getElementById('edit_work_order').value = item.work_order || '';
-    document.getElementById('edit_trans_type').value = item.transaction_type || '';
-
-    // Show the modal
-    const modal = new bootstrap.Modal(document.getElementById('editTransactionModal'), {
-        backdrop: false,
-        keyboard: true
-    });
-    modal.show();
-
-    // Remove backdrop forcibly
-    setTimeout(() => {
-        document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
-        document.body.classList.remove('modal-open');
-        document.body.style.overflow = '';
-        document.body.style.paddingRight = '';
-        document.getElementById('edit_job').focus();
-        document.getElementById('edit_job').select();
-    }, 50);
-
-    // Keep removing backdrop
-    const removeBackdropInterval = setInterval(() => {
-        const backdrops = document.querySelectorAll('.modal-backdrop');
-        if (backdrops.length > 0) {
-            backdrops.forEach(backdrop => backdrop.remove());
-            document.body.classList.remove('modal-open');
-        }
-    }, 100);
-    setTimeout(() => clearInterval(removeBackdropInterval), 1000);
-}
-
-function saveTransactionEdit() {
-    const form = document.getElementById('editTransactionForm');
-
-    if (!form.checkValidity()) {
-        form.reportValidity();
-        return;
-    }
-
-    const formData = {
-        id: parseInt(document.getElementById('edit_id').value),
-        pcn: parseInt(document.getElementById('edit_pcn').value) || null,
-        job: document.getElementById('edit_job').value,
-        quantity: parseInt(document.getElementById('edit_quantity').value),
-        location_from: document.getElementById('edit_location_from').value,
-        location_to: document.getElementById('edit_location_to').value,
-        work_order: document.getElementById('edit_work_order').value,
-        transaction_type: document.getElementById('edit_trans_type').value
-    };
-
-    showLoading();
-
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-
-    fetch('/api/pcn/transaction/update', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken
-        },
-        body: JSON.stringify(formData)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert(`Successfully updated transaction record!\n\nPCN: ${formData.pcn}\nJob: ${formData.job}\nQuantity: ${formData.quantity}`);
-
-            const modal = bootstrap.Modal.getInstance(document.getElementById('editTransactionModal'));
-            modal.hide();
-
-            // Reload the data
-            loadPCNHistory();
-        } else {
-            alert(`Failed to update transaction: ${data.error}`);
-            hideLoading();
-        }
-    })
-    .catch(error => {
-        alert('Error updating transaction. Please try again.');
-        console.error('Error:', error);
-        hideLoading();
-    });
-}
-
-function deleteRecord(itemId, pcn) {
-    if (!confirm(`Are you sure you want to delete this PCN transaction record?\n\nPCN: ${pcn}\nRecord ID: ${itemId}\n\nThis action cannot be undone!`)) {
-        return;
-    }
-
-    showLoading();
-
-    fetch(`/api/pcn/transaction/${itemId}`, {
-        method: 'DELETE',
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            alert(`PCN transaction record ${pcn} deleted successfully!`);
-            // Remove from local data and refresh display
-            allPCNData = allPCNData.filter(item => item.id != itemId);
-            displayResults(allPCNData);
-            updateStatistics(allPCNData);
-        } else {
-            alert(`Failed to delete record: ${data.error || 'Unknown error'}`);
-            hideLoading();
-        }
-    })
-    .catch(error => {
-        console.error('Error deleting record:', error);
-        alert('Error deleting record. Please try again.');
-        hideLoading();
-    });
-}
-
-function showLoading() {
-    document.getElementById('loadingState').style.display = 'block';
-    document.getElementById('emptyState').style.display = 'none';
-    document.getElementById('resultsTable').style.display = 'none';
-}
-
-function hideLoading() {
-    document.getElementById('loadingState').style.display = 'none';
-}
-
-function showError(message) {
-    hideLoading();
-    document.getElementById('emptyState').style.display = 'block';
-    document.getElementById('emptyState').innerHTML = `
-        <i class="bi bi-exclamation-triangle display-4 text-warning"></i>
-        <h5 class="text-warning mt-3">${message}</h5>
-        <p class="text-muted">Please try again later</p>
-    `;
-}
-</script>
 {% endblock %}

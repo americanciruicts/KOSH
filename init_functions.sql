@@ -9,7 +9,8 @@ CREATE OR REPLACE FUNCTION pcb_inventory.stock_pcb(
     p_job VARCHAR(255),
     p_pcb_type VARCHAR(255),
     p_quantity INTEGER,
-    p_location VARCHAR(255),
+    p_location_from VARCHAR(255),
+    p_location_to VARCHAR(255),
     p_itar_classification VARCHAR(50) DEFAULT 'NONE',
     p_user_role VARCHAR(50) DEFAULT 'USER',
     p_itar_auth BOOLEAN DEFAULT FALSE,
@@ -50,10 +51,17 @@ BEGIN
         );
     END IF;
 
-    IF p_location IS NULL OR p_location = '' THEN
+    IF p_location_from IS NULL OR p_location_from = '' THEN
         RETURN json_build_object(
             'success', FALSE,
-            'error', 'Location is required'
+            'error', 'Location From is required'
+        );
+    END IF;
+
+    IF p_location_to IS NULL OR p_location_to = '' THEN
+        RETURN json_build_object(
+            'success', FALSE,
+            'error', 'Location To is required'
         );
     END IF;
 
@@ -77,7 +85,7 @@ BEGIN
         UPDATE pcb_inventory."tblPCB_Inventory"
         SET
             qty = v_new_qty,
-            location = p_location,
+            location = p_location_to,
             pcn = COALESCE(p_pcn, pcn, v_pcn),
             migrated_at = CURRENT_TIMESTAMP
         WHERE id = v_existing_id;
@@ -88,15 +96,15 @@ BEGIN
         INSERT INTO pcb_inventory."tblPCB_Inventory" (
             pcn, job, pcb_type, qty, location, migrated_at
         ) VALUES (
-            v_pcn, p_job, p_pcb_type, p_quantity, p_location, CURRENT_TIMESTAMP
+            v_pcn, p_job, p_pcb_type, p_quantity, p_location_to, CURRENT_TIMESTAMP
         );
 
         v_existing_id := currval('pcb_inventory."tblPCB_Inventory_id_seq"');
     END IF;
 
-    -- Log transaction (convert dc to integer if possible, otherwise NULL)
+    -- Log transaction with location tracking (convert dc to integer if possible, otherwise NULL)
     INSERT INTO pcb_inventory."tblTransaction" (
-        trantype, item, pcn, mpn, dc, tranqty, loc_to, wo, po, userid, migrated_at
+        trantype, item, pcn, mpn, dc, tranqty, loc_from, loc_to, wo, po, userid, migrated_at
     ) VALUES (
         'STOCK',
         p_job,
@@ -104,7 +112,8 @@ BEGIN
         p_mpn,
         CASE WHEN p_dc ~ '^\d+$' THEN p_dc::INTEGER ELSE NULL END,
         p_quantity,
-        p_location,
+        p_location_from,
+        p_location_to,
         p_work_order,
         NULL,
         p_username,
