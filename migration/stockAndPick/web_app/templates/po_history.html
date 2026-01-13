@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+    <div class="col-12">
+        <h1 class="h2 mb-2 text-white">
+            <i class="bi bi-receipt me-2"></i> PO History Lookup
+        </h1>
+        <p class="mb-0 fs-6 text-white">Search and view purchase order receipt history</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Search Filters -->
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0">
+            <i class="bi bi-funnel"></i> Search Filters
+        </h5>
+    </div>
+    <div class="card-body">
+        <form method="get" action="{{ url_for('po_history') }}">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="po" class="form-label">PO Number</label>
+                    <input type="text" class="form-control" id="po" name="po"
+                           value="{{ search_po }}" placeholder="Enter PO">
+                </div>
+                <div class="col-md-3">
+                    <label for="item" class="form-label">Item Number</label>
+                    <input type="text" class="form-control" id="item" name="item"
+                           value="{{ search_item }}" placeholder="Enter item">
+                </div>
+                <div class="col-md-3">
+                    <label for="mpn" class="form-label">MPN</label>
+                    <input type="text" class="form-control" id="mpn" name="mpn"
+                           value="{{ search_mpn }}" placeholder="Enter MPN">
+                </div>
+                <div class="col-md-3">
+                    <label for="pcn" class="form-label">PCN</label>
+                    <input type="number" class="form-control" id="pcn" name="pcn"
+                           value="{{ search_pcn }}" placeholder="Enter PCN">
+                </div>
+                <div class="col-md-3">
+                    <label for="date_from" class="form-label">Date From</label>
+                    <input type="date" class="form-control" id="date_from" name="date_from"
+                           value="{{ search_date_from }}">
+                </div>
+                <div class="col-md-3">
+                    <label for="date_to" class="form-label">Date To</label>
+                    <input type="date" class="form-control" id="date_to" name="date_to"
+                           value="{{ search_date_to }}">
+                </div>
+            </div>
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-search"></i> Search
+                </button>
+                <a href="{{ url_for('po_history') }}" class="btn btn-secondary">
+                    <i class="bi bi-x-circle"></i> Clear Filters
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Results Section -->
+<div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">
+            <i class="bi bi-list-ul"></i> Receipt History
+        </h5>
+        <span class="badge bg-secondary">
+            {{ pagination.total | default(0) | format_number }} total records
+        </span>
+    </div>
+    <div class="card-body">
+        {% if receipts %}
+        <div class="table-responsive">
+            <table class="table table-striped table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Date</th>
+                        <th>PO Number</th>
+                        <th>PCN</th>
+                        <th>Type</th>
+                        <th>Item</th>
+                        <th>MPN</th>
+                        <th>Date Code</th>
+                        <th>Quantity</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>User</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for receipt in receipts %}
+                    <tr>
+                        <td>
+                            {% if receipt.transaction_date %}
+                                {{ receipt.transaction_date.strftime('%Y-%m-%d %H:%M') if receipt.transaction_date is not string else receipt.transaction_date }}
+                            {% else %}
+                                <span class="text-muted">N/A</span>
+                            {% endif %}
+                        </td>
+                        <td><strong><code>{{ receipt.po_number or '-' }}</code></strong></td>
+                        <td><strong>{{ receipt.pcn or 'N/A' }}</strong></td>
+                        <td>
+                            <span class="badge
+                                {% if receipt.transaction_type == 'Receipt' %}bg-success
+                                {% elif receipt.transaction_type == 'PCN Generation' %}bg-primary
+                                {% elif receipt.transaction_type == 'INDF' %}bg-info
+                                {% elif receipt.transaction_type == 'VEND' %}bg-warning
+                                {% else %}bg-secondary
+                                {% endif %}">
+                                {{ receipt.transaction_type or 'N/A' }}
+                            </span>
+                        </td>
+                        <td>{{ receipt.item or '-' }}</td>
+                        <td><code>{{ receipt.mpn or '-' }}</code></td>
+                        <td>{{ receipt.date_code or '-' }}</td>
+                        <td>
+                            <strong class="text-success">
+                                {{ receipt.quantity or 0 }}
+                            </strong>
+                        </td>
+                        <td>{{ receipt.location_from or '-' }}</td>
+                        <td>{{ receipt.location_to or '-' }}</td>
+                        <td>{{ receipt.user_id or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <td colspan="7"><strong>Total Quantity:</strong></td>
+                        <td colspan="4">
+                            <strong class="text-success">
+                                {{ receipts | selectattr('quantity', 'defined') | selectattr('quantity', 'ne', none) | sum(attribute='quantity', start=0) | format_number }}
+                            </strong>
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if pagination.total_pages > 1 %}
+        <nav aria-label="Page navigation" class="mt-3">
+            <ul class="pagination justify-content-center">
+                <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('po_history', page=pagination.prev_num,
+                        po=search_po, item=search_item, mpn=search_mpn, pcn=search_pcn,
+                        date_from=search_date_from, date_to=search_date_to) }}">
+                        Previous
+                    </a>
+                </li>
+                {% for p in pagination.pages %}
+                <li class="page-item {% if p == pagination.page %}active{% endif %}">
+                    <a class="page-link" href="{{ url_for('po_history', page=p,
+                        po=search_po, item=search_item, mpn=search_mpn, pcn=search_pcn,
+                        date_from=search_date_from, date_to=search_date_to) }}">
+                        {{ p }}
+                    </a>
+                </li>
+                {% endfor %}
+                <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                    <a class="page-link" href="{{ url_for('po_history', page=pagination.next_num,
+                        po=search_po, item=search_item, mpn=search_mpn, pcn=search_pcn,
+                        date_from=search_date_from, date_to=search_date_to) }}">
+                        Next
+                    </a>
+                </li>
+            </ul>
+            <p class="text-center text-muted">
+                Page {{ pagination.page }} of {{ pagination.total_pages }}
+                ({{ pagination.total | format_number }} total records)
+            </p>
+        </nav>
+        {% endif %}
+
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-inbox" style="font-size: 4rem; color: #ccc;"></i>
+            <p class="text-muted mt-3">
+                {% if search_po or search_item or search_mpn or search_pcn %}
+                    No receipts found matching your search criteria.
+                {% else %}
+                    No receipt history available.
+                {% endif %}
+            </p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+.table-responsive {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+</style>
+{% endblock %}

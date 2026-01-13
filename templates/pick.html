@@ -1,0 +1,1052 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);">
+    <div class="col-md-8">
+        <h1 class="h2 mb-2">
+            <i class="bi bi-dash-circle-fill me-2"></i> Pick Electronic Parts
+        </h1>
+        <p class="mb-0 fs-6">Remove components from inventory • Safety validated • Audit tracked</p>
+    </div>
+    <div class="col-md-4 text-end">
+        <a href="{{ url_for('inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
+            <i class="bi bi-table"></i> View Inventory
+        </a>
+        <a href="{{ url_for('stock') }}" class="btn btn-light btn-lg fw-bold">
+            <i class="bi bi-plus-circle"></i> Stock Parts
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<!-- No custom CSS needed - using native browser confirm -->
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Quick Inventory Lookup - Top Position -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-search"></i> Quick Inventory Lookup
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <div class="input-group input-group-lg">
+                                <input type="text" class="form-control" placeholder="Search job number..." id="quickSearchInput">
+                                <button class="btn btn-primary" type="button" id="quickSearchBtn">
+                                    <i class="bi bi-search"></i> Search
+                                </button>
+                            </div>
+                            <small class="text-muted">Enter a job number to see available inventory</small>
+                        </div>
+                        <div class="col-md-6">
+                            <div id="quickSearchResults">
+                                <div class="text-center text-muted">
+                                    <i class="bi bi-info-circle"></i>
+                                    <span>Search results will appear here</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- Pick Form -->
+        <div class="col-xl-7">
+            <div class="card border-0 shadow-lg">
+                <div class="card-header bg-white border-0 pb-0">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="text-primary mb-1">
+                                <i class="bi bi-dash-circle-fill me-2"></i> Remove from Inventory
+                            </h4>
+                            <p class="text-muted small mb-0">Safely remove parts with validation and confirmation</p>
+                        </div>
+                        <div class="badge bg-primary bg-opacity-10 text-primary fs-6 px-3 py-2">
+                            <i class="bi bi-shield-check"></i> Validated
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body pt-4">
+                <form method="POST" id="pickForm">
+                    {{ form.hidden_tag() }}
+                    
+                    <!-- Part Identification Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-primary border-bottom pb-2 mb-3">
+                                <i class="bi bi-search me-2"></i> Part Identification & Search
+                                <span id="scanIndicator" class="badge bg-primary ms-2" style="display: none;">
+                                    <i class="bi bi-upc-scan"></i> Scanning...
+                                </span>
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="pcnInput" class="form-label fw-semibold text-dark">PCN Number</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control form-control-lg border-2" id="pcnInput" name="pcn_number" placeholder="e.g., 00001, 00523">
+                                    <button type="button" class="btn btn-primary" id="checkInventoryBtn">
+                                        <i class="bi bi-search"></i>
+                                    </button>
+                                </div>
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-upc-scan"></i> Part Control Number (optional)
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.mpn.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.mpn(class="form-control form-control-lg border-2", placeholder="e.g., MPN12345, LTC6804-1", id="mpnInput") }}
+                                {% if form.mpn.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.mpn.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-cpu"></i> Manufacturing Part Number from supplier
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Additional Part Info Section -->
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.part_number.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.part_number(class="form-control form-control-lg border-2", placeholder="e.g., 083636, RC0603FR-07383KL", id="partNumberInput") }}
+                                {% if form.part_number.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.part_number.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-tag"></i> Internal part number/component identifier
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.po.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.po(class="form-control form-control-lg border-2", placeholder="e.g., JOB-2024-001, Job-12345", id="poInput") }}
+                                {% if form.po.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.po.errors %}
+                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <div class="form-text text-muted">
+                                    <i class="bi bi-briefcase"></i> Job Number (optional)
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.pcb_type.label(class="form-label fw-bold") }}
+                        {{ form.pcb_type(class="form-control form-control-lg", placeholder="Enter: Bare, Partial, Completed, Ready to Ship", id="pcbTypeInput") }}
+                        {% if form.pcb_type.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.pcb_type.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">
+                            <i class="bi bi-info-circle"></i> Component type must match inventory record
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.dc.label(class="form-label fw-bold") }}
+                        {{ form.dc(class="form-control form-control-lg", placeholder="Enter date code (e.g., 2024WK01)") }}
+                        {% if form.dc.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.dc.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">
+                            <i class="bi bi-calendar"></i> Manufacturing date code (optional)
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        {{ form.msd.label(class="form-label fw-bold") }}
+                        {{ form.msd(class="form-control form-control-lg", placeholder="Enter MSD level (e.g., Level 3, 168hrs@30°C/60%RH)") }}
+                        {% if form.msd.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.msd.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">
+                            <i class="bi bi-droplet"></i> Moisture sensitivity level (optional)
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        {{ form.quantity.label(class="form-label fw-bold") }}
+                        <div class="input-group input-group-lg">
+                            {{ form.quantity(class="form-control", placeholder="Enter quantity", min="1", step="1", id="quantityInput") }}
+                            <span class="input-group-text">units</span>
+                        </div>
+                        {% if form.quantity.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.quantity.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">
+                            <i class="bi bi-info-circle"></i> Cannot exceed available inventory
+                        </div>
+                        <div id="availableQuantity" class="mt-2" style="display: none;">
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle"></i>
+                                <span id="availableQtyText"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        {{ form.submit(class="btn btn-primary btn-lg", id="pickSubmitBtn") }}
+                        <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Back to Dashboard
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Safety Information and Warnings -->
+    <div class="col-xl-5">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-primary text-white border-0">
+                <h5 class="mb-0">
+                    <i class="bi bi-shield-check"></i> Safety Checks
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning border-0 mb-3">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>Important:</strong> The following safety checks are automatically performed:
+                </div>
+
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item border-0 px-0">
+                        <i class="bi bi-check-circle text-success"></i>
+                        <strong>Job Existence:</strong> Verifies the job number exists in inventory
+                    </li>
+                    <li class="list-group-item border-0 px-0">
+                        <i class="bi bi-check-circle text-success"></i>
+                        <strong>Component Type Match:</strong> Ensures the component type matches the part
+                    </li>
+                    <li class="list-group-item border-0 px-0">
+                        <i class="bi bi-check-circle text-success"></i>
+                        <strong>Sufficient Quantity:</strong> Prevents picking more than available
+                    </li>
+                    <li class="list-group-item border-0 px-0">
+                        <i class="bi bi-check-circle text-success"></i>
+                        <strong>Audit Trail:</strong> All operations are automatically logged
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- No modal HTML needed - using native browser confirm dialog -->
+<!-- Scanner Modal -->
+<div class="modal fade" id="scannerModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-upc-scan text-primary"></i> Scan Barcode
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="stopScanner()"></button>
+            </div>
+            <div class="modal-body text-center">
+                <div id="scanner" style="width: 100%; height: 400px; border: 2px solid #dee2e6; border-radius: 8px; overflow: hidden;"></div>
+                <div class="mt-3">
+                    <p class="text-muted mb-2">
+                        <i class="bi bi-camera"></i> Position barcode within the camera view
+                    </p>
+                    <p class="small text-info">
+                        Supports most barcode formats including Code 128, EAN, UPC, Code 39, and more
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" onclick="stopScanner()">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<!-- Quagga.js for barcode scanning -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
+<script>
+// ==================== USB HID BARCODE SCANNER SUPPORT ====================
+// USB HID scanners type characters rapidly followed by Enter/Tab
+// This global listener captures barcode input and auto-fills form fields
+
+let scanBuffer = '';
+let scanTimeout = null;
+const SCAN_TIMEOUT_MS = 100; // Time between rapid keystrokes (HID scanners are very fast)
+const MIN_SCAN_LENGTH = 3; // Minimum barcode length
+
+document.addEventListener('keypress', function(e) {
+    // Only capture scans when not typing in a textarea or already focused on form fields
+    const activeElement = document.activeElement;
+    const isFormField = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'SELECT');
+
+    // If Enter/Tab is pressed and we have buffered data, it's likely a barcode scan
+    if ((e.key === 'Enter' || e.key === 'Tab') && scanBuffer.length >= MIN_SCAN_LENGTH && !isFormField) {
+        e.preventDefault();
+        console.log('USB HID Barcode detected:', scanBuffer);
+        showScanIndicator();
+        parseAndFillBarcode(scanBuffer.trim());
+        scanBuffer = '';
+        if (scanTimeout) clearTimeout(scanTimeout);
+        hideScanIndicator();
+        checkInventory(); // Auto-check inventory after barcode scan
+        return;
+    }
+
+    // Buffer characters for potential barcode scan
+    if (e.key !== 'Enter' && e.key !== 'Tab' && !isFormField) {
+        scanBuffer += e.key;
+
+        // Show scanning indicator
+        if (scanBuffer.length === 1) {
+            showScanIndicator();
+        }
+
+        // Reset buffer after timeout (human typing is slower than scanner)
+        if (scanTimeout) clearTimeout(scanTimeout);
+        scanTimeout = setTimeout(function() {
+            if (scanBuffer.length >= MIN_SCAN_LENGTH) {
+                console.log('USB HID Barcode detected (timeout):', scanBuffer);
+                parseAndFillBarcode(scanBuffer.trim());
+                hideScanIndicator();
+                checkInventory(); // Auto-check inventory after barcode scan
+            } else {
+                hideScanIndicator();
+            }
+            scanBuffer = '';
+        }, SCAN_TIMEOUT_MS);
+    }
+});
+
+// Visual feedback functions
+function showScanIndicator() {
+    const indicator = document.getElementById('scanIndicator');
+    if (indicator) {
+        indicator.style.display = 'inline-block';
+    }
+}
+
+function hideScanIndicator() {
+    const indicator = document.getElementById('scanIndicator');
+    if (indicator) {
+        setTimeout(() => {
+            indicator.style.display = 'none';
+        }, 1000);
+    }
+}
+
+// ==================== MAIN INITIALIZATION ====================
+let currentInventoryCheck = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('pickForm');
+    const jobInput = document.getElementById('jobInput');
+    const pcbTypeInput = document.getElementById('pcbTypeInput');
+    const quantityInput = document.getElementById('quantityInput');
+    const checkInventoryBtn = document.getElementById('checkInventoryBtn');
+    const quickSearchInput = document.getElementById('quickSearchInput');
+    const quickSearchBtn = document.getElementById('quickSearchBtn');
+
+    // Check if essential elements exist
+    if (!form || !jobInput || !pcbTypeInput || !quantityInput) {
+        console.error('Essential form elements not found');
+        return;
+    }
+
+    // Auto-focus on PCN number field (first field) if no other element is focused
+    const pcnInput = document.getElementById('pcnInput');
+    if (pcnInput && (!document.activeElement || document.activeElement === document.body)) {
+        setTimeout(() => pcnInput.focus(), 100);
+    }
+
+    // BARCODE SCANNER SUPPORT: Auto-advance through fields on Enter/Tab
+    // This allows scanning multiple barcodes in sequence to fill multiple fields
+    const scanFields = [
+        'pcnInput',      // PCN Number
+        'mpnInput',      // MPN
+        'partNumberInput', // Part Number/Item
+        'poInput',       // PO
+        'jobInput',      // Job Number
+        'pcbTypeInput',  // PCB Type
+        'quantityInput'  // Quantity
+    ];
+
+    scanFields.forEach((fieldId, index) => {
+        const field = document.getElementById(fieldId);
+        if (field) {
+            field.addEventListener('keydown', function(e) {
+                // On Enter key (barcode scanner default)
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    // Move to next field
+                    if (index < scanFields.length - 1) {
+                        const nextField = document.getElementById(scanFields[index + 1]);
+                        if (nextField) {
+                            nextField.focus();
+                            nextField.select();
+                        }
+                    } else {
+                        // Last field - trigger form submission
+                        showConfirmationModal();
+                    }
+                }
+            });
+        }
+    });
+    
+    // Check inventory when part number or component type changes
+    jobInput.addEventListener('blur', checkInventory);
+    pcbTypeInput.addEventListener('change', checkInventory);
+    checkInventoryBtn.addEventListener('click', checkInventory);
+    
+    // Quick search functionality
+    quickSearchBtn.addEventListener('click', performQuickSearch);
+    quickSearchInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            performQuickSearch();
+        }
+    });
+    
+    // Form submission with confirmation
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        showConfirmationModal();
+    });
+    
+    // No longer needed - using native confirm dialog
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        if (e.ctrlKey && e.key === 'Enter') {
+            showConfirmationModal();
+        }
+    });
+});
+
+function checkInventory() {
+    const jobInput = document.getElementById('jobInput');
+    const pcbTypeInput = document.getElementById('pcbTypeInput');
+
+    if (!jobInput || !pcbTypeInput) {
+        console.error('Form elements not found in checkInventory');
+        return;
+    }
+
+    const job = jobInput.value.trim();
+    const pcbType = pcbTypeInput.value.trim();
+
+    console.log('Checking inventory for:', { job, pcbType });
+
+    if (!job || !pcbType) {
+        console.log('Missing job or pcbType, hiding quantity display');
+        hideAvailableQuantity();
+        hideExpirationWarning();
+        return;
+    }
+
+    // Show loading state
+    showAvailableQuantity('Checking inventory...', 'info');
+
+    const searchUrl = `/api/search?job=${encodeURIComponent(job)}&pcb_type=${encodeURIComponent(pcbType)}`;
+    console.log('Fetching:', searchUrl);
+
+    fetch(searchUrl)
+        .then(response => {
+            console.log('API Response status:', response.status);
+            return response.json();
+        })
+        .then(data => {
+            console.log('API Response data:', data);
+            if (data.success && data.data.length > 0) {
+                const item = data.data[0];
+                currentInventoryCheck = item;
+                console.log('Inventory found:', item);
+                showAvailableQuantity(`Available: ${item.qty} units at ${item.location}`, 'success');
+
+                // Update quantity input max value
+                document.getElementById('quantityInput').max = item.qty;
+
+                // Check expiration status
+                if (item.expiration) {
+                    showExpirationStatus(item.expiration);
+                } else {
+                    hideExpirationWarning();
+                }
+            } else {
+                currentInventoryCheck = null;
+                console.warn('No inventory found for job:', job, 'type:', pcbType);
+                showAvailableQuantity(`Job "${job}" with type "${pcbType}" not found in inventory`, 'danger');
+                document.getElementById('quantityInput').max = '';
+                hideExpirationWarning();
+            }
+        })
+        .catch(error => {
+            console.error('Error checking inventory:', error);
+            showAvailableQuantity('Error checking inventory. Please try again.', 'warning');
+            hideExpirationWarning();
+        });
+}
+
+function showAvailableQuantity(message, type) {
+    const container = document.getElementById('availableQuantity');
+    
+    if (!container) {
+        console.error('availableQuantity container not found');
+        return;
+    }
+    
+    // First make container visible to ensure child elements are accessible
+    container.style.display = 'block';
+    
+    // Try to find existing elements
+    let alert = container.querySelector('.alert');
+    let text = document.getElementById('availableQtyText');
+    
+    // If elements don't exist, create them
+    if (!alert || !text) {
+        console.log('Recreating availableQuantity structure');
+        container.innerHTML = `
+            <div class="alert alert-info">
+                <i class="bi bi-info-circle"></i>
+                <span id="availableQtyText"></span>
+            </div>
+        `;
+        alert = container.querySelector('.alert');
+        text = document.getElementById('availableQtyText');
+    }
+    
+    // Update content
+    if (alert) {
+        alert.className = `alert alert-${type}`;
+    }
+    
+    if (text) {
+        text.textContent = message;
+    }
+}
+
+function hideAvailableQuantity() {
+    const container = document.getElementById('availableQuantity');
+    if (container) {
+        container.style.display = 'none';
+    }
+}
+
+function showExpirationStatus(expiration) {
+    let container = document.getElementById('expirationWarning');
+
+    if (!container) {
+        // Create expiration warning container
+        const quantityContainer = document.getElementById('availableQuantity');
+        if (quantityContainer) {
+            container = document.createElement('div');
+            container.id = 'expirationWarning';
+            container.className = 'mt-2';
+            quantityContainer.parentNode.insertBefore(container, quantityContainer.nextSibling);
+        }
+    }
+
+    if (!container) return;
+
+    let alertClass = 'alert-info';
+    let icon = 'bi-info-circle';
+    let title = 'Expiration Status';
+
+    if (expiration.status_text === 'expired') {
+        alertClass = 'alert-danger';
+        icon = 'bi-x-circle';
+        title = 'EXPIRED';
+    } else if (expiration.status_text === 'critical') {
+        alertClass = 'alert-danger';
+        icon = 'bi-exclamation-circle';
+        title = 'CRITICAL - Expires Soon';
+    } else if (expiration.status_text === 'warning') {
+        alertClass = 'alert-warning';
+        icon = 'bi-exclamation-triangle';
+        title = 'WARNING - Check Expiration';
+    } else if (expiration.status_text === 'fresh') {
+        alertClass = 'alert-success';
+        icon = 'bi-check-circle';
+        title = 'Fresh Inventory';
+    }
+
+    // Format expiration display
+    let displayText = '';
+    if (expiration.days_remaining < 0) {
+        displayText = `Expired ${Math.abs(expiration.days_remaining)} days ago`;
+    } else if (expiration.days_remaining < 30) {
+        displayText = `Expires in ${expiration.days_remaining} days`;
+    } else {
+        const months = Math.floor(expiration.days_remaining / 30);
+        displayText = `Good for ~${months} months`;
+    }
+
+    let warningsText = '';
+    if (expiration.warnings && expiration.warnings.length > 0) {
+        warningsText = `<br><small>${expiration.warnings.join(', ')}</small>`;
+    }
+
+    container.innerHTML = `
+        <div class="alert ${alertClass} border-2">
+            <strong><i class="${icon}"></i> ${title}</strong><br>
+            ${displayText}
+            ${warningsText}
+            ${expiration.dc ? `<br><small>Date Code: <code>${expiration.dc}</code></small>` : ''}
+        </div>
+    `;
+
+    container.style.display = 'block';
+}
+
+function hideExpirationWarning() {
+    const container = document.getElementById('expirationWarning');
+    if (container) {
+        container.style.display = 'none';
+    }
+}
+
+function performQuickSearch() {
+    const job = document.getElementById('quickSearchInput').value.trim();
+    const resultsContainer = document.getElementById('quickSearchResults');
+    
+    if (!job) {
+        resultsContainer.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="bi bi-search"></i>
+                <p class="mb-0">Enter a job number to see available inventory</p>
+            </div>
+        `;
+        return;
+    }
+    
+    resultsContainer.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border spinner-border-sm" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="small text-muted mt-2">Searching...</p>
+        </div>
+    `;
+    
+    fetch(`/api/search?job=${encodeURIComponent(job)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.data.length > 0) {
+                let html = '<div class="table-responsive"><table class="table table-sm table-hover">';
+                html += '<thead><tr><th>PCB Type</th><th>Qty</th><th>Location</th><th>Action</th></tr></thead><tbody>';
+                
+                data.data.forEach(item => {
+                    const badgeClass = {
+                        'Bare': 'secondary',
+                        'Partial': 'warning',
+                        'Completed': 'info',
+                        'Ready to Ship': 'success'
+                    }[item.pcb_type] || 'secondary';
+                    
+                    html += `<tr>
+                        <td><span class="badge bg-${badgeClass}">${item.pcb_type}</span></td>
+                        <td><strong>${item.qty}</strong></td>
+                        <td><code>${item.location}</code></td>
+                        <td>
+                            <button class="btn btn-outline-primary btn-sm" onclick="fillForm('${item.job}', '${item.pcb_type}')">
+                                <i class="bi bi-arrow-right"></i> Use
+                            </button>
+                        </td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table></div>';
+                resultsContainer.innerHTML = html;
+            } else {
+                resultsContainer.innerHTML = `
+                    <div class="text-center text-muted">
+                        <i class="bi bi-inbox"></i>
+                        <p class="mb-0">No inventory found for job "${job}"</p>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error searching inventory:', error);
+            resultsContainer.innerHTML = `
+                <div class="text-center text-danger">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <p class="mb-0">Error searching inventory</p>
+                </div>
+            `;
+        });
+}
+
+function fillForm(job, pcbType) {
+    document.getElementById('jobInput').value = job;
+    document.getElementById('pcbTypeInput').value = pcbType;
+    checkInventory();
+    document.getElementById('quantityInput').focus();
+}
+
+function showConfirmationModal() {
+    const job = document.getElementById('jobInput').value.trim();
+    const pcbType = document.getElementById('pcbTypeInput').value.trim();
+    const quantity = parseInt(document.getElementById('quantityInput').value);
+
+    if (!job || !pcbType || !quantity) {
+        alert('Please fill in all required fields: Job Number, Component Type, and Quantity');
+        return;
+    }
+
+    // Auto-check inventory if not already checked
+    if (!currentInventoryCheck) {
+        console.log('Auto-checking inventory before confirming...');
+        fetch(`/api/search?job=${encodeURIComponent(job)}&pcb_type=${encodeURIComponent(pcbType)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.data.length > 0) {
+                    currentInventoryCheck = data.data[0];
+                    showAvailableQuantity(`Available: ${currentInventoryCheck.qty} units at ${currentInventoryCheck.location}`, 'success');
+
+                    // Validate and confirm
+                    if (quantity > currentInventoryCheck.qty) {
+                        alert(`Cannot pick ${quantity} units. Only ${currentInventoryCheck.qty} available.`);
+                        return;
+                    }
+
+                    // Use native browser confirm dialog
+                    const remaining = currentInventoryCheck.qty - quantity;
+                    const message = `Are you sure you want to pick the following PCBs?\n\n` +
+                                  `Job: ${job}\n` +
+                                  `PCB Type: ${pcbType}\n` +
+                                  `Quantity: ${quantity}\n` +
+                                  `Remaining After Pick: ${remaining}\n\n` +
+                                  `This action cannot be undone, but is logged in the audit trail.`;
+
+                    if (confirm(message)) {
+                        const form = document.getElementById('pickForm');
+                        HTMLFormElement.prototype.submit.call(form);
+                    }
+                } else {
+                    alert(`Job ${job} with component type ${pcbType} not found in inventory. Please check your inputs.`);
+                    showAvailableQuantity('Not found in inventory', 'danger');
+                }
+            })
+            .catch(error => {
+                console.error('Error checking inventory:', error);
+                alert('Error checking inventory. Please try again.');
+            });
+        return;
+    }
+
+    // Inventory already checked, validate quantity
+    if (quantity > currentInventoryCheck.qty) {
+        alert(`Cannot pick ${quantity} units. Only ${currentInventoryCheck.qty} available.`);
+        return;
+    }
+
+    // Use native browser confirm dialog
+    const remaining = currentInventoryCheck.qty - quantity;
+    const message = `Are you sure you want to pick the following PCBs?\n\n` +
+                  `Job: ${job}\n` +
+                  `PCB Type: ${pcbType}\n` +
+                  `Quantity: ${quantity}\n` +
+                  `Remaining After Pick: ${remaining}\n\n` +
+                  `This action cannot be undone, but is logged in the audit trail.`;
+
+    if (confirm(message)) {
+        const form = document.getElementById('pickForm');
+        HTMLFormElement.prototype.submit.call(form);
+    }
+}
+
+// No modal functions needed - using native browser confirm dialog
+
+// Barcode Parser Function
+function parseAndFillBarcode(code) {
+    console.log('Parsing barcode:', code);
+
+    try {
+        // Check if it's JSON format first
+        if (code.startsWith('{') && code.endsWith('}')) {
+            const data = JSON.parse(code);
+            if (data.pcn_number) document.getElementById('pcnInput').value = data.pcn_number;
+            if (data.job) document.getElementById('jobInput').value = data.job;
+            if (data.mpn) document.getElementById('mpnInput').value = data.mpn;
+            if (data.part_number) document.getElementById('partNumberInput').value = data.part_number;
+            // Fill Job Number field (po field on pick page) - priority: job > part_number > po
+            if (data.job || data.part_number || data.po) document.getElementById('poInput').value = data.job || data.part_number || data.po;
+            if (data.quantity) document.getElementById('quantityInput').value = data.quantity;
+            if (data.pcb_type) document.getElementById('pcbTypeInput').value = data.pcb_type;
+            if (data.dc) document.getElementById('dc').value = data.dc;
+            return;
+        }
+
+        // Check for company barcode format based on patterns seen in barcode.jpeg
+        // Look for patterns like: PN/QTY/TYPE format or structured data
+
+        // Pattern 1: Check for delimited format (pipe, comma, semicolon, space)
+        let parts = [];
+        if (code.includes('|')) {
+            parts = code.split('|');
+        } else if (code.includes(',')) {
+            parts = code.split(',');
+        } else if (code.includes(';')) {
+            parts = code.split(';');
+        } else if (code.includes(' ') && code.split(' ').length >= 3) {
+            parts = code.split(' ').filter(p => p.trim());
+        } else if (code.includes('\n')) {
+            // Multi-line format (newline separated)
+            parts = code.split('\n').filter(p => p.trim());
+        } else if (code.includes('\t')) {
+            // Tab separated
+            parts = code.split('\t').filter(p => p.trim());
+        }
+
+        if (parts.length >= 2) {
+            console.log('Found delimited data:', parts);
+
+            // Check if this is our standardized format: PCN|Job|MPN|QTY|Location|PCBType|DateCode|MSD|PO
+            if (code.includes('|') && parts.length >= 5) {
+                console.log('📦 Detected standardized PCN barcode format!');
+                // Direct mapping - Format: PCN|Job|MPN|QTY|Location|PCBType|DateCode|MSD|PO
+                const pcn = parts[0] ? parts[0].trim().padStart(5, '0') : '';
+                const job = parts[1] ? parts[1].trim() : '';
+                const mpn = parts[2] ? parts[2].trim() : '';
+                const quantity = parts[3] ? parts[3].trim() : '';
+                const location = parts[4] ? parts[4].trim() : '';
+                const pcbType = parts[5] ? parts[5].trim() : '';
+                const dateCode = parts[6] ? parts[6].trim() : '';
+                const msd = parts[7] ? parts[7].trim() : '';
+                const po = parts[8] ? parts[8].trim() : '';
+
+                console.log('✅ Parsed data:', {pcn, job, mpn, quantity, location, pcbType, dateCode, msd, po});
+
+                // Fill ALL form fields directly
+                if (pcn) document.getElementById('pcnInput').value = pcn;
+                if (job) document.getElementById('jobInput').value = job;
+                if (mpn) document.getElementById('mpnInput').value = mpn;
+                if (quantity) document.getElementById('quantityInput').value = quantity;
+                if (pcbType) document.getElementById('pcbTypeInput').value = pcbType;
+                if (dateCode) document.getElementById('dc').value = dateCode;
+                if (msd) document.getElementById('msdInput').value = msd;
+                // Fill Job Number field (po field on pick page) - priority: job > po
+                if (job || po) document.getElementById('poInput').value = job || po;
+
+                console.log('🎉 ALL FIELDS FILLED from barcode on PICK page!');
+                return; // Exit early - we're done!
+            }
+
+            // Fallback to smart parsing for other formats
+            let pcn = '', job = '', mpn = '', partNumber = '', po = '', quantity = '', pcbType = 'Bare', dateCode = '', msd = '';
+
+            for (let i = 0; i < parts.length; i++) {
+                const part = parts[i].trim();
+                if (!part) continue;
+
+                // Look for PCN (exactly 5 digits with leading zeros)
+                if (/^\d{5}$/.test(part) && !pcn) {
+                    pcn = part;
+                    console.log('Found PCN:', pcn);
+                }
+                // Look for quantity (pure numbers, typically 1-1000)
+                else if (/^\d{1,4}$/.test(part) && parseInt(part) > 0 && parseInt(part) <= 10000 && !quantity) {
+                    quantity = part;
+                    console.log('Found quantity:', quantity);
+                }
+                // Look for MPN (Manufacturing Part Number - often has specific patterns)
+                else if (/^[A-Za-z0-9]{6,}$/.test(part) && !mpn && part.length > 5) {
+                    mpn = part;
+                    console.log('Found MPN:', mpn);
+                }
+                // Look for job/item numbers (often shorter)
+                else if (/^[A-Za-z0-9]{2,8}$/.test(part) && !job) {
+                    job = part;
+                    console.log('Found job/item:', job);
+                }
+                // Look for part numbers
+                else if (/^[A-Za-z0-9]{4,}$/.test(part) && !partNumber && !mpn) {
+                    partNumber = part;
+                    console.log('Found part number:', partNumber);
+                }
+                // Look for Job Number (PO field or pattern)
+                else if (/^(PO|po)[A-Za-z0-9\-]{2,}$/i.test(part) || (/^[A-Za-z0-9\-]{4,}$/.test(part) && !po && part.includes('-'))) {
+                    po = part;
+                    console.log('Found PO:', po);
+                }
+                // Look for PCB types
+                else if (/^(bare|partial|completed|ready|assembly)/i.test(part)) {
+                    pcbType = part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+                    console.log('Found PCB type:', pcbType);
+                }
+                // Look for date codes (year/week patterns)
+                else if (/^\d{4}(WK)?\d{1,2}$/.test(part) || /^\d{2}(WK)?\d{1,2}$/.test(part)) {
+                    dateCode = part;
+                    console.log('Found date code:', dateCode);
+                }
+                // Look for MSD levels
+                else if (/^(level\s*)?[1-6]$/i.test(part) || /^\d+hrs?@\d+/i.test(part)) {
+                    msd = part;
+                    console.log('Found MSD:', msd);
+                }
+            }
+
+            // Fill form fields with parsed data
+            if (pcn) document.getElementById('pcnInput').value = pcn;
+            if (job) document.getElementById('jobInput').value = job;
+            if (mpn) document.getElementById('mpnInput').value = mpn;
+            if (partNumber) document.getElementById('partNumberInput').value = partNumber;
+            // Fill Job Number field (po field on pick page) - priority: job > po
+            if (job || po) document.getElementById('poInput').value = job || po;
+            if (quantity) document.getElementById('quantityInput').value = quantity;
+            if (pcbType) document.getElementById('pcbTypeInput').value = pcbType;
+            if (dateCode) document.getElementById('dc').value = dateCode;
+            if (msd) document.getElementById('msd').value = msd;
+
+            return;
+        }
+
+        // Pattern 2: Single value - try to determine what it is
+        const trimmedCode = code.trim();
+
+        // If it's purely numeric and reasonable quantity range, assume it's a part number
+        if (/^\d{4,8}$/.test(trimmedCode)) {
+            document.getElementById('partNumberInput').value = trimmedCode;
+            console.log('Single numeric value treated as part number:', trimmedCode);
+        }
+        // If it's alphanumeric, assume it's a job number
+        else {
+            document.getElementById('jobInput').value = trimmedCode;
+            console.log('Single value treated as job number:', trimmedCode);
+        }
+
+    } catch (error) {
+        console.error('Error parsing barcode:', error);
+        // Fallback to simple part number (since that's what user expects)
+        document.getElementById('partNumberInput').value = code;
+    }
+}
+
+// Barcode Scanner Functions
+let scannerActive = false;
+
+function startScanner() {
+    if (scannerActive) return;
+    
+    const modal = new bootstrap.Modal(document.getElementById('scannerModal'));
+    modal.show();
+    
+    scannerActive = true;
+    
+    Quagga.init({
+        inputStream: {
+            name: "Live",
+            type: "LiveStream",
+            target: document.querySelector('#scanner'),
+            constraints: {
+                width: 640,
+                height: 480,
+                facingMode: "environment"
+            }
+        },
+        decoder: {
+            readers: [
+                "code_128_reader",
+                "ean_reader",
+                "ean_8_reader",
+                "code_39_reader",
+                "code_39_vin_reader",
+                "codabar_reader",
+                "upc_reader",
+                "upc_e_reader",
+                "i2of5_reader",
+                "2of5_reader",
+                "code_93_reader"
+            ]
+        },
+        locate: true,
+        locator: {
+            halfSample: true,
+            patchSize: "medium"
+        }
+    }, function(err) {
+        if (err) {
+            console.error('Scanner initialization error:', err);
+            alert('Camera access denied or not available');
+            stopScanner();
+            return;
+        }
+        Quagga.start();
+    });
+    
+    // Handle successful scan
+    Quagga.onDetected(function(data) {
+        const code = data.codeResult.code;
+        parseAndFillBarcode(code);
+        stopScanner();
+        checkInventory(); // Auto-check inventory after scan
+    });
+}
+
+function stopScanner() {
+    if (!scannerActive) return;
+    
+    scannerActive = false;
+    Quagga.stop();
+    
+    const modal = bootstrap.Modal.getInstance(document.getElementById('scannerModal'));
+    if (modal) {
+        modal.hide();
+    }
+}
+
+// Add scan all button event listener
+document.addEventListener('DOMContentLoaded', function() {
+    const scanAllBtn = document.getElementById('scanAllBtn');
+    if (scanAllBtn) {
+        scanAllBtn.addEventListener('click', startScanner);
+    }
+});
+</script>
+{% endblock %}

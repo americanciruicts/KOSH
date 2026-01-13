@@ -1,0 +1,394 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+    <div class="col-12">
+        <h1 class="h2 mb-2">
+            <i class="bi bi-receipt me-2"></i> PO History Lookup
+        </h1>
+        <p class="mb-0 fs-6">Search and view purchase order history</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Search Section -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-search"></i> Search PO Numbers
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-8">
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text">
+                                <i class="bi bi-receipt-cutoff"></i>
+                            </span>
+                            <input type="text"
+                                   class="form-control"
+                                   id="poSearchInput"
+                                   placeholder="Enter PO Number (e.g., PO-2024-001)"
+                                   autocomplete="off">
+                        </div>
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle"></i> Search by full or partial PO number
+                        </small>
+                    </div>
+                    <div class="col-md-4">
+                        <button class="btn btn-primary btn-lg w-100" onclick="searchPO()">
+                            <i class="bi bi-search"></i> Search
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Advanced Filters (Collapsible) -->
+                <div class="mt-3">
+                    <a class="text-primary" data-bs-toggle="collapse" href="#advancedFilters" role="button" aria-expanded="false">
+                        <i class="bi bi-funnel"></i> Advanced Filters
+                    </a>
+                    <div class="collapse mt-3" id="advancedFilters">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label class="form-label">Job Number</label>
+                                <input type="text" class="form-control" id="filterJob" placeholder="Job number">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Date Range</label>
+                                <input type="date" class="form-control" id="filterDateFrom">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">&nbsp;</label>
+                                <input type="date" class="form-control" id="filterDateTo">
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <button class="btn btn-secondary" onclick="applyFilters()">
+                                <i class="bi bi-funnel-fill"></i> Apply Filters
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="clearFilters()">
+                                <i class="bi bi-x-circle"></i> Clear
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Results Section -->
+<div class="row">
+    <div class="col-12">
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="bi bi-list-ul"></i> PO History Results
+                </h5>
+                <span class="badge bg-secondary" id="resultCount">0 results</span>
+            </div>
+            <div class="card-body">
+                <!-- Loading State -->
+                <div id="loadingState" class="text-center py-5" style="display: none;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="text-muted mt-2">Searching PO history...</p>
+                </div>
+
+                <!-- Empty State -->
+                <div id="emptyState" class="text-center py-5">
+                    <i class="bi bi-inbox display-4 text-muted"></i>
+                    <h5 class="text-muted mt-3">No PO history found</h5>
+                    <p class="text-muted">Enter a PO number above to search</p>
+                </div>
+
+                <!-- Results Table -->
+                <div id="resultsTable" style="display: none;">
+                    <div class="table-responsive">
+                        <table class="table table-hover table-striped">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>PO Number</th>
+                                    <th>Item</th>
+                                    <th>Transaction Type</th>
+                                    <th>Quantity</th>
+                                    <th>Location</th>
+                                    <th>Transaction Date</th>
+                                    <th>PCN</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsBody">
+                                <!-- Results will be inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mt-4">
+    <div class="col-md-3">
+        <div class="card text-center bg-primary text-white">
+            <div class="card-body">
+                <i class="bi bi-receipt display-4"></i>
+                <h4 class="mt-2" id="totalPOs">0</h4>
+                <p class="card-text">Total POs</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-success text-white">
+            <div class="card-body">
+                <i class="bi bi-box-seam display-4"></i>
+                <h4 class="mt-2" id="totalQty">0</h4>
+                <p class="card-text">Total Quantity</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-info text-white">
+            <div class="card-body">
+                <i class="bi bi-briefcase display-4"></i>
+                <h4 class="mt-2" id="uniqueJobs">0</h4>
+                <p class="card-text">Unique Jobs</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-warning text-dark">
+            <div class="card-body">
+                <i class="bi bi-calendar-check display-4"></i>
+                <h4 class="mt-2" id="recentPOs">0</h4>
+                <p class="card-text">Last 30 Days</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let allPOData = [];
+
+// Load all PO history on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadPOHistory();
+
+    // Enable enter key for search
+    document.getElementById('poSearchInput').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            searchPO();
+        }
+    });
+});
+
+function loadPOHistory() {
+    showLoading();
+
+    fetch('/api/po/history?limit=10000')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                allPOData = data.data;
+                displayResults(allPOData);
+                updateStatistics(allPOData);
+            } else {
+                showError('Failed to load PO history');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading PO history:', error);
+            showError('Error loading PO history');
+        });
+}
+
+function searchPO() {
+    const searchTerm = document.getElementById('poSearchInput').value.trim().toUpperCase();
+
+    if (!searchTerm) {
+        displayResults(allPOData);
+        return;
+    }
+
+    showLoading();
+
+    setTimeout(() => {
+        const filtered = allPOData.filter(item =>
+            item.po_number && item.po_number.toUpperCase().includes(searchTerm)
+        );
+
+        displayResults(filtered);
+    }, 300);
+}
+
+function applyFilters() {
+    const jobFilter = document.getElementById('filterJob').value.trim().toUpperCase();
+    const dateFrom = document.getElementById('filterDateFrom').value;
+    const dateTo = document.getElementById('filterDateTo').value;
+
+    let filtered = [...allPOData];
+
+    if (jobFilter) {
+        filtered = filtered.filter(item =>
+            item.item && item.item.toUpperCase().includes(jobFilter)
+        );
+    }
+
+    if (dateFrom) {
+        filtered = filtered.filter(item => {
+            const itemDate = new Date(item.transaction_date);
+            return itemDate >= new Date(dateFrom);
+        });
+    }
+
+    if (dateTo) {
+        filtered = filtered.filter(item => {
+            const itemDate = new Date(item.transaction_date);
+            return itemDate <= new Date(dateTo);
+        });
+    }
+
+    displayResults(filtered);
+}
+
+function clearFilters() {
+    document.getElementById('filterJob').value = '';
+    document.getElementById('filterDateFrom').value = '';
+    document.getElementById('filterDateTo').value = '';
+    document.getElementById('poSearchInput').value = '';
+    displayResults(allPOData);
+}
+
+function displayResults(data) {
+    hideLoading();
+
+    const resultsBody = document.getElementById('resultsBody');
+    const resultsTable = document.getElementById('resultsTable');
+    const emptyState = document.getElementById('emptyState');
+    const resultCount = document.getElementById('resultCount');
+
+    if (!data || data.length === 0) {
+        resultsTable.style.display = 'none';
+        emptyState.style.display = 'block';
+        resultCount.textContent = '0 results';
+        return;
+    }
+
+    resultsTable.style.display = 'block';
+    emptyState.style.display = 'none';
+    resultCount.textContent = `${data.length} result${data.length !== 1 ? 's' : ''}`;
+
+    // Sort by date (newest first)
+    data.sort((a, b) => {
+        const dateA = a.transaction_date ? new Date(a.transaction_date) : new Date(0);
+        const dateB = b.transaction_date ? new Date(b.transaction_date) : new Date(0);
+        return dateB - dateA;
+    });
+
+    resultsBody.innerHTML = data.map(item => {
+        const transDate = item.transaction_date ? new Date(item.transaction_date).toLocaleDateString() : 'N/A';
+        const transType = item.transaction_type || 'N/A';
+        const typeBadge = getTransactionBadge(transType);
+
+        return `
+            <tr>
+                <td>
+                    <strong><code>${item.po_number || 'N/A'}</code></strong>
+                </td>
+                <td><strong>${item.item || 'N/A'}</strong></td>
+                <td>
+                    <span class="badge ${typeBadge}">${transType}</span>
+                </td>
+                <td><strong>${item.quantity ? item.quantity.toLocaleString() : '0'}</strong> units</td>
+                <td><code>${item.location_to || item.location_from || 'N/A'}</code></td>
+                <td>${transDate}</td>
+                <td>
+                    <span class="badge ${item.pcn ? 'bg-success' : 'bg-secondary'}">
+                        ${item.pcn ? 'PCN: ' + item.pcn : 'No PCN'}
+                    </span>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary" onclick="viewDetails('${item.id}')">
+                        <i class="bi bi-eye"></i> View
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function getTransactionBadge(transType) {
+    if (transType.includes('Receipt')) return 'bg-success';
+    if (transType.includes('PCN')) return 'bg-primary';
+    if (transType.includes('INDF')) return 'bg-info';
+    if (transType.includes('VEND')) return 'bg-warning text-dark';
+    return 'bg-secondary';
+}
+
+function updateStatistics(data) {
+    const uniquePOs = [...new Set(data.map(item => item.po_number))].length;
+    const totalQty = data.reduce((sum, item) => sum + (item.quantity || 0), 0);
+    const uniqueJobs = [...new Set(data.map(item => item.item).filter(Boolean))].length;
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const recentPOs = data.filter(item => {
+        if (!item.transaction_date) return false;
+        return new Date(item.transaction_date) >= thirtyDaysAgo;
+    }).length;
+
+    document.getElementById('totalPOs').textContent = uniquePOs.toLocaleString();
+    document.getElementById('totalQty').textContent = totalQty.toLocaleString();
+    document.getElementById('uniqueJobs').textContent = uniqueJobs.toLocaleString();
+    document.getElementById('recentPOs').textContent = recentPOs.toLocaleString();
+}
+
+function viewDetails(itemId) {
+    const item = allPOData.find(i => i.id == itemId);
+    if (item) {
+        const details = [
+            `PO Number: ${item.po_number || 'N/A'}`,
+            `Item: ${item.item || 'N/A'}`,
+            `PCN: ${item.pcn || 'N/A'}`,
+            `MPN: ${item.mpn || 'N/A'}`,
+            `Date Code: ${item.date_code || 'N/A'}`,
+            `Quantity: ${item.quantity || 0}`,
+            `Transaction Type: ${item.transaction_type || 'N/A'}`,
+            `Transaction Date: ${item.transaction_date ? new Date(item.transaction_date).toLocaleString() : 'N/A'}`,
+            `Location From: ${item.location_from || 'N/A'}`,
+            `Location To: ${item.location_to || 'N/A'}`,
+            `User: ${item.user_id || 'N/A'}`
+        ];
+        alert('PO Details:\n\n' + details.join('\n'));
+    }
+}
+
+function showLoading() {
+    document.getElementById('loadingState').style.display = 'block';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('resultsTable').style.display = 'none';
+}
+
+function hideLoading() {
+    document.getElementById('loadingState').style.display = 'none';
+}
+
+function showError(message) {
+    hideLoading();
+    document.getElementById('emptyState').style.display = 'block';
+    document.getElementById('emptyState').innerHTML = `
+        <i class="bi bi-exclamation-triangle display-4 text-warning"></i>
+        <h5 class="text-warning mt-3">${message}</h5>
+        <p class="text-muted">Please try again later</p>
+    `;
+}
+</script>
+{% endblock %}

@@ -1,0 +1,881 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="professional-header mb-5">
+    <div class="d-flex justify-content-between align-items-start">
+        <div>
+            <div class="d-flex align-items-center gap-3 mb-2">
+                <div class="header-logo">
+                    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Cg transform='translate(40,40)'%3E%3Crect x='-9' y='-35' width='18' height='70' rx='2' fill='%233b82f6'/%3E%3Cpolygon points='9,-30 39,-35 34,-15 9,-10' fill='%2306b6d4'/%3E%3Cpolygon points='9,10 34,15 39,35 9,30' fill='%2306b6d4'/%3E%3C/g%3E%3C/svg%3E"
+                         alt="Kosh Inventory" style="width: 60px; height: 60px;">
+                </div>
+                <div>
+                    <h1 class="mb-1" style="font-size: 2rem; font-weight: 600; color: var(--text-primary);">KOSH Dashboard</h1>
+                    <p class="text-muted mb-0" style="font-size: 0.95rem;">Real-time inventory monitoring and analytics</p>
+                </div>
+            </div>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('stock') }}" class="btn btn-primary btn-lg shadow-sm">
+                <i class="bi bi-plus-circle me-1"></i> Add Stock
+            </a>
+            <a href="{{ url_for('pick') }}" class="btn btn-outline-primary btn-lg">
+                <i class="bi bi-dash-circle me-1"></i> Pick Parts
+            </a>
+        </div>
+    </div>
+</div>
+
+<style>
+.professional-header {
+    padding-bottom: 2rem;
+    margin-bottom: 2rem;
+    border-bottom: 2px solid var(--border-color);
+    animation: fadeIn 0.5s ease-out;
+}
+
+.header-icon {
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, var(--brand-primary), var(--card-accent-2));
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 1.75rem;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+}
+
+.header-logo {
+    filter: drop-shadow(0 4px 8px rgba(30, 58, 138, 0.3));
+}
+
+.header-logo img {
+    border-radius: 12px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Statistics Cards - Enhanced Professional Design -->
+<div class="row g-4 mb-5 fade-in">
+    <div class="col-md-6 col-lg-3">
+        <div class="stat-card stat-card-hover">
+            <div class="stat-card-body">
+                <div class="stat-icon stat-icon-blue">
+                    <i class="bi bi-briefcase"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-label">Total Jobs</div>
+                    <div class="stat-value">{{ stats.total_jobs }}</div>
+                    <div class="stat-trend">
+                        <i class="bi bi-graph-up"></i> Active projects
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card-glow"></div>
+        </div>
+    </div>
+
+    <div class="col-md-6 col-lg-3">
+        <div class="stat-card stat-card-hover">
+            <div class="stat-card-body">
+                <div class="stat-icon stat-icon-cyan">
+                    <i class="bi bi-box-seam"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-label">Total Quantity</div>
+                    <div class="stat-value">{{ '{:,}'.format(stats.total_quantity) }}</div>
+                    <div class="stat-trend">
+                        <i class="bi bi-layers"></i> PCBs in stock
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card-glow"></div>
+        </div>
+    </div>
+
+    <div class="col-md-6 col-lg-3">
+        <div class="stat-card stat-card-hover">
+            <div class="stat-card-body">
+                <div class="stat-icon stat-icon-indigo">
+                    <i class="bi bi-list-check"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-label">Inventory Items</div>
+                    <div class="stat-value">{{ stats.total_items }}</div>
+                    <div class="stat-trend">
+                        <i class="bi bi-tag"></i> Unique entries
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card-glow"></div>
+        </div>
+    </div>
+
+    <div class="col-md-6 col-lg-3">
+        <div class="stat-card stat-card-hover {% if stats.low_stock_count > 0 %}stat-card-alert{% endif %}">
+            <div class="stat-card-body">
+                <div class="stat-icon {% if stats.low_stock_count > 0 %}stat-icon-danger{% else %}stat-icon-success{% endif %}">
+                    <i class="bi bi-{% if stats.low_stock_count > 0 %}exclamation-triangle{% else %}check-circle{% endif %}"></i>
+                </div>
+                <div class="stat-content">
+                    <div class="stat-label">Stock Alerts</div>
+                    <div class="stat-value {% if stats.low_stock_count > 0 %}text-danger{% endif %}">{{ stats.low_stock_count }}</div>
+                    <div class="stat-trend">
+                        <i class="bi bi-info-circle"></i> Below {{ low_stock_threshold }} units
+                    </div>
+                </div>
+            </div>
+            <div class="stat-card-glow"></div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Fade-in animation */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.6s ease-out;
+    animation-fill-mode: both;
+}
+
+/* Staggered animations for stat cards */
+.fade-in > .col-md-6:nth-child(1) .stat-card,
+.fade-in > .col-lg-3:nth-child(1) .stat-card {
+    animation: fadeIn 0.6s ease-out 0.05s both;
+}
+
+.fade-in > .col-md-6:nth-child(2) .stat-card,
+.fade-in > .col-lg-3:nth-child(2) .stat-card {
+    animation: fadeIn 0.6s ease-out 0.1s both;
+}
+
+.fade-in > .col-md-6:nth-child(3) .stat-card,
+.fade-in > .col-lg-3:nth-child(3) .stat-card {
+    animation: fadeIn 0.6s ease-out 0.15s both;
+}
+
+.fade-in > .col-md-6:nth-child(4) .stat-card,
+.fade-in > .col-lg-3:nth-child(4) .stat-card {
+    animation: fadeIn 0.6s ease-out 0.2s both;
+}
+
+.stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    height: 100%;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
+    position: relative;
+}
+
+.stat-card-hover:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 16px 32px rgba(37, 99, 235, 0.15), 0 4px 12px rgba(37, 99, 235, 0.08);
+    border-color: var(--brand-primary);
+}
+
+.stat-card-glow {
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    opacity: 0;
+    background: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.15), transparent 70%);
+    transition: opacity 0.35s ease;
+    pointer-events: none;
+}
+
+.stat-card-hover:hover .stat-card-glow {
+    opacity: 1;
+}
+
+.stat-card-alert {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.02), rgba(239, 68, 68, 0.05));
+}
+
+.stat-card-body {
+    padding: 1.75rem;
+    display: flex;
+    gap: 1.25rem;
+    align-items: flex-start;
+}
+
+.stat-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.stat-card-hover:hover .stat-icon {
+    transform: scale(1.05) rotate(-5deg);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+}
+
+.stat-icon-blue {
+    background: linear-gradient(135deg, #2563eb, #3b82f6);
+    color: white;
+}
+
+.stat-icon-cyan {
+    background: linear-gradient(135deg, #0ea5e9, #06b6d4);
+    color: white;
+}
+
+.stat-icon-indigo {
+    background: linear-gradient(135deg, #4f46e5, #6366f1);
+    color: white;
+}
+
+.stat-icon-success {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+}
+
+.stat-icon-danger {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: white;
+}
+
+.stat-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.stat-label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 0.5rem;
+}
+
+.stat-value {
+    font-size: 2.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+    margin-bottom: 0.5rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.5px;
+}
+
+.stat-trend {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.stat-trend i {
+    font-size: 0.875rem;
+}
+
+/* Modern Card Styles */
+.modern-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    height: 100%;
+    transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.modern-card:hover {
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+    border-color: var(--brand-primary);
+}
+
+.modern-card-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-secondary);
+}
+
+.modern-card-header h5 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.modern-card-body {
+    padding: 1.5rem;
+}
+
+.modern-card-footer {
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.875rem;
+}
+
+/* Modern Table Styles */
+.modern-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.modern-table thead th {
+    padding: 1rem 1.5rem;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid var(--border-color);
+}
+
+.modern-table tbody tr {
+    transition: background-color 0.2s ease;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modern-table tbody tr:last-child {
+    border-bottom: none;
+}
+
+.modern-table tbody tr:hover {
+    background-color: var(--table-hover);
+}
+
+.modern-table tbody td {
+    padding: 1rem 1.5rem;
+    color: var(--text-primary);
+}
+
+/* PCB Badge Styles */
+.pcb-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+}
+
+.pcb-badge-bare {
+    background: rgba(100, 116, 139, 0.1);
+    color: #64748b;
+}
+
+.pcb-badge-partial {
+    background: rgba(251, 191, 36, 0.1);
+    color: #f59e0b;
+}
+
+.pcb-badge-completed {
+    background: rgba(14, 165, 233, 0.1);
+    color: #0ea5e9;
+}
+
+.location-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-family: 'Monaco', 'Courier New', monospace;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.badge-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    padding: 0.25rem 0.5rem;
+    background: var(--brand-primary-light);
+    color: var(--brand-primary);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.qty-value {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Empty State */
+.empty-state {
+    padding: 4rem 2rem;
+    text-align: center;
+}
+
+.empty-state-icon {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto 1.5rem;
+    background: linear-gradient(135deg, var(--bg-secondary), var(--border-color));
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+    color: var(--text-secondary);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.empty-state-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+}
+
+.empty-state-text {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+/* Activity Timeline */
+.activity-timeline {
+    padding: 0.5rem 0;
+}
+
+.activity-item {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    transition: background-color 0.2s ease;
+}
+
+.activity-item:last-child {
+    border-bottom: none;
+}
+
+.activity-item:hover {
+    background-color: var(--table-hover);
+}
+
+.activity-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.activity-badge-stock {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+}
+
+.activity-badge-pick {
+    background: rgba(37, 99, 235, 0.1);
+    color: #2563eb;
+}
+
+.activity-meta {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.375rem;
+}
+
+/* Low stock card enhancements */
+.low-stock-card {
+    border-color: rgba(245, 158, 11, 0.3);
+}
+
+/* Pulse animation for critical alerts */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+.badge.bg-danger {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Smooth scroll behavior */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Improve badge styles */
+.badge {
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+/* Enhanced progress bars */
+.progress {
+    background-color: rgba(0, 0, 0, 0.05);
+    border-radius: 8px;
+}
+
+.progress-bar {
+    border-radius: 8px;
+    transition: width 0.6s ease;
+}
+
+/* Enhanced button styles */
+.btn {
+    transition: all 0.3s ease;
+    font-weight: 500;
+}
+
+.btn-primary {
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+}
+
+.btn-outline-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+}
+
+.btn-lg {
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+}
+
+/* Improved table row hover */
+.modern-table tbody tr {
+    transition: all 0.2s ease;
+}
+
+.modern-table tbody tr:hover {
+    background-color: var(--table-hover);
+    transform: scale(1.005);
+}
+</style>
+
+<div class="row g-4 mb-4">
+    <!-- Inventory Summary -->
+    <div class="col-lg-8">
+        <div class="modern-card fade-in" style="animation-delay: 0.1s;">
+            <div class="modern-card-header">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-grid-3x3-gap text-primary"></i>
+                    <h5 class="mb-0">Inventory Overview</h5>
+                </div>
+                <a href="{{ url_for('inventory') }}" class="btn btn-sm btn-outline-primary">
+                    View All <i class="bi bi-arrow-right ms-1"></i>
+                </a>
+            </div>
+            <div class="modern-card-body p-0">
+                {% if summary %}
+                    <div class="table-responsive">
+                        <table class="modern-table">
+                            <thead>
+                                <tr>
+                                    <th>PCB Type</th>
+                                    <th>Location</th>
+                                    <th class="text-center">Jobs</th>
+                                    <th class="text-end">Total Qty</th>
+                                    <th class="text-end">Avg/Job</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in summary[:8] %}
+                                <tr>
+                                    <td>
+                                        <span class="pcb-badge pcb-badge-{{ item.pcb_type|lower }}">
+                                            <i class="bi bi-cpu"></i>
+                                            {{ item.pcb_type }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="location-tag">
+                                            <i class="bi bi-geo-alt"></i>
+                                            {{ item.location }}
+                                        </span>
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="badge-count">{{ item.job_count }}</span>
+                                    </td>
+                                    <td class="text-end">
+                                        <strong class="qty-value">{{ '{:,}'.format(item.total_qty) }}</strong>
+                                    </td>
+                                    <td class="text-end text-muted">
+                                        {{ '{:.0f}'.format(item.avg_qty) }}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% if summary|length > 8 %}
+                    <div class="modern-card-footer">
+                        <span class="text-muted">Showing 8 of {{ summary|length }} locations</span>
+                        <a href="{{ url_for('inventory') }}" class="text-primary">View complete inventory →</a>
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <div class="empty-state">
+                        <div class="empty-state-icon">
+                            <i class="bi bi-inbox"></i>
+                        </div>
+                        <h6 class="empty-state-title">No Inventory Data</h6>
+                        <p class="empty-state-text">Start by adding your first PCB to the inventory</p>
+                        <a href="{{ url_for('stock') }}" class="btn btn-primary">
+                            <i class="bi bi-plus-circle me-1"></i> Add First Item
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="col-lg-4">
+        <div class="modern-card fade-in" style="animation-delay: 0.2s;">
+            <div class="modern-card-header">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-clock-history text-primary"></i>
+                    <h5 class="mb-0">Recent Activity</h5>
+                </div>
+                <a href="{{ url_for('reports') }}" class="btn btn-sm btn-outline-primary">
+                    View All <i class="bi bi-arrow-right ms-1"></i>
+                </a>
+            </div>
+            <div class="modern-card-body p-0" style="max-height: 500px; overflow-y: auto;">
+                {% if recent_activity %}
+                    <div class="activity-timeline">
+                        {% for activity in recent_activity[:10] %}
+                        <div class="activity-item">
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="activity-badge activity-badge-{{ activity.operation|lower }}">
+                                        <i class="bi bi-{% if activity.operation == 'STOCK' %}plus{% else %}dash{% endif %}-circle"></i>
+                                        {{ activity.operation }}
+                                    </span>
+                                    <strong style="font-size: 0.9375rem;">{{ activity.quantity_change|abs }} units</strong>
+                                </div>
+                                <span class="badge-count">{{ activity.new_quantity }}</span>
+                            </div>
+                            <div class="activity-meta">
+                                <span><i class="bi bi-briefcase"></i> Job {{ activity.job }}</span>
+                                <span>•</span>
+                                <span><i class="bi bi-cpu"></i> {{ activity.pcb_type }}</span>
+                            </div>
+                            <div class="activity-meta">
+                                <i class="bi bi-clock"></i>
+                                <span>{{ activity.timestamp | moment_fromnow }}</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty-state" style="padding: 3rem 2rem;">
+                        <i class="bi bi-clock display-6 text-muted"></i>
+                        <p class="text-muted mt-2 mb-0">No recent activity</p>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Low Stock Warnings -->
+{% if low_stock_items %}
+<div class="row mt-5 fade-in" style="animation-delay: 0.3s;">
+    <div class="col-12">
+        <div class="modern-card low-stock-card">
+            <div class="modern-card-header" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.05), rgba(245, 158, 11, 0.02)); border-bottom-color: rgba(245, 158, 11, 0.2);">
+                <div class="d-flex justify-content-between align-items-center w-100">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-exclamation-triangle-fill text-warning" style="font-size: 1.25rem;"></i>
+                        <h5 class="mb-0" style="color: var(--status-warning);">Low Stock Alerts</h5>
+                    </div>
+                    <span class="badge" style="background: var(--status-warning); color: white; padding: 0.5rem 1rem; font-size: 0.875rem;">
+                        {{ low_stock_items|length }} items below {{ low_stock_threshold }} units
+                    </span>
+                </div>
+            </div>
+            <div class="modern-card-body p-0">
+                <div class="table-responsive">
+                    <table class="modern-table">
+                        <thead>
+                            <tr>
+                                <th width="8%">Status</th>
+                                <th width="25%">Job Number</th>
+                                <th width="20%">PCB Type</th>
+                                <th width="17%">Current Stock</th>
+                                <th width="30%">Stock Level</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in low_stock_items[:8] %}
+                            <tr>
+                                <td class="text-center">
+                                    {% if item.qty < 5 %}
+                                    <span class="badge bg-danger">Critical</span>
+                                    {% elif item.qty < 8 %}
+                                    <span class="badge bg-warning text-dark">Low</span>
+                                    {% else %}
+                                    <span class="badge bg-info">Monitor</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <strong>{{ item.job }}</strong>
+                                    {% if item.trend == 'down' %}
+                                    <i class="bi bi-arrow-down-circle-fill text-danger ms-1" title="Decreasing"></i>
+                                    {% elif item.trend == 'up' %}
+                                    <i class="bi bi-arrow-up-circle-fill text-success ms-1" title="Increasing"></i>
+                                    {% else %}
+                                    <i class="bi bi-dash-circle text-muted ms-1" title="Stable"></i>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge bg-secondary">{{ item.pcb_type }}</span>
+                                </td>
+                                <td>
+                                    <h5 class="mb-0 {% if item.qty < 5 %}text-danger{% elif item.qty < 8 %}text-warning{% else %}text-info{% endif %}">
+                                        {{ item.qty }}
+                                    </h5>
+                                    <small class="text-muted">units</small>
+                                </td>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <div class="progress flex-grow-1 me-2" style="height: 20px;">
+                                            <div class="progress-bar {% if item.qty < 5 %}bg-danger{% elif item.qty < 8 %}bg-warning{% else %}bg-info{% endif %}"
+                                                 role="progressbar"
+                                                 style="width: {{ (item.qty / low_stock_threshold * 100)|round }}%">
+                                                {{ (item.qty / low_stock_threshold * 100)|round }}%
+                                            </div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% if low_stock_items|length > 8 %}
+            <div class="modern-card-footer">
+                <span class="text-muted">Showing 8 of {{ low_stock_items|length }} low stock items</span>
+                <a href="{{ url_for('inventory') }}" class="btn btn-sm btn-outline-warning">
+                    <i class="bi bi-eye me-1"></i> View All Low Stock Items
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// PCB Type Distribution Chart
+document.addEventListener('DOMContentLoaded', function() {
+    const pcbTypeData = {{ pcb_type_data | tojson | safe }};
+
+    const labels = Object.keys(pcbTypeData);
+    const data = Object.values(pcbTypeData);
+
+    // Color mapping for PCB types
+    const colorMap = {
+        'Bare': 'rgb(108, 117, 125)',      // Secondary/Gray
+        'Partial': 'rgb(255, 193, 7)',     // Warning/Yellow
+        'Completed': 'rgb(13, 202, 240)',  // Info/Cyan
+        'Ready to Ship': 'rgb(25, 135, 84)' // Success/Green
+    };
+
+    const backgroundColors = labels.map(label => colorMap[label] || 'rgb(75, 192, 192)');
+
+    const ctx = document.getElementById('pcbTypeChart');
+    if (ctx) {
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'PCB Quantity',
+                    data: data,
+                    backgroundColor: backgroundColors,
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            font: {
+                                size: 12
+                            }
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.parsed || 0;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = ((value / total) * 100).toFixed(1);
+                                return label + ': ' + value.toLocaleString() + ' units (' + percentage + '%)';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+});
+
+// Auto-refresh removed per user request
+
+// Add tooltips to elements
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+
+{% block title %}BOM Loader - Stock and Pick{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2 class="mb-0">
+                <i class="bi bi-upload"></i> BOM Loader
+            </h2>
+            <p class="text-muted">Upload Excel or CSV files to add or update Bill of Materials</p>
+        </div>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-file-earmark-arrow-up"></i> Upload BOM File</h5>
+                </div>
+                <div class="card-body">
+                    <!-- Upload Instructions -->
+                    <div class="alert alert-info mb-3">
+                        <h6 class="alert-heading"><i class="bi bi-info-circle"></i> File Format Requirements</h6>
+                        <ul class="mb-0 small">
+                            <li><strong>Supported formats:</strong> Excel (.xlsx, .xls) or CSV (.csv)</li>
+                            <li><strong>Required columns:</strong> Job, Line, Description, MPN, Qty, Cost</li>
+                            <li><strong>Optional columns:</strong> Manufacturer, ACI_PN, Location, POU, Job_Rev, Customer, Cust_PN</li>
+                            <li><strong>First row:</strong> Must contain column headers (case-insensitive)</li>
+                        </ul>
+                    </div>
+
+                    <!-- Upload Form -->
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                        <div class="mb-3">
+                            <label for="bomFile" class="form-label">Select BOM File</label>
+                            <input type="file" class="form-control" id="bomFile" name="bomFile"
+                                   accept=".xlsx,.xls,.csv" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Upload Mode</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="uploadMode"
+                                       id="modeReplace" value="replace" checked>
+                                <label class="form-check-label" for="modeReplace">
+                                    <strong>Replace:</strong> Delete existing BOM for job(s) and insert new data
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="uploadMode"
+                                       id="modeAppend" value="append">
+                                <label class="form-check-label" for="modeAppend">
+                                    <strong>Append:</strong> Add new records without deleting existing ones
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="uploadMode"
+                                       id="modeUpdate" value="update">
+                                <label class="form-check-label" for="modeUpdate">
+                                    <strong>Update:</strong> Update existing records by Job+Line, insert if not exists
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg" id="uploadBtn">
+                                <i class="bi bi-cloud-upload"></i> Upload and Process
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Status -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0"><i class="bi bi-clock-history"></i> Upload Status</h5>
+                </div>
+                <div class="card-body" id="statusCard">
+                    <p class="text-muted text-center py-4">
+                        <i class="bi bi-upload" style="font-size: 3rem;"></i><br>
+                        No file uploaded yet
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview Section (Hidden by default) -->
+    <div class="row mb-4" id="previewSection" style="display: none;">
+        <div class="col">
+            <div class="card shadow-sm">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-eye"></i> Upload Results</h5>
+                </div>
+                <div class="card-body">
+                    <!-- Summary Cards -->
+                    <div class="row mb-3" id="summaryCards">
+                        <div class="col-md-3">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h6 class="text-muted mb-1">Records Processed</h6>
+                                    <h3 class="mb-0" id="recordsProcessed">0</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-success text-white">
+                                <div class="card-body text-center">
+                                    <h6 class="mb-1">Successful</h6>
+                                    <h3 class="mb-0" id="recordsSuccess">0</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-danger text-white">
+                                <div class="card-body text-center">
+                                    <h6 class="mb-1">Errors</h6>
+                                    <h3 class="mb-0" id="recordsErrors">0</h3>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card bg-info text-white">
+                                <div class="card-body text-center">
+                                    <h6 class="mb-1">Jobs Updated</h6>
+                                    <h3 class="mb-0" id="jobsUpdated">0</h3>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Error Details (if any) -->
+                    <div id="errorDetails" style="display: none;">
+                        <h6 class="text-danger"><i class="bi bi-exclamation-triangle"></i> Errors Encountered</h6>
+                        <div class="alert alert-danger">
+                            <ul id="errorList" class="mb-0"></ul>
+                        </div>
+                    </div>
+
+                    <!-- Success Message -->
+                    <div id="successMessage" style="display: none;">
+                        <div class="alert alert-success">
+                            <i class="bi bi-check-circle"></i> <strong>Upload completed successfully!</strong>
+                            All BOM records have been processed and saved to the database.
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Example Format Section -->
+    <div class="row">
+        <div class="col">
+            <div class="card shadow-sm">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-question-circle"></i> Example File Format</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted mb-2">Your Excel or CSV file should have headers like this:</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Job</th>
+                                    <th>Line</th>
+                                    <th>Description</th>
+                                    <th>Manufacturer</th>
+                                    <th>MPN</th>
+                                    <th>ACI_PN</th>
+                                    <th>Qty</th>
+                                    <th>POU</th>
+                                    <th>Location</th>
+                                    <th>Cost</th>
+                                    <th>Customer</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>7651</td>
+                                    <td>1</td>
+                                    <td>Cap. SMD 0603 100nF 50V X7R 10%</td>
+                                    <td>Yageo</td>
+                                    <td>CC0603KRX7R9BB104</td>
+                                    <td></td>
+                                    <td>10</td>
+                                    <td>EA</td>
+                                    <td>C1, C5, C19</td>
+                                    <td>0.007</td>
+                                    <td>ABC Corp</td>
+                                </tr>
+                                <tr>
+                                    <td>7651</td>
+                                    <td>2</td>
+                                    <td>Cap. SMD 1206 4.7uF 50V X7R 20%</td>
+                                    <td>TDK</td>
+                                    <td>C3216X7R1H475M160AE</td>
+                                    <td></td>
+                                    <td>1</td>
+                                    <td>EA</td>
+                                    <td>C2</td>
+                                    <td>0.318</td>
+                                    <td>ABC Corp</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        <strong>Note:</strong> Column names are case-insensitive. Common variations are accepted
+                        (e.g., "Desc", "Description", "Part Description" all work).
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadForm = document.getElementById('uploadForm');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const statusCard = document.getElementById('statusCard');
+    const previewSection = document.getElementById('previewSection');
+
+    uploadForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        const fileInput = document.getElementById('bomFile');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            alert('Please select a file to upload');
+            return;
+        }
+
+        // Get upload mode
+        const uploadMode = document.querySelector('input[name="uploadMode"]:checked').value;
+
+        // Show loading state
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+
+        statusCard.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="text-muted">Uploading and processing file...<br>
+                <small>This may take a minute for large files</small></p>
+            </div>
+        `;
+
+        try {
+            // Create FormData
+            const formData = new FormData();
+            formData.append('bomFile', file);
+            formData.append('uploadMode', uploadMode);
+            formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+
+            // Upload file
+            const response = await fetch('/api/bom/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                // Show success status
+                statusCard.innerHTML = `
+                    <div class="text-center py-3">
+                        <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                        <h5 class="text-success mt-2">Upload Successful!</h5>
+                        <p class="text-muted mb-0">${result.recordsProcessed} records processed</p>
+                    </div>
+                `;
+
+                // Update summary cards
+                document.getElementById('recordsProcessed').textContent = result.recordsProcessed || 0;
+                document.getElementById('recordsSuccess').textContent = result.recordsSuccess || 0;
+                document.getElementById('recordsErrors').textContent = result.errors?.length || 0;
+                document.getElementById('jobsUpdated').textContent = result.jobsUpdated || 0;
+
+                // Show results section
+                previewSection.style.display = 'block';
+
+                // Show success message or errors
+                if (result.errors && result.errors.length > 0) {
+                    document.getElementById('errorDetails').style.display = 'block';
+                    document.getElementById('successMessage').style.display = 'none';
+
+                    const errorList = document.getElementById('errorList');
+                    errorList.innerHTML = '';
+                    result.errors.forEach(error => {
+                        const li = document.createElement('li');
+                        li.textContent = error;
+                        errorList.appendChild(li);
+                    });
+                } else {
+                    document.getElementById('errorDetails').style.display = 'none';
+                    document.getElementById('successMessage').style.display = 'block';
+                }
+
+                // Scroll to results
+                previewSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+            } else {
+                // Show error
+                statusCard.innerHTML = `
+                    <div class="alert alert-danger mb-0">
+                        <i class="bi bi-exclamation-triangle"></i> <strong>Upload Failed</strong><br>
+                        ${result.error || 'Unknown error occurred'}
+                    </div>
+                `;
+            }
+
+        } catch (error) {
+            console.error('Upload error:', error);
+            statusCard.innerHTML = `
+                <div class="alert alert-danger mb-0">
+                    <i class="bi bi-exclamation-triangle"></i> <strong>Upload Failed</strong><br>
+                    ${error.message}
+                </div>
+            `;
+        } finally {
+            // Reset button
+            uploadBtn.disabled = false;
+            uploadBtn.innerHTML = '<i class="bi bi-cloud-upload"></i> Upload and Process';
+        }
+    });
+});
+</script>
+
+<style>
+.card {
+    transition: transform 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+}
+
+.form-check-label {
+    cursor: pointer;
+}
+
+#previewSection {
+    animation: fadeIn 0.5s;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+</style>
+{% endblock %}

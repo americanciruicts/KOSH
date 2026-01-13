@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="row align-items-center mb-4 p-3 rounded-3 shadow-lg" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);">
+    <div class="col-12">
+        <h1 class="h3 mb-0 text-white fw-bold">
+            <i class="bi bi-clock-history me-2"></i> Transaction History
+        </h1>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- PCN Search -->
+<div class="card border-0 shadow-lg mb-4 rounded-4">
+    <div class="card-body p-4" style="background: linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%);">
+        <form method="get" action="{{ url_for('pcn_history') }}" class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label for="pcn" class="form-label fw-bold text-dark mb-2" style="font-size: 1.1rem;">
+                    <i class="bi bi-upc-scan me-1 text-primary"></i> PCN Number
+                </label>
+                <input type="number" class="form-control form-control-lg border-2 shadow-sm" id="pcn" name="pcn"
+                       value="{{ search_pcn }}" placeholder="Enter PCN to view history" autofocus
+                       style="font-size: 1.2rem; font-weight: 600; border-radius: 0.5rem; transition: all 0.3s;">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary btn-lg w-100 shadow-sm"
+                        style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); border: none; border-radius: 0.5rem; transition: transform 0.2s;">
+                    <i class="bi bi-search me-1"></i> Search
+                </button>
+            </div>
+        </form>
+
+        {% if pcn_info %}
+        <div class="mt-4 pt-4 border-top">
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="alert alert-info mb-0 shadow-sm" role="alert" style="background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); border: 2px solid #3b82f6; border-radius: 0.75rem;">
+                        <div class="d-flex align-items-center">
+                            <i class="bi bi-info-circle-fill me-3" style="font-size: 1.5rem; color: #1e40af;"></i>
+                            <div>
+                                <small class="text-muted d-block mb-1">DESCRIPTION</small>
+                                <strong style="font-size: 1.2rem; color: #1e40af;">{{ pcn_info.item }} - {{ pcn_info.mpn or 'N/A' }}</strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Results Section -->
+{% if transactions %}
+<div class="card border-0 shadow-lg rounded-4">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" style="font-size: 0.95rem;">
+                <thead style="background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%); color: white;">
+                    <tr>
+                        <th class="py-3 px-3" style="border: none;">Tran Time</th>
+                        <th class="py-3 px-3" style="border: none;">Tran</th>
+                        <th class="py-3 px-3" style="border: none;">Item</th>
+                        <th class="py-3 px-3" style="border: none;">MPN</th>
+                        <th class="py-3 px-3 text-center" style="border: none;">Tran Qty</th>
+                        <th class="py-3 px-3" style="border: none;">Loc From</th>
+                        <th class="py-3 px-3" style="border: none;">Loc To</th>
+                        <th class="py-3 px-3" style="border: none;">WO</th>
+                        <th class="py-3 px-3" style="border: none;">PO</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for txn in transactions %}
+                    <tr style="{% if loop.index % 2 == 0 %}background: #f8fafc;{% endif %} transition: all 0.2s;">
+                        <td class="py-3 px-3">
+                            {% if txn.tran_time %}
+                                <i class="bi bi-calendar3 me-1 text-muted"></i>{{ txn.tran_time }}
+                            {% else %}
+                                <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-3 px-3">
+                            <span class="badge shadow-sm {% if txn.trantype == 'STOCK' %}bg-success{% elif txn.trantype == 'PICK' %}bg-warning text-dark{% elif txn.trantype == 'RESTOCK' %}bg-info{% else %}bg-secondary{% endif %}"
+                                  style="font-size: 0.85rem; min-width: 70px; padding: 0.5rem 0.75rem; border-radius: 0.5rem;">
+                                {{ txn.trantype or 'N/A' }}
+                            </span>
+                        </td>
+                        <td class="py-3 px-3"><strong>{{ txn.item or '-' }}</strong></td>
+                        <td class="py-3 px-3"><code style="background: #f1f5f9; padding: 0.25rem 0.5rem; border-radius: 0.25rem;">{{ txn.mpn or '-' }}</code></td>
+                        <td class="py-3 px-3 text-center">
+                            <span class="badge bg-light text-dark border shadow-sm" style="font-size: 1rem; padding: 0.5rem 1rem;">{{ txn.tranqty or 0 }}</span>
+                        </td>
+                        <td class="py-3 px-3">{{ txn.loc_from or '-' }}</td>
+                        <td class="py-3 px-3">{{ txn.loc_to or '-' }}</td>
+                        <td class="py-3 px-3">{{ txn.wo or '-' }}</td>
+                        <td class="py-3 px-3">{{ txn.po or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% elif search_pcn %}
+<div class="card border-0 shadow-lg rounded-4">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-inbox" style="font-size: 3.5rem; color: #cbd5e1;"></i>
+        <p class="text-muted mt-3 mb-0" style="font-size: 1.1rem;">No transaction history found for PCN {{ search_pcn }}</p>
+    </div>
+</div>
+{% endif %}
+
+<style>
+.table-responsive {
+    max-height: 70vh;
+    overflow-y: auto;
+    border-radius: 0 0 1rem 1rem;
+}
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.table tbody tr:hover {
+    background-color: #dbeafe !important;
+    transform: scale(1.005);
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+}
+
+.form-control:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 0.25rem rgba(59, 130, 246, 0.15);
+    transform: scale(1.02);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.badge {
+    transition: all 0.2s;
+}
+
+.badge:hover {
+    transform: scale(1.05);
+}
+</style>
+{% endblock %}
