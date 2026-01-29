@@ -30,10 +30,10 @@
                     <div>
                         <h5 class="alert-heading mb-2">Restock Workflow</h5>
                         <p class="mb-1"><strong>Step 1:</strong> Parts are picked from Receiving Area → moved to MFG Floor</p>
-                        <p class="mb-1"><strong>Step 2:</strong> After job completion, restock moves parts from MFG Floor → Count Area</p>
-                        <p class="mb-0"><strong>Step 3:</strong> Parts can then be moved from Count Area to final storage location</p>
+                        <p class="mb-1"><strong>Step 2:</strong> After job completion, restock moves parts from MFG Floor → Specified Location</p>
+                        <p class="mb-0"><strong>Step 3:</strong> Default location is "Count Area" but you can specify any location</p>
                         <small class="text-muted d-block mt-2">
-                            <i class="bi bi-shield-check"></i> MFG Qty will decrease | On Hand Qty will increase | Location set to "Count Area"
+                            <i class="bi bi-shield-check"></i> MFG Qty will decrease | On Hand Qty will increase | Location customizable
                         </small>
                     </div>
                 </div>
@@ -68,7 +68,7 @@
                             <h4 class="text-success mb-1">
                                 <i class="bi bi-arrow-counterclockwise me-2"></i> Restock from MFG Floor
                             </h4>
-                            <p class="text-muted small mb-0">Return parts to Count Area after job completion</p>
+                            <p class="text-muted small mb-0">Return parts to specified location after job completion</p>
                         </div>
                         <div class="badge bg-success bg-opacity-10 text-success fs-6 px-3 py-2">
                             <i class="bi bi-shield-check"></i> Validated
@@ -123,7 +123,7 @@
                     <div class="row mb-4">
                         <div class="col-12">
                             <h6 class="text-success border-bottom pb-2 mb-3">
-                                <i class="bi bi-123 me-2"></i> Restock Quantity
+                                <i class="bi bi-123 me-2"></i> Restock Quantity & Location
                             </h6>
                         </div>
                         <div class="col-md-6">
@@ -139,6 +139,27 @@
                                 {% endif %}
                                 <small class="text-muted">
                                     <i class="bi bi-info-circle"></i> Must not exceed MFG Qty available
+                                </small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.location_to.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    <span class="input-group-text bg-success text-white">
+                                        <i class="bi bi-geo-alt-fill"></i>
+                                    </span>
+                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="e.g., Count Area, 8000-8999") }}
+                                </div>
+                                {% if form.location_to.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in form.location_to.errors %}
+                                            {{ error }}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                                <small class="text-muted">
+                                    <i class="bi bi-geo-alt"></i> Destination location for restocked parts
                                 </small>
                             </div>
                         </div>
@@ -220,7 +241,8 @@
                             <i class="bi bi-arrow-left-right"></i> Inventory Movement
                         </h6>
                         <p class="mb-1 small"><strong>From:</strong> MFG Floor (mfg_qty decreases)</p>
-                        <p class="mb-0 small"><strong>To:</strong> Count Area (onhandqty increases)</p>
+                        <p class="mb-0 small"><strong>To:</strong> Specified Location (onhandqty increases)</p>
+                        <p class="mb-0 small text-muted mt-1"><i class="bi bi-info-circle"></i> Default: Count Area</p>
                     </div>
                     <div class="mb-3 pb-3 border-bottom">
                         <h6 class="text-success mb-2">
@@ -232,9 +254,9 @@
                     </div>
                     <div>
                         <h6 class="text-success mb-2">
-                            <i class="bi bi-diagram-3"></i> Next Steps
+                            <i class="bi bi-diagram-3"></i> Location Flexibility
                         </h6>
-                        <p class="mb-0 small">After restocking to Count Area, parts can be moved to their final warehouse location using the inventory management system.</p>
+                        <p class="mb-0 small">You can restock directly to Count Area (default) or specify any warehouse location. Parts can be moved to different locations later if needed.</p>
                     </div>
                 </div>
             </div>
@@ -432,7 +454,8 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
     // No MFG quantity validation - users can adjust based on actual counts
 
     // Confirmation dialog
-    const confirmMsg = `Are you sure you want to restock ${quantity} units from MFG Floor to Count Area?`;
+    const location = document.getElementById('{{ form.location_to.id }}').value || 'Count Area';
+    const confirmMsg = `Are you sure you want to restock ${quantity} units from MFG Floor to ${location}?`;
     if (!confirm(confirmMsg)) {
         e.preventDefault();
         return false;

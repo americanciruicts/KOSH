@@ -361,11 +361,12 @@ class PickForm(FlaskForm):
     submit = SubmitField('Pick Parts')
 
 class RestockForm(FlaskForm):
-    """Form for restocking parts from MFG floor back to Count Area."""
+    """Form for restocking parts from MFG floor to specified location."""
     pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=1)])
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
     quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
-    submit = SubmitField('Restock to Count Area')
+    location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50)], default='Count Area')
+    submit = SubmitField('Restock Parts')
 
     def validate(self, extra_validators=None):
         """Custom validation to ensure either PCN or Item is provided."""
@@ -972,8 +973,8 @@ class DatabaseManager:
             return {'success': False, 'error': error_msg}
 
     def restock_pcb(self, pcn: int = None, item: str = None, quantity: int = 0,
-                    username: str = 'system') -> Dict[str, Any]:
-        """Restock parts from MFG floor back to Count Area."""
+                    location_to: str = 'Count Area', username: str = 'system') -> Dict[str, Any]:
+        """Restock parts from MFG floor to specified location."""
         # CRITICAL: Input validation
         if not isinstance(quantity, int) or quantity < 1 or quantity > 10000:
             return {
@@ -1076,7 +1077,7 @@ class DatabaseManager:
                         'requested_qty': quantity
                     }
 
-                # Update warehouse inventory - move from MFG to Count Area
+                # Update warehouse inventory - move from MFG to specified location
                 # Use COALESCE to handle NULL onhandqty
                 # Cast mfg_qty to integer for arithmetic, then back to text
                 # SECURE: Use conditional query execution
@@ -1086,7 +1087,7 @@ class DatabaseManager:
                         SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
                             onhandqty = COALESCE(onhandqty, 0) + %s,
                             loc_from = 'MFG Floor',
-                            loc_to = 'Count Area'
+                            loc_to = %s
                         WHERE pcn::text = %s
                     """
                 else:
@@ -1095,11 +1096,11 @@ class DatabaseManager:
                         SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
                             onhandqty = COALESCE(onhandqty, 0) + %s,
                             loc_from = 'MFG Floor',
-                            loc_to = 'Count Area'
+                            loc_to = %s
                         WHERE item = %s
                     """
 
-                cursor.execute(update_query, (quantity, quantity, search_param))
+                cursor.execute(update_query, (quantity, quantity, location_to, search_param))
 
                 updated_rows = cursor.rowcount
 
@@ -1114,11 +1115,11 @@ class DatabaseManager:
                 cursor.execute("""
                     INSERT INTO pcb_inventory."tblTransaction"
                     (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, userid)
-                    VALUES ('RESTOCK', %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), 'MFG Floor', 'Count Area', %s)
-                """, (item_num, pcn_num, mpn, dc, quantity, username))
+                    VALUES ('RESTOCK', %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), 'MFG Floor', %s, %s)
+                """, (item_num, pcn_num, mpn, dc, quantity, location_to, username))
 
                 conn.commit()
-                logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from MFG Floor to Count Area")
+                logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from MFG Floor to {location_to}")
 
                 # Clear cache after inventory change
                 cache.delete_memoized(self.get_current_inventory)
@@ -1126,11 +1127,12 @@ class DatabaseManager:
 
                 return {
                     'success': True,
-                    'message': f'Successfully restocked {quantity} units to Count Area',
+                    'message': f'Successfully restocked {quantity} units to {location_to}',
                     'quantity': quantity,
                     'pcn': pcn_num,
                     'item': item_num,
                     'mpn': mpn,
+                    'location_to': location_to,
                     'new_mfg_qty': mfg_qty_int - quantity,
                     'new_onhand_qty': current_onhand + quantity
                 }
@@ -2283,11 +2285,15 @@ def pick():
 @app.route('/restock', methods=['GET', 'POST'])
 @require_auth
 def restock():
-    """Restock parts from MFG floor back to Count Area."""
+    """Restock parts from MFG floor to specified location."""
     form = RestockForm()
 
+    # Set default location on GET request
+    if not form.location_to.data:
+        form.location_to.data = 'Count Area'
+
     if form.validate_on_submit():
-        logger.info(f"Restock form validation passed - PCN={form.pcn.data}, Item={form.item.data}, Quantity={form.quantity.data}")
+        logger.info(f"Restock form validation passed - PCN={form.pcn.data}, Item={form.item.data}, Quantity={form.quantity.data}, Location={form.location_to.data}")
 
         try:
             username = session.get('username', 'system')
@@ -2296,12 +2302,14 @@ def restock():
                 pcn=form.pcn.data if form.pcn.data else None,
                 item=form.item.data if form.item.data else None,
                 quantity=form.quantity.data,
+                location_to=form.location_to.data or 'Count Area',
                 username=username
             )
             logger.info(f"restock_pcb returned: {result}")
 
             if result.get('success'):
-                flash(f"Successfully restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to Count Area. "
+                location_to = result.get('location_to', 'Count Area')
+                flash(f"Successfully restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to {location_to}. "
                       f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}", 'success')
                 # Pass PCN to show print label button
                 return redirect(url_for('restock', restocked_pcn=result['pcn']))
