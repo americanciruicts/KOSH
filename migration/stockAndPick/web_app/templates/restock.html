@@ -123,10 +123,10 @@
                     <div class="row mb-4">
                         <div class="col-12">
                             <h6 class="text-success border-bottom pb-2 mb-3">
-                                <i class="bi bi-123 me-2"></i> Restock Quantity & Location
+                                <i class="bi bi-123 me-2"></i> Restock Quantity
                             </h6>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-12">
                             <div class="mb-3">
                                 {{ form.quantity.label(class="form-label fw-semibold text-dark") }}
                                 {{ form.quantity(class="form-control form-control-lg border-2", placeholder="Enter quantity") }}
@@ -139,6 +139,29 @@
                                 {% endif %}
                                 <small class="text-muted">
                                     <i class="bi bi-info-circle"></i> Must not exceed MFG Qty available
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Location Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-success border-bottom pb-2 mb-3">
+                                <i class="bi bi-geo-alt-fill me-2"></i> Location Movement
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.location_from.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    <span class="input-group-text bg-secondary text-white">
+                                        <i class="bi bi-box-arrow-up-right"></i>
+                                    </span>
+                                    {{ form.location_from(class="form-control form-control-lg border-2 bg-light", readonly="readonly") }}
+                                </div>
+                                <small class="text-muted">
+                                    <i class="bi bi-info-circle"></i> Source location (fixed)
                                 </small>
                             </div>
                         </div>
@@ -159,7 +182,7 @@
                                     </div>
                                 {% endif %}
                                 <small class="text-muted">
-                                    <i class="bi bi-geo-alt"></i> Destination location for restocked parts
+                                    <i class="bi bi-geo-alt"></i> Destination location (editable)
                                 </small>
                             </div>
                         </div>

@@ -365,6 +365,7 @@ class RestockForm(FlaskForm):
     pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=1)])
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
     quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
+    location_from = StringField('Source Location', validators=[Optional(), Length(max=50)], default='MFG Floor')
     location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50)], default='Count Area')
     submit = SubmitField('Restock Parts')
 
@@ -2288,7 +2289,9 @@ def restock():
     """Restock parts from MFG floor to specified location."""
     form = RestockForm()
 
-    # Set default location on GET request
+    # Set default locations on GET request
+    if not form.location_from.data:
+        form.location_from.data = 'MFG Floor'
     if not form.location_to.data:
         form.location_to.data = 'Count Area'
 
