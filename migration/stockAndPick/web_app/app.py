@@ -4996,16 +4996,10 @@ def api_bom_load():
         cur = conn.cursor()
 
         try:
-            # CRITICAL: Check for duplicate BOM (prevent accidental overwrite)
-            cur.execute('SELECT COUNT(*) FROM pcb_inventory."tblBOM" WHERE job::text = %s', (job,))
-            existing_count = cur.fetchone()[0]
-
-            if existing_count > 0:
-                return jsonify({
-                    'success': False,
-                    'error': f'BOM already exists for job {job} ({existing_count} records). Delete existing BOM before uploading new version.',
-                    'existing_records': existing_count
-                }), 409  # 409 Conflict
+            # Delete existing BOM records for this job
+            cur.execute('DELETE FROM pcb_inventory."tblBOM" WHERE job::text = %s', (job,))
+            deleted_count = cur.rowcount
+            logger.info(f"Deleted {deleted_count} existing BOM records for job {job}")
 
             # Use savepoint for atomic operation
             cur.execute("SAVEPOINT before_bom_insert")
@@ -5064,7 +5058,8 @@ def api_bom_load():
                 'success': True,
                 'message': 'BOM loaded successfully',
                 'job': job,
-                'inserted_count': inserted_count
+                'inserted_count': inserted_count,
+                'deleted_count': deleted_count
             })
 
         finally:
