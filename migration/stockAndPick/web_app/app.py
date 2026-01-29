@@ -361,12 +361,12 @@ class PickForm(FlaskForm):
     submit = SubmitField('Pick Parts')
 
 class RestockForm(FlaskForm):
-    """Form for restocking parts from MFG floor to specified location."""
+    """Form for restocking parts from Count Area to specified location."""
     pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=1)])
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
     quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
-    location_from = StringField('Source Location', validators=[Optional(), Length(max=50)], default='MFG Floor')
-    location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50)], default='Count Area')
+    location_from = StringField('Source Location', validators=[Optional(), Length(max=50)], default='Count Area')
+    location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50)])
     submit = SubmitField('Restock Parts')
 
     def validate(self, extra_validators=None):
@@ -2286,14 +2286,12 @@ def pick():
 @app.route('/restock', methods=['GET', 'POST'])
 @require_auth
 def restock():
-    """Restock parts from MFG floor to specified location."""
+    """Restock parts from Count Area to specified location."""
     form = RestockForm()
 
-    # Set default locations on GET request
+    # Set default source location on GET request (destination is left blank)
     if not form.location_from.data:
-        form.location_from.data = 'MFG Floor'
-    if not form.location_to.data:
-        form.location_to.data = 'Count Area'
+        form.location_from.data = 'Count Area'
 
     if form.validate_on_submit():
         logger.info(f"Restock form validation passed - PCN={form.pcn.data}, Item={form.item.data}, Quantity={form.quantity.data}, Location={form.location_to.data}")
@@ -2305,13 +2303,13 @@ def restock():
                 pcn=form.pcn.data if form.pcn.data else None,
                 item=form.item.data if form.item.data else None,
                 quantity=form.quantity.data,
-                location_to=form.location_to.data or 'Count Area',
+                location_to=form.location_to.data,
                 username=username
             )
             logger.info(f"restock_pcb returned: {result}")
 
             if result.get('success'):
-                location_to = result.get('location_to', 'Count Area')
+                location_to = result.get('location_to', '')
                 flash(f"Successfully restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to {location_to}. "
                       f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}", 'success')
                 # Pass PCN to show print label button

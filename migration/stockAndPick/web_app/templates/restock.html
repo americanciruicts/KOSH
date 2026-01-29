@@ -29,11 +29,11 @@
                     <i class="bi bi-info-circle-fill me-3 fs-4"></i>
                     <div>
                         <h5 class="alert-heading mb-2">Restock Workflow</h5>
-                        <p class="mb-1"><strong>Step 1:</strong> Parts are picked from Receiving Area → moved to MFG Floor</p>
-                        <p class="mb-1"><strong>Step 2:</strong> After job completion, restock moves parts from MFG Floor → Specified Location</p>
-                        <p class="mb-0"><strong>Step 3:</strong> Default location is "Count Area" but you can specify any location</p>
+                        <p class="mb-1"><strong>Step 1:</strong> Parts are counted and staged in Count Area</p>
+                        <p class="mb-1"><strong>Step 2:</strong> Restock moves parts from Count Area → Your specified location</p>
+                        <p class="mb-0"><strong>Step 3:</strong> You must enter a destination location for the parts</p>
                         <small class="text-muted d-block mt-2">
-                            <i class="bi bi-shield-check"></i> MFG Qty will decrease | On Hand Qty will increase | Location customizable
+                            <i class="bi bi-shield-check"></i> Source: Count Area (fixed) | Destination: Your choice (required)
                         </small>
                     </div>
                 </div>
@@ -172,7 +172,7 @@
                                     <span class="input-group-text bg-success text-white">
                                         <i class="bi bi-geo-alt-fill"></i>
                                     </span>
-                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="e.g., Count Area, 8000-8999") }}
+                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="Enter destination location") }}
                                 </div>
                                 {% if form.location_to.errors %}
                                     <div class="invalid-feedback d-block">
@@ -182,7 +182,7 @@
                                     </div>
                                 {% endif %}
                                 <small class="text-muted">
-                                    <i class="bi bi-geo-alt"></i> Destination location (editable)
+                                    <i class="bi bi-geo-alt"></i> Type the destination location
                                 </small>
                             </div>
                         </div>
@@ -263,9 +263,8 @@
                         <h6 class="text-success mb-2">
                             <i class="bi bi-arrow-left-right"></i> Inventory Movement
                         </h6>
-                        <p class="mb-1 small"><strong>From:</strong> MFG Floor (mfg_qty decreases)</p>
-                        <p class="mb-0 small"><strong>To:</strong> Specified Location (onhandqty increases)</p>
-                        <p class="mb-0 small text-muted mt-1"><i class="bi bi-info-circle"></i> Default: Count Area</p>
+                        <p class="mb-1 small"><strong>From:</strong> Count Area (fixed source)</p>
+                        <p class="mb-0 small"><strong>To:</strong> Your specified location (required)</p>
                     </div>
                     <div class="mb-3 pb-3 border-bottom">
                         <h6 class="text-success mb-2">
@@ -277,9 +276,9 @@
                     </div>
                     <div>
                         <h6 class="text-success mb-2">
-                            <i class="bi bi-diagram-3"></i> Location Flexibility
+                            <i class="bi bi-diagram-3"></i> Location Required
                         </h6>
-                        <p class="mb-0 small">You can restock directly to Count Area (default) or specify any warehouse location. Parts can be moved to different locations later if needed.</p>
+                        <p class="mb-0 small">You must specify where to move the parts. Enter any warehouse location (e.g., specific bin numbers, shelf locations, etc.).</p>
                     </div>
                 </div>
             </div>
@@ -477,8 +476,13 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
     // No MFG quantity validation - users can adjust based on actual counts
 
     // Confirmation dialog
-    const location = document.getElementById('{{ form.location_to.id }}').value || 'Count Area';
-    const confirmMsg = `Are you sure you want to restock ${quantity} units from MFG Floor to ${location}?`;
+    const location = document.getElementById('{{ form.location_to.id }}').value;
+    if (!location) {
+        e.preventDefault();
+        alert('Please enter a destination location');
+        return false;
+    }
+    const confirmMsg = `Are you sure you want to restock ${quantity} units from Count Area to ${location}?`;
     if (!confirm(confirmMsg)) {
         e.preventDefault();
         return false;
