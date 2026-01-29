@@ -4789,14 +4789,8 @@ def api_bom_parse():
         import openpyxl
         import io
 
-        # Read file content and validate size
+        # Read file content and validate
         file_content = file.read()
-        MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB limit
-        if len(file_content) > MAX_FILE_SIZE:
-            return jsonify({
-                'success': False,
-                'error': f'File too large. Maximum size is 5MB. Your file is {len(file_content) / (1024 * 1024):.2f}MB'
-            }), 400
 
         # Validate file is not empty
         if len(file_content) == 0:
