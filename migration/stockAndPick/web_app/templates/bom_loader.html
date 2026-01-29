@@ -199,11 +199,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: formData
             });
 
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
-            }
-
             const result = await response.json();
+            console.log('Parse response:', result);
+
+            if (!response.ok) {
+                // Show the actual error message from the server
+                const errorMsg = result.error || `Server error: ${response.status}`;
+                console.error('Parse error from server:', errorMsg);
+                throw new Error(errorMsg);
+            }
 
             if (result.success) {
                 parsedBomData = result;
@@ -248,13 +252,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: JSON.stringify(parsedBomData)
             });
 
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
-            }
-
             console.log('Load response status:', response.status);
             const result = await response.json();
             console.log('Load response data:', result);
+
+            if (!response.ok) {
+                // Show the actual error message from the server
+                const errorMsg = result.error || `Server error: ${response.status}`;
+                throw new Error(errorMsg);
+            }
 
             if (result.success) {
                 showStatus(`Success! Loaded ${result.inserted_count} items. Deleted ${result.deleted_count} old records.`, 'success');
