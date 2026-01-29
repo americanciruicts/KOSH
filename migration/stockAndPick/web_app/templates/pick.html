@@ -211,7 +211,25 @@
                             </div>
                         </div>
                     </div>
-                    
+
+                    <div class="mb-3">
+                        {{ form.work_order.label(class="form-label fw-bold") }}
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text"><i class="bi bi-clipboard-check"></i></span>
+                            {{ form.work_order(class="form-control", placeholder="e.g., 6846-028", id="workOrderInput") }}
+                        </div>
+                        {% if form.work_order.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.work_order.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">
+                            <i class="bi bi-info-circle"></i> Work Order # for this pick operation (optional)
+                        </div>
+                    </div>
+
                     <div class="d-grid gap-2">
                         {{ form.submit(class="btn btn-primary btn-lg", id="pickSubmitBtn") }}
                         <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
@@ -752,7 +770,16 @@ function fillForm(job) {
     document.getElementById('quantityInput').focus();
 }
 
+// CRITICAL: Prevent double-submission
+let isPickSubmitting = false;
+
 function showConfirmationModal() {
+    // CRITICAL: Block duplicate submissions
+    if (isPickSubmitting) {
+        console.warn('Pick already submitting, ignoring duplicate request');
+        return;
+    }
+
     const job = document.getElementById('partNumberInput').value.trim();
     const quantity = parseInt(document.getElementById('quantityInput').value);
     const pcbType = 'Bare'; // Default PCB type since field was removed
@@ -787,8 +814,24 @@ function showConfirmationModal() {
                                   `This action cannot be undone, but is logged in the audit trail.`;
 
                     if (confirm(message)) {
+                        // CRITICAL: Mark as submitting to prevent double-clicks
+                        isPickSubmitting = true;
                         const form = document.getElementById('pickForm');
+                        const submitBtn = form.querySelector('[type="submit"]');
+                        if (submitBtn) {
+                            submitBtn.disabled = true;
+                            submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+                        }
                         HTMLFormElement.prototype.submit.call(form);
+
+                        // Safety: Re-enable after 10 seconds in case of error
+                        setTimeout(() => {
+                            isPickSubmitting = false;
+                            if (submitBtn) {
+                                submitBtn.disabled = false;
+                                submitBtn.innerHTML = '<i class="bi bi-box-arrow-down"></i> Pick Parts';
+                            }
+                        }, 10000);
                     }
                 } else {
                     alert(`Job ${job} with component type ${pcbType} not found in inventory. Please check your inputs.`);
@@ -817,8 +860,24 @@ function showConfirmationModal() {
                   `This action cannot be undone, but is logged in the audit trail.`;
 
     if (confirm(message)) {
+        // CRITICAL: Mark as submitting to prevent double-clicks
+        isPickSubmitting = true;
         const form = document.getElementById('pickForm');
+        const submitBtn = form.querySelector('[type="submit"]');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+        }
         HTMLFormElement.prototype.submit.call(form);
+
+        // Safety: Re-enable after 10 seconds in case of error
+        setTimeout(() => {
+            isPickSubmitting = false;
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-box-arrow-down"></i> Pick Parts';
+            }
+        }, 10000);
     }
 }
 

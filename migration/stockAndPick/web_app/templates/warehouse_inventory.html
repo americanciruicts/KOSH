@@ -151,10 +151,10 @@
                         <th style="border: none; font-weight: 600; padding: 14px;">Item Number</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MPN</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">DC</th>
-                        <th style="border: none; font-weight: 600; padding: 14px;">On hand qty</th>
-                        <th style="border: none; font-weight: 600; padding: 14px;">Loc_From</th>
-                        <th style="border: none; font-weight: 600; padding: 14px;">Location</th>
-                        <th style="border: none; font-weight: 600; padding: 14px;">MFG_Qty</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">On Hand Qty</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Loc From</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Loc To</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">MFG Qty</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MSD</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">PO</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">Cost</th>
@@ -168,8 +168,8 @@
                         <td>{{ row.Item if row.Item else '-' }}</td>
                         <td>{{ row.MPN if row.MPN else '-' }}</td>
                         <td>{{ row.DC if row.DC else '-' }}</td>
-                        <td>{{ row.OnHandQty if row.OnHandQty else '-' }}</td>
-                        <td>{{ row.Loc_From.replace('Receiving Area', 'Rec Area') if row.Loc_From else '-' }}</td>
+                        <td>{{ row.OnHandQty if row.OnHandQty is not none else '0' }}</td>
+                        <td>{{ row.Loc_From if row.Loc_From else '-' }}</td>
                         <td>{{ row.Loc_To.replace('Receiving Area', 'Rec Area') if row.Loc_To else '-' }}</td>
                         <td>{{ row.MFG_Qty if row.MFG_Qty else '-' }}</td>
                         <td>{{ row.MSD.replace('Level', 'Lvl') if row.MSD else '-' }}</td>

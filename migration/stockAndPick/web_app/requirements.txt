@@ -6,6 +6,7 @@ Flask-SQLAlchemy==3.0.5
 Flask-WTF==1.1.1
 Flask-Caching==2.1.0
 Flask-Compress==1.14
+Flask-Limiter==3.5.0
 
 # Forms and validation
 WTForms==3.0.1
@@ -27,6 +28,9 @@ itsdangerous==2.1.2
 
 # Production WSGI server for better performance
 gunicorn==21.2.0
+
+# Excel file processing
+openpyxl==3.1.2
 
 # Access database connectivity (using subprocess with mdb-tools)
 # pandas and numpy removed to avoid compatibility issues

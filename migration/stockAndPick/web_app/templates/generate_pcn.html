@@ -211,9 +211,17 @@
                                     <label for="mpnInput" class="form-label">
                                         <i class="bi bi-gear-wide-connected me-1"></i> MPN
                                     </label>
-                                    <input type="text" class="form-control form-control-lg" id="mpnInput" name="mpn"
-                                           placeholder="e.g., LTC6804-1">
-                                    <div class="form-text text-muted">Manufacturer Part Number</div>
+                                    <select class="form-select form-select-lg" id="mpnInput" name="mpn">
+                                        <option value="">Select MPN or type custom...</option>
+                                    </select>
+                                    <input type="text" class="form-control form-control-lg mt-2" id="mpnCustomInput"
+                                           name="mpn_custom" placeholder="Or enter custom MPN..." style="display:none;">
+                                    <div class="form-text text-muted">
+                                        <span id="mpnLoadingText" style="display:none;">
+                                            <i class="bi bi-hourglass-split"></i> Loading MPNs from BOM...
+                                        </span>
+                                        <span id="mpnHelpText">Manufacturer Part Number - Select from BOM or enter custom</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -436,9 +444,9 @@
                                 <tr>
                                     <th class="text-center" style="width: 80px;">PCN</th>
                                     <th>Job Number</th>
-                                    <th class="text-center" style="width: 80px;">On Hand Qty</th>
-                                    <th class="text-center" style="width: 80px;">MFG Qty</th>
-                                    <th class="text-center" style="width: 100px;">Location</th>
+                                    <th class="text-center" style="width: 80px;">Quantity</th>
+                                    <th class="text-center" style="width: 110px;">Location From</th>
+                                    <th class="text-center" style="width: 110px;">Location To</th>
                                     <th class="text-center" style="width: 100px;">Work Order</th>
                                     <th class="text-center" style="width: 100px;">Date Code</th>
                                     <th class="text-center" style="width: 80px;">MSD Level</th>
@@ -447,7 +455,7 @@
                             </thead>
                             <tbody id="pcnHistoryBody">
                                 <tr>
-                                    <td colspan="10" class="text-center text-muted py-4">
+                                    <td colspan="9" class="text-center text-muted py-4">
                                         Click "Refresh" to load PCN history
                                     </td>
                                 </tr>
@@ -513,6 +521,166 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let currentPCNData = null;
 
+    // MPN Dropdown Population Logic
+    const partNumberInput = document.getElementById('partNumberInput');
+    const mpnInput = document.getElementById('mpnInput');
+    const mpnCustomInput = document.getElementById('mpnCustomInput');
+    const mpnLoadingText = document.getElementById('mpnLoadingText');
+    const mpnHelpText = document.getElementById('mpnHelpText');
+
+    // Debug: Check if elements exist
+    console.log('MPN dropdown elements:', {
+        partNumberInput: !!partNumberInput,
+        mpnInput: !!mpnInput,
+        mpnCustomInput: !!mpnCustomInput,
+        mpnLoadingText: !!mpnLoadingText,
+        mpnHelpText: !!mpnHelpText
+    });
+
+    // Exit if required elements don't exist
+    if (!partNumberInput || !mpnInput) {
+        console.error('Required elements not found for MPN dropdown');
+        return;
+    }
+
+    // Debounce function to avoid too many API calls
+    let debounceTimer;
+    function debounce(func, delay) {
+        return function(...args) {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => func.apply(this, args), delay);
+        };
+    }
+
+    // Function to load MPN options from BOM
+    async function loadMPNOptions(partNumber) {
+        console.log('🔍 loadMPNOptions called with:', partNumber);
+
+        if (!partNumber || partNumber.trim() === '') {
+            // Reset dropdown if part number is empty
+            mpnInput.innerHTML = '<option value="">Select MPN or type custom...</option>';
+            mpnHelpText.textContent = 'Manufacturer Part Number - Select from BOM or enter custom';
+            mpnHelpText.style.color = '';
+            return;
+        }
+
+        // Show loading indicator
+        mpnLoadingText.style.display = 'inline';
+        mpnHelpText.style.display = 'none';
+        mpnInput.disabled = true;
+        mpnInput.style.backgroundColor = '#f3f4f6';
+
+        try {
+            const url = `/api/bom/mpns/${encodeURIComponent(partNumber.trim())}`;
+            console.log('📡 Fetching MPNs from:', url);
+
+            const response = await fetch(url, {
+                credentials: 'same-origin'
+            });
+
+            console.log('✅ Response status:', response.status);
+
+            // Check if response is OK
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+            console.log('📦 API result:', result);
+            console.log(`📊 Found ${result.count} MPN(s) for part ${partNumber}`);
+
+            // Clear existing options
+            mpnInput.innerHTML = '';
+
+            if (result.success && result.mpns && result.mpns.length > 0) {
+                // Add default option
+                mpnInput.innerHTML = '<option value="">Select MPN from BOM...</option>';
+
+                // Add MPNs from BOM - only show MPN number
+                result.mpns.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.mpn;
+                    option.textContent = item.mpn;
+                    mpnInput.appendChild(option);
+                });
+
+                // Add "Custom Entry" option
+                const customOption = document.createElement('option');
+                customOption.value = '__CUSTOM__';
+                customOption.textContent = '➕ Enter Custom MPN...';
+                mpnInput.appendChild(customOption);
+
+                mpnHelpText.textContent = `✅ ${result.mpns.length} MPN(s) found in BOM - Select from dropdown`;
+                mpnHelpText.style.color = '#10b981';
+                console.log('✨ Dropdown populated successfully');
+            } else {
+                // No MPNs found, allow custom entry
+                mpnInput.innerHTML = '<option value="__CUSTOM__">➕ Enter Custom MPN...</option>';
+                mpnHelpText.textContent = '⚠️ No MPNs found in BOM for this part - Enter custom value';
+                mpnHelpText.style.color = '#f59e0b';
+                console.log('⚠️ No MPNs found for part', partNumber);
+            }
+
+        } catch (error) {
+            console.error('❌ Error loading MPNs:', error);
+            mpnInput.innerHTML = '<option value="__CUSTOM__">➕ Enter Custom MPN...</option>';
+            mpnHelpText.textContent = '❌ Error loading MPNs - Enter custom value';
+            mpnHelpText.style.color = '#ef4444';
+        } finally {
+            // Hide loading indicator
+            mpnLoadingText.style.display = 'none';
+            mpnHelpText.style.display = 'inline';
+            mpnInput.disabled = false;
+            mpnInput.style.backgroundColor = '';
+        }
+    }
+
+    // Debounced version for input event
+    const debouncedLoadMPNOptions = debounce(function(partNumber) {
+        if (partNumber && partNumber.trim().length >= 2) {
+            loadMPNOptions(partNumber);
+        }
+    }, 500); // Wait 500ms after user stops typing
+
+    // Listen for Part Number input (as user types)
+    partNumberInput.addEventListener('input', function() {
+        console.log('⌨️ Part number input event fired');
+        debouncedLoadMPNOptions(this.value.trim());
+    });
+
+    // Listen for Part Number changes (blur - when field loses focus)
+    partNumberInput.addEventListener('blur', function() {
+        console.log('👁️ Part number blur event fired');
+        const partNumber = this.value.trim();
+        if (partNumber) {
+            loadMPNOptions(partNumber);
+        }
+    });
+
+    // Also listen on change event
+    partNumberInput.addEventListener('change', function() {
+        console.log('🔄 Part number change event fired');
+        const partNumber = this.value.trim();
+        if (partNumber) {
+            loadMPNOptions(partNumber);
+        }
+    });
+
+    // Handle MPN dropdown selection
+    mpnInput.addEventListener('change', function() {
+        if (this.value === '__CUSTOM__') {
+            // Show custom input field
+            mpnCustomInput.style.display = 'block';
+            mpnCustomInput.focus();
+            // Clear the select value so form validation works
+            this.value = '';
+        } else {
+            // Hide custom input field
+            mpnCustomInput.style.display = 'none';
+            mpnCustomInput.value = '';
+        }
+    });
+
     // Handle form submission
     form.addEventListener('submit', async function(e) {
         e.preventDefault();
@@ -524,6 +692,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const formData = new FormData(form);
         const data = Object.fromEntries(formData.entries());
+
+        // Handle custom MPN input if user entered a custom value
+        if (mpnCustomInput.value.trim() !== '') {
+            data.mpn = mpnCustomInput.value.trim();
+        }
+        // Remove mpn_custom field as it's only for UI
+        delete data.mpn_custom;
 
         // Use part_number as item (since we removed the duplicate field)
         if (data.part_number) {
@@ -576,32 +751,18 @@ document.addEventListener('DOMContentLoaded', function() {
             submitBtn.style.opacity = '0.6';
             submitBtn.style.cursor = 'not-allowed';
 
+            // Auto-refresh PCN history table to show the newly created PCN
+            console.log('✅ Auto-refreshing PCN history...');
+            loadPCNHistory();
+
             // Auto-print immediately - silent print using iframe
             setTimeout(() => {
                 silentPrint(result.pcn_number);
             }, 500);
 
             // Auto-refresh PCN history table to show the new PCN
-            // Use longer delay to ensure database commit completes
             setTimeout(() => {
-                console.log('🔄 Auto-refreshing PCN history to show newly generated PCN:', result.pcn_number);
                 loadPCNHistory();
-                // Scroll to the PCN History table to show the new entry
-                setTimeout(() => {
-                    const historySection = document.getElementById('pcnHistoryTable');
-                    if (historySection) {
-                        historySection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                        // Highlight the first row briefly to show the new PCN
-                        const firstRow = document.querySelector('#pcnHistoryBody tr:first-child');
-                        if (firstRow) {
-                            firstRow.style.backgroundColor = '#d4edda';
-                            firstRow.style.transition = 'background-color 0.3s ease';
-                            setTimeout(() => {
-                                firstRow.style.backgroundColor = '';
-                            }, 3000);
-                        }
-                    }
-                }, 800);
             }, 1000);
 
         } catch (error) {
@@ -614,7 +775,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Generate label preview (matching bats.png format)
     function generateLabelPreview(data) {
-        const barcodeData = data.pcn_number;
+        // Check if JsBarcode library is loaded
+        if (typeof JsBarcode === 'undefined') {
+            console.error('JsBarcode library not loaded. Please refresh the page.');
+            showError('Barcode library failed to load. Please refresh the page.');
+            return;
+        }
+
+        // Use ONLY PCN number for scannable barcode - short and simple
+        const barcodeData = String(data.pcn_number || '').trim();
+
+        if (!barcodeData) {
+            console.error('Invalid PCN number for barcode generation');
+            return;
+        }
+
+        console.log('Barcode PCN:', barcodeData); // Debug: show what's being encoded
 
         labelPreview.innerHTML = `
             <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 1.4; border: 2px solid #000; padding: 10px; background: white;">
@@ -655,27 +831,38 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         `;
 
-        // Generate small top barcode
-        JsBarcode("#previewTopBarcode", barcodeData, {
-            format: "CODE128",
-            width: 0.8,
-            height: 20,
-            displayValue: false,
-            margin: 0
-        });
+        // Wait for DOM to be ready, then generate barcodes
+        setTimeout(() => {
+            try {
+                // Generate small top barcode - THICK SCANNABLE BARS
+                JsBarcode("#previewTopBarcode", barcodeData, {
+                    format: "CODE128",
+                    width: 1.5,        // THICK bars for easy scanning
+                    height: 30,        // Good height for scanning
+                    displayValue: false,
+                    margin: 2
+                });
+            } catch (error) {
+                console.error('Error generating top barcode:', error);
+            }
 
-        // Generate large bottom barcode
-        JsBarcode("#previewBarcode", barcodeData, {
-            format: "CODE128",
-            width: 1.5,
-            height: 35,
-            displayValue: true,
-            fontSize: 10,
-            margin: 0
-        });
+            try {
+                // Generate large bottom barcode - THICK SCANNABLE BARS
+                JsBarcode("#previewBarcode", barcodeData, {
+                    format: "CODE128",
+                    width: 2.0,        // THICK bars for easy scanning
+                    height: 40,        // Good height for scanning
+                    displayValue: true,
+                    fontSize: 12,      // Readable text
+                    margin: 2
+                });
+            } catch (error) {
+                console.error('Error generating bottom barcode:', error);
+            }
 
-        // Also generate printable version
-        generatePrintableLabel(data, barcodeData);
+            // Also generate printable version
+            generatePrintableLabel(data, barcodeData);
+        }, 100);
     }
 
     // Generate printable label (matching bats.png physical label format EXACTLY)
@@ -722,26 +909,34 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
         `;
 
-        // Generate small top barcode
+        // Generate small top barcode with error handling - THICK SCANNABLE BARS
         setTimeout(() => {
-            JsBarcode("#topBarcode", barcodeData, {
-                format: "CODE128",
-                width: 1,
-                height: 25,
-                displayValue: false,
-                margin: 0
-            });
+            try {
+                JsBarcode("#topBarcode", barcodeData, {
+                    format: "CODE128",
+                    width: 2.0,       // THICK bars for printing/scanning
+                    height: 35,       // Good height
+                    displayValue: false,
+                    margin: 2
+                });
+            } catch (error) {
+                console.error('Error generating printable top barcode:', error);
+            }
 
-            // Generate large bottom barcode
-            JsBarcode("#printBarcode", barcodeData, {
-                format: "CODE128",
-                width: 2,
-                height: 45,
-                displayValue: true,
-                fontSize: 14,
-                margin: 0
-            });
-        }, 100);
+            try {
+                // Generate large bottom barcode - THICK SCANNABLE BARS
+                JsBarcode("#printBarcode", barcodeData, {
+                    format: "CODE128",
+                    width: 2.5,       // THICK bars for printing/scanning
+                    height: 50,       // Tall for easy scanning
+                    displayValue: true,
+                    fontSize: 14,     // Readable text
+                    margin: 2
+                });
+            } catch (error) {
+                console.error('Error generating printable bottom barcode:', error);
+            }
+        }, 150);
     }
 
     // Print label - Open dedicated print page in new window
@@ -782,10 +977,31 @@ document.addEventListener('DOMContentLoaded', function() {
         deletePCNBtn.disabled = true;
 
         try {
+            const csrfTokenMeta = document.querySelector('meta[name="csrf-token"]');
+            if (!csrfTokenMeta) {
+                console.error('CSRF token meta tag not found!');
+                showError('Security token not found. Please refresh the page and try again.');
+                deletePCNBtn.innerHTML = originalText;
+                deletePCNBtn.disabled = false;
+                return;
+            }
+
+            const csrfToken = csrfTokenMeta.getAttribute('content');
+            console.log('CSRF Token:', csrfToken ? 'Present' : 'Missing');
+
+            if (!csrfToken) {
+                console.error('CSRF token is empty!');
+                showError('Security token is empty. Please refresh the page and try again.');
+                deletePCNBtn.innerHTML = originalText;
+                deletePCNBtn.disabled = false;
+                return;
+            }
+
             const response = await fetch(`/api/pcn/delete/${currentPCNData.pcn_number}`, {
                 method: 'DELETE',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
                 }
             });
 
@@ -831,6 +1047,9 @@ document.addEventListener('DOMContentLoaded', function() {
         submitBtn.classList.add('btn-primary');
         submitBtn.style.opacity = '1';
         submitBtn.style.cursor = 'pointer';
+
+        // Refresh history to show all recent PCNs
+        loadPCNHistory();
 
         document.getElementById('partNumberInput').focus();
     });
@@ -880,7 +1099,7 @@ function loadPCNHistory() {
 
     // Fetch ALL records (no limit) with cache-busting
     const timestamp = Date.now();
-    fetch(`/api/pcn/history?limit=100000&_=${timestamp}`, {
+    fetch(`/api/pcn/history?limit=10000&_=${timestamp}`, {
         method: 'GET',
         credentials: 'same-origin',
         headers: {
@@ -913,7 +1132,7 @@ function loadPCNHistory() {
         .catch(error => {
             console.error('Error loading PCN history:', error);
             historyLoading.style.display = 'none';
-            historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-2"></i>Error loading PCN history: ' + error.message + '</td></tr>';
+            historyBody.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-2"></i>Error loading PCN history: ' + error.message + '</td></tr>';
             historyTable.style.display = 'block';
         });
 }
@@ -943,7 +1162,6 @@ function searchPCNHistory() {
     if (pcn) url += '&pcn=' + encodeURIComponent(pcn);
     if (job) url += '&job=' + encodeURIComponent(job);
 
-
     fetch(url, {
         method: 'GET',
         credentials: 'same-origin',
@@ -970,13 +1188,13 @@ function searchPCNHistory() {
                 displayPCNHistoryPage(currentPage);
             } else {
                 historyEmpty.style.display = 'block';
-                historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-5"><i class="bi bi-search me-2"></i>No PCN records match your search criteria</td></tr>';
+                historyBody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-5"><i class="bi bi-search me-2"></i>No PCN records match your search criteria</td></tr>';
             }
         })
         .catch(error => {
             console.error('Error searching PCN history:', error);
             historyLoading.style.display = 'none';
-            historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-2"></i>Error searching PCN history: ' + error.message + '</td></tr>';
+            historyBody.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-4"><i class="bi bi-exclamation-triangle me-2"></i>Error searching PCN history: ' + error.message + '</td></tr>';
             historyTable.style.display = 'block';
         });
 }
@@ -1099,6 +1317,8 @@ function displayPCNHistory(data) {
     const historyBody = document.getElementById('pcnHistoryBody');
     const recordCount = document.getElementById('pcnRecordCount');
 
+    console.log('Displaying PCN History - First item:', data[0]);
+
     historyBody.innerHTML = data.map((item, index) => {
         const generatedDate = item.generated_at ? new Date(item.generated_at).toLocaleString('en-US', {
             year: 'numeric',
@@ -1112,17 +1332,22 @@ function displayPCNHistory(data) {
 
         const dateCode = item.dc || item.date_code || '-';
         const msdLevel = item.msd || item.msd_level || '-';
+
+        // FIX: Use correct field names from API response
+        const jobNumber = item.job || item.job_number || '-';
         const quantity = item.quantity || item.qty || 0;
-        const mfgQty = item.mfg_qty || 0;
+        const locationFrom = item.loc_from || item.location_from || '-';
+        const locationTo = item.location || item.location_to || '-';
+        const workOrder = item.work_order || item.wo || '-';
 
         return `
             <tr class="${rowClass}">
-                <td class="text-center"><span class="badge bg-primary fs-6">${item.pcn}</span></td>
-                <td><strong>${item.job || '<span class="text-muted">-</span>'}</strong></td>
-                <td class="text-end"><strong>${quantity ? quantity.toLocaleString() : '<span class="text-muted">0</span>'}</strong></td>
-                <td class="text-end"><strong class="${mfgQty > 0 ? 'text-warning' : 'text-muted'}">${mfgQty ? mfgQty.toLocaleString() : '0'}</strong></td>
-                <td class="text-center"><span class="badge bg-light text-dark border">${item.location || '-'}</span></td>
-                <td class="text-center">${item.work_order ? '<span class="badge bg-warning text-dark">' + item.work_order + '</span>' : '<span class="text-muted">-</span>'}</td>
+                <td class="text-center"><span class="badge bg-primary fs-6">${item.pcn || 'N/A'}</span></td>
+                <td><strong>${jobNumber !== '-' ? jobNumber : '<span class="text-muted">-</span>'}</strong></td>
+                <td class="text-end"><strong>${quantity > 0 ? quantity.toLocaleString() : '<span class="text-muted">0</span>'}</strong></td>
+                <td class="text-center"><span class="badge bg-light text-dark border">${locationFrom}</span></td>
+                <td class="text-center"><span class="badge bg-secondary text-white">${locationTo}</span></td>
+                <td class="text-center">${workOrder !== '-' ? '<span class="badge bg-warning text-dark">' + workOrder + '</span>' : '<span class="text-muted">-</span>'}</td>
                 <td class="text-center"><code class="text-primary">${dateCode}</code></td>
                 <td class="text-center"><span class="badge bg-info">${msdLevel}</span></td>
                 <td class="text-center">
@@ -1362,10 +1587,27 @@ async function deletePCNFromHistory(pcnNumber) {
     }
 
     try {
+        const csrfTokenMeta = document.querySelector('meta[name="csrf-token"]');
+        if (!csrfTokenMeta) {
+            console.error('CSRF token meta tag not found!');
+            alert('Security token not found. Please refresh the page and try again.');
+            return;
+        }
+
+        const csrfToken = csrfTokenMeta.getAttribute('content');
+        console.log('CSRF Token:', csrfToken ? 'Present' : 'Missing');
+
+        if (!csrfToken) {
+            console.error('CSRF token is empty!');
+            alert('Security token is empty. Please refresh the page and try again.');
+            return;
+        }
+
         const response = await fetch(`/api/pcn/delete/${pcnNumber}`, {
             method: 'DELETE',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
             }
         });
 
@@ -1399,28 +1641,6 @@ async function deletePCNFromHistory(pcnNumber) {
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize action buttons first
     setupActionButtons();
-
-    // Add Enter key support for search inputs
-    const searchPCNInput = document.getElementById('searchPCN');
-    const searchJobInput = document.getElementById('searchJob');
-
-    if (searchPCNInput) {
-        searchPCNInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                searchPCNHistory();
-            }
-        });
-    }
-
-    if (searchJobInput) {
-        searchJobInput.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                searchPCNHistory();
-            }
-        });
-    }
 
     // Load PCN history automatically after a short delay
     setTimeout(() => {

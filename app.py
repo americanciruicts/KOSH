@@ -3012,36 +3012,35 @@ def api_expiration_check():
 @app.route('/api/bom/mpns/<part_number>', methods=['GET'])
 @require_auth
 def api_get_mpns_for_part(part_number):
-    """Get MPN from warehouse inventory for a specific part number"""
+    """Get MPNs from BOM table for a specific part number"""
     conn = None
     try:
-        logger.info(f"Fetching MPN for part_number={part_number}")
+        logger.info(f"Fetching MPNs from BOM for part_number={part_number}")
 
         conn = db_manager.get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Query warehouse inventory to get the MPN for this specific item
+        # Query BOM table to get all MPNs for this ACI part number
         cur.execute("""
             SELECT DISTINCT mpn
-            FROM pcb_inventory."tblWhse_Inventory"
-            WHERE item = %s AND mpn IS NOT NULL AND mpn != ''
+            FROM pcb_inventory."tblBOM"
+            WHERE aci_pn = %s AND mpn IS NOT NULL AND mpn != ''
             ORDER BY mpn
-            LIMIT 1
         """, (part_number,))
 
-        result = cur.fetchone()
+        results = cur.fetchall()
         cur.close()
 
-        if result and result['mpn']:
-            mpn = result['mpn']
-            logger.info(f"Found MPN '{mpn}' for part {part_number}")
-            return jsonify({'success': True, 'mpns': [{'mpn': mpn}], 'count': 1, 'part_number': part_number})
+        if results:
+            mpns = [{'mpn': row['mpn']} for row in results]
+            logger.info(f"Found {len(mpns)} MPN(s) for part {part_number} in BOM")
+            return jsonify({'success': True, 'mpns': mpns, 'count': len(mpns), 'part_number': part_number})
         else:
-            logger.info(f"No MPN found for part {part_number}")
+            logger.info(f"No MPNs found in BOM for part {part_number}")
             return jsonify({'success': True, 'mpns': [], 'count': 0, 'part_number': part_number})
 
     except Exception as e:
-        logger.error(f"Error fetching MPN for part {part_number}: {e}")
+        logger.error(f"Error fetching MPNs for part {part_number}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         if conn:

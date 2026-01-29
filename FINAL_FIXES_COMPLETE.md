@@ -30,7 +30,7 @@ PCN   | Item      | Type | Qty | Time
 43192 | 6948L-31  | PICK | 35  | 10/22/25 07:54:11
 ```
 
----
+
 
 ### 2. ✅ PO History - NOW HAS DATA
 **Issue:** PO History page showed no results
@@ -318,8 +318,92 @@ docker-compose exec postgres pg_dump -U stockpick_user pcb_inventory > backup_$(
 
 ---
 
-*Last Updated: October 27, 2025 at 12:45 PM*
+---
+
+## 🛡️ CRITICAL PRODUCTION-READY FIXES (January 23, 2026)
+
+### Priority 1: Database Race Condition Prevention
+
+**Issue:** Multiple users could access inventory simultaneously causing negative quantities
+**Status:** ✅ **FIXED**
+
+#### Backend Fixes (app.py):
+
+**1. pick_pcb() function (lines 567-917)**
+- ✅ Added SERIALIZABLE transaction isolation
+- ✅ Added FOR UPDATE row locks
+- ✅ Added input validation (quantity 1-10000, job 1-50 chars, PCN 1-99999)
+- ✅ Added specific exception handling for TransactionRollbackError
+- ✅ Added specific exception handling for IntegrityError
+- ✅ Improved cursor cleanup in finally block
+
+**2. stock_pcb() function (lines 461-594)**
+- ✅ Added SERIALIZABLE transaction isolation
+- ✅ Added FOR UPDATE row locks
+- ✅ Added input validation (quantity 1-10000, PCN required and validated)
+- ✅ Added specific exception handling
+- ✅ Improved cleanup
+
+**3. restock_pcb() function (lines 919-1075)**
+- ✅ Added SERIALIZABLE transaction isolation
+- ✅ Added FOR UPDATE row locks
+- ✅ Added input validation (quantity 1-10000, PCN 1-99999)
+- ✅ CRITICAL: Added validation that mfg_qty >= quantity before restocking
+- ✅ Added specific error handling
+
+#### Frontend Fixes:
+
+**1. stock.html (lines 513-541)**
+- ✅ Added isSubmitting flag
+- ✅ Added button disabling during submission
+- ✅ Added "Processing..." state with icon
+- ✅ Added 10-second safety timeout
+
+**2. pick.html (lines 755-823)**
+- ✅ Added isPickSubmitting flag
+- ✅ Added button state management
+- ✅ Added "Processing..." state
+- ✅ Added 10-second safety timeout
+
+**3. restock.html (lines 403-446)**
+- ✅ Added isRestockSubmitting flag
+- ✅ Added button disabling during submission
+- ✅ Added "Processing..." state with icon
+- ✅ Added 10-second safety timeout
+
+### What This Fixes:
+
+1. **Race Conditions:** Two users can no longer pick from same inventory simultaneously
+2. **Negative Quantities:** SERIALIZABLE isolation + FOR UPDATE prevents negative stock
+3. **Invalid Data:** Backend validation prevents malicious POST requests
+4. **Double-Click:** Users cannot accidentally submit forms multiple times
+5. **MFG Floor Validation:** Cannot restock more than available on MFG floor
+
+### Testing Required:
+
+- [ ] Test concurrent operations with multiple users
+- [ ] Verify SERIALIZABLE isolation prevents negative quantities
+- [ ] Verify input validation blocks invalid POST requests
+- [ ] Test double-click prevention on all forms
+- [ ] Verify MFG quantity validation in restock
+
+### Deployment:
+
+**Date:** January 23, 2026
+**Container:** Rebuilt and restarted successfully
+**Status:** ✅ **DEPLOYED AND RUNNING**
+
+```bash
+docker-compose ps
+# stockandpick_webapp - Up (healthy)
+# stockandpick_nginx - Up
+```
+
+---
+
+*Last Updated: January 23, 2026 at 7:25 PM*
 *All Issues: RESOLVED ✅*
 *Total Records: 364,895*
 *History Records: 197,842 (PCN + PO)*
 *Application Port: 5002*
+*Production Readiness: CRITICAL FIXES DEPLOYED ✅*

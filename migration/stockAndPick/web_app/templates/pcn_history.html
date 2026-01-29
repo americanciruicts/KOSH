@@ -96,7 +96,7 @@
                 <tbody>
                     {% for txn in transactions %}
                     <tr style="{% if loop.index % 2 == 0 %}background: #f8fafc;{% endif %} border-left: 3px solid {% if txn.trantype == 'STOCK' %}#10b981{% elif txn.trantype == 'PICK' %}#f59e0b{% elif txn.trantype == 'RESTOCK' %}#06b6d4{% else %}#6b7280{% endif %}; color: #475569;">
-                        <td class="py-2 px-3" style="color: #64748b;">{{ txn.tran_time or '-' }}</td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ txn.tran_time or txn.migrated_at or '-' }}</td>
                         <td class="py-2 px-3">
                             <span class="badge shadow-sm {% if txn.trantype == 'STOCK' %}bg-success{% elif txn.trantype == 'PICK' %}bg-warning text-dark{% elif txn.trantype == 'RESTOCK' %}bg-info{% else %}bg-secondary{% endif %}"
                                   style="font-size: 0.75rem; min-width: 60px; padding: 0.35rem 0.5rem; font-weight: 600;">
@@ -137,6 +137,69 @@
     </div>
 </div>
 {% endif %}
+
+<!-- Transaction Type Vocabulary -->
+<div class="card border-0 shadow-lg mt-4" style="border-left: 4px solid #3b82f6 !important;">
+    <div class="card-header text-white" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);">
+        <h5 class="mb-0 fw-bold">
+            <i class="bi bi-book me-2"></i> Transaction Type Vocabulary
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: none;">
+            <table class="table table-hover table-bordered mb-0" style="font-size: 0.95rem;">
+                <thead style="background: linear-gradient(to bottom, #f1f5f9, #e2e8f0);">
+                    <tr>
+                        <th class="py-3 px-3" style="width: 120px; color: #64748b; font-weight: 600;">Type</th>
+                        <th class="py-3 px-3" style="color: #64748b; font-weight: 600;">Meaning</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-success shadow-sm" style="font-size: 0.85rem; min-width: 70px;">STOCK</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Parts added to inventory</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-warning text-dark shadow-sm" style="font-size: 0.85rem; min-width: 70px;">PICK</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Parts removed from inventory</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-info shadow-sm" style="font-size: 0.85rem; min-width: 70px;">RESTOCK</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Parts returned to inventory</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-primary shadow-sm" style="font-size: 0.85rem; min-width: 70px;">GEN</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">PCN label generated</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-secondary shadow-sm" style="font-size: 0.85rem; min-width: 70px;">UPDATE</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Record updated</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-info shadow-sm" style="font-size: 0.85rem; min-width: 70px;">ADJT</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Inventory adjustment</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-dark shadow-sm" style="font-size: 0.85rem; min-width: 70px;">SCRA</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Parts scrapped</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-secondary shadow-sm" style="font-size: 0.85rem; min-width: 70px;">PTWY</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Put away to storage</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-secondary shadow-sm" style="font-size: 0.85rem; min-width: 70px;">INDF</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Indefinite status</td>
+                    </tr>
+                    <tr style="transition: all 0.2s;">
+                        <td class="py-2 px-3"><span class="badge bg-secondary shadow-sm" style="font-size: 0.85rem; min-width: 70px;">RNDT</span></td>
+                        <td class="py-2 px-3" style="color: #475569;">Random/miscellaneous</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
 
 <style>
 .table-responsive {

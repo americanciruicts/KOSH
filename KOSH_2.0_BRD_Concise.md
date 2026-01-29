@@ -109,7 +109,7 @@ Each inventory type maintains independent tracking and menu options.
 - Track locations where PCN has been used
 - Track part number changes
 - Track if PCN has been picked for any jobs
-- Refresh capability after every entry
+- Refresh capability after every entry 
 
 **PCN Status Categories:**
 - PCB

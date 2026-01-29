@@ -400,8 +400,18 @@ itemInput.addEventListener('input', function() {
     }
 });
 
+// CRITICAL: Prevent double-submission
+let isRestockSubmitting = false;
+
 // Form validation
 document.getElementById('restockForm').addEventListener('submit', function(e) {
+    // CRITICAL: Block duplicate submissions
+    if (isRestockSubmitting) {
+        e.preventDefault();
+        console.warn('Restock already submitting, ignoring duplicate submission');
+        return false;
+    }
+
     const pcn = document.getElementById('{{ form.pcn.id }}').value;
     const item = document.getElementById('{{ form.item.id }}').value;
     const quantity = document.getElementById('{{ form.quantity.id }}').value;
@@ -426,6 +436,22 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
     if (!confirm(confirmMsg)) {
         e.preventDefault();
         return false;
+    }
+
+    // CRITICAL: Mark as submitting and disable button
+    isRestockSubmitting = true;
+    const submitBtn = this.querySelector('[type="submit"]');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+
+        // Safety: Re-enable after 10 seconds in case redirect fails
+        setTimeout(() => {
+            isRestockSubmitting = false;
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+        }, 10000);
     }
 });
 </script>

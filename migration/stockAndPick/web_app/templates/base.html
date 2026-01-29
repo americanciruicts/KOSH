@@ -1526,6 +1526,11 @@
                         </a>
                     </li>
                     <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint == 'bom_loader' %}active{% endif %}" href="{{ url_for('bom_loader') }}">
+                            <i class="bi bi-file-earmark-arrow-up-fill"></i> BOM Loader
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <a class="modern-nav-link {% if request.endpoint == 'generate_pcn' %}active{% endif %}" href="{{ url_for('generate_pcn') }}">
                             <i class="bi bi-upc-scan"></i> Generate PCN
                         </a>

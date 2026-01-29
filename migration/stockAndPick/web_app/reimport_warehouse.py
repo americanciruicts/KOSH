@@ -13,7 +13,7 @@ import io
 DB_CONFIG = {
     'host': 'aci-database',
     'port': 5432,
-    'database': 'pcb_inventory',
+    'database': 'kosh',
     'user': 'stockpick_user',
     'password': 'stockpick_pass'
 }
@@ -68,13 +68,20 @@ def import_to_postgresql(records):
         for record in records:
             # Convert empty strings to None
             item = record.get('Item', '').strip() or None
-            pcn = int(record.get('PCN', 0)) if record.get('PCN', '').strip() else None
+            pcn = record.get('PCN', '').strip() or None  # Keep as string/text
             mpn = record.get('MPN', '').strip() or None
             dc = record.get('DC', '').strip() or None  # Keep as string (can be "1-5", "2-3", etc.)
-            onhandqty = int(record.get('OnHandQty', 0)) if record.get('OnHandQty', '').strip() else None
+
+            # Convert OnHandQty to integer
+            onhandqty_str = record.get('OnHandQty', '').strip()
+            try:
+                onhandqty = int(onhandqty_str) if onhandqty_str else None
+            except ValueError:
+                onhandqty = None
+
             loc_to = record.get('Loc_To', '').strip() or None
-            mfg_qty = int(record.get('MFG_Qty', 0)) if record.get('MFG_Qty', '').strip() else None
-            qty_old = int(record.get('Qty_Old', 0)) if record.get('Qty_Old', '').strip() else None
+            mfg_qty = record.get('MFG_Qty', '').strip() or None  # Keep as text
+            qty_old = record.get('Qty_Old', '').strip() or None  # Keep as text
             msd = record.get('MSD', '').strip() or None  # Keep as string (might not always be integer)
             po = record.get('PO', '').strip() or None
             cost = record.get('Cost', '').strip() or None

@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+
+{% block title %}BOM Loader - KOSH{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <h2><i class="bi bi-file-earmark-arrow-up-fill"></i> BOM Loader</h2>
+            <p class="text-muted">Upload and load Bill of Materials from Excel files</p>
+        </div>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Upload BOM File</h5>
+                </div>
+                <div class="card-body">
+                    <form id="bomUploadForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                        <div class="mb-3">
+                            <label for="bomFile" class="form-label">Select Excel File (.xlsx)</label>
+                            <input type="file" class="form-control" id="bomFile" name="file" accept=".xlsx,.xls" required>
+                            <div class="form-text">File must contain "Assy BOM" sheet</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary" id="uploadBtn">
+                            <i class="bi bi-upload"></i> Upload and Parse
+                        </button>
+                    </form>
+
+                    <!-- Status Messages -->
+                    <div id="statusMsg" class="alert mt-3" style="display: none;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>How to Use</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-1-circle-fill me-2"></i>Upload Your File</h6>
+                        <p class="text-muted small mb-2">Choose an Excel file (.xlsx) with a sheet named <strong>"Assy BOM"</strong></p>
+                    </div>
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-2-circle-fill me-2"></i>Review the Data</h6>
+                        <p class="text-muted small mb-2">Check the extracted job details, part numbers, and quantities in the preview table</p>
+                    </div>
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-3-circle-fill me-2"></i>Save to Database</h6>
+                        <p class="text-muted small mb-0">Click "Load to Database" to import the BOM into KOSH</p>
+                    </div>
+                    <hr>
+                    <div class="alert alert-warning py-2 mb-0">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <small><strong>Note:</strong> Uploading a BOM will replace any existing records for the same job number.</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BOM Preview Section -->
+    <div class="row mt-4" id="previewSection" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">BOM Preview</h5>
+                    <button class="btn btn-sm btn-success" id="loadBtn">
+                        <i class="bi bi-database-add"></i> Load to Database
+                    </button>
+                </div>
+                <div class="card-body">
+                    <!-- Metadata -->
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <strong>Job Number:</strong><br>
+                            <span id="metaJob" class="text-primary fs-5">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Customer:</strong><br>
+                            <span id="metaCustomer">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Customer P/N:</strong><br>
+                            <span id="metaCustPN">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Build Qty:</strong><br>
+                            <span id="metaBuildQty" class="text-success fw-bold">-</span>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <strong>Job Rev:</strong><br>
+                            <span id="metaJobRev">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Cust Rev:</strong><br>
+                            <span id="metaCustRev">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Last Rev Date:</strong><br>
+                            <span id="metaLastRev">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>WO Number:</strong><br>
+                            <span id="metaWONumber">-</span>
+                        </div>
+                    </div>
+                    <div class="row mb-3" id="notesRow" style="display: none;">
+                        <div class="col-12">
+                            <strong>Notes:</strong><br>
+                            <span id="metaNotes" class="text-muted small">-</span>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- BOM Items Table -->
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Line</th>
+                                    <th>Description</th>
+                                    <th>Manufacturer</th>
+                                    <th>MPN</th>
+                                    <th>ACI P/N</th>
+                                    <th>Qty</th>
+                                    <th>Location</th>
+                                </tr>
+                            </thead>
+                            <tbody id="bomTableBody">
+                                <!-- Will be populated by JavaScript -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <p class="text-muted mt-2">Total Items: <span id="itemCount" class="fw-bold">0</span></p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// BOM Loader JavaScript - v4.0 - AUTO-RECOVERY VERSION - January 27, 2026
+console.log('✓ BOM Loader v4.0 - Automatic error recovery enabled');
+console.log('✓ No manual refresh needed - system auto-resets on errors');
+let parsedBomData = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    const bomUploadForm = document.getElementById('bomUploadForm');
+    const loadBtn = document.getElementById('loadBtn');
+
+    bomUploadForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        const fileInput = document.getElementById('bomFile');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const previewSection = document.getElementById('previewSection');
+
+        console.log('Form submitted - starting BOM upload');
+
+        if (!fileInput.files[0]) {
+            showStatus('Please select a file', 'danger');
+            return;
+        }
+
+        // Show loading
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+
+        if (previewSection) {
+            previewSection.style.display = 'none';
+        }
+
+        // Prepare form data
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        // Get CSRF token
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+        try {
+            const response = await fetch('/api/bom/parse', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            if (result.success) {
+                parsedBomData = result;
+                displayPreview(result);
+                showStatus(`Successfully parsed ${result.total_items} items from BOM`, 'success');
+            } else {
+                showStatus('Error: ' + result.error, 'danger');
+                resetForm();
+            }
+        } catch (error) {
+            console.error('Upload error:', error);
+            showStatus('Upload failed: ' + error.message + '. Please try again.', 'danger');
+            resetForm();
+        } finally {
+            uploadBtn.disabled = false;
+            uploadBtn.innerHTML = '<i class="bi bi-upload"></i> Upload and Parse';
+        }
+    });
+
+    loadBtn.addEventListener('click', async function() {
+        if (!parsedBomData) {
+            showStatus('No data to load. Please upload a BOM file first.', 'danger');
+            return;
+        }
+
+        if (!confirm(`Load BOM for Job ${parsedBomData.metadata.job}?\n\nThis will DELETE existing BOM records for this job.`)) {
+            return;
+        }
+
+        loadBtn.disabled = true;
+        loadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Loading...';
+
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+        try {
+            const response = await fetch('/api/bom/load', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify(parsedBomData)
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            console.log('Load response status:', response.status);
+            const result = await response.json();
+            console.log('Load response data:', result);
+
+            if (result.success) {
+                showStatus(`Success! Loaded ${result.inserted_count} items. Deleted ${result.deleted_count} old records.`, 'success');
+
+                // Auto-reset after 2 seconds so user can immediately upload another file
+                setTimeout(() => {
+                    resetForm();
+                    showStatus('Ready for next upload', 'success');
+                }, 2000);
+            } else {
+                showStatus('Load failed: ' + result.error + '. Please try again.', 'danger');
+                loadBtn.disabled = false;
+                loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
+            }
+        } catch (error) {
+            console.error('Load error:', error);
+            showStatus('Load failed: ' + error.message + '. Please try again.', 'danger');
+            loadBtn.disabled = false;
+            loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
+        }
+    });
+
+    function displayPreview(data) {
+        const { metadata, bom_items } = data;
+
+        // Update metadata
+        document.getElementById('metaJob').textContent = metadata.job || '-';
+        document.getElementById('metaJobRev').textContent = metadata.job_rev || '-';
+        document.getElementById('metaCustomer').textContent = metadata.customer || '-';
+        document.getElementById('metaCustPN').textContent = metadata.cust_pn || '-';
+        document.getElementById('metaBuildQty').textContent = metadata.build_qty || '-';
+        document.getElementById('metaCustRev').textContent = metadata.cust_rev || '-';
+        document.getElementById('metaLastRev').textContent = metadata.last_rev || '-';
+        document.getElementById('metaWONumber').textContent = metadata.wo_number || '-';
+
+        // Show notes if available
+        if (metadata.notes) {
+            document.getElementById('metaNotes').textContent = metadata.notes;
+            document.getElementById('notesRow').style.display = 'block';
+        } else {
+            document.getElementById('notesRow').style.display = 'none';
+        }
+
+        document.getElementById('itemCount').textContent = bom_items.length;
+
+        // Update table
+        const tbody = document.getElementById('bomTableBody');
+        tbody.innerHTML = '';
+
+        bom_items.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${item.line}</td>
+                <td>${item.desc || ''}</td>
+                <td>${item.man || ''}</td>
+                <td class="font-monospace">${item.mpn || ''}</td>
+                <td>${item.aci_pn || ''}</td>
+                <td class="text-end">${item.qty || 0}</td>
+                <td>${item.loc || ''}</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        // Show preview section
+        document.getElementById('previewSection').style.display = 'block';
+
+        // Scroll to preview
+        document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function resetForm() {
+        console.log('Resetting form state');
+
+        // Clear parsed data
+        parsedBomData = null;
+
+        // Reset file input
+        const fileInput = document.getElementById('bomFile');
+        if (fileInput) {
+            fileInput.value = '';
+        }
+
+        // Hide preview section
+        const previewSection = document.getElementById('previewSection');
+        if (previewSection) {
+            previewSection.style.display = 'none';
+        }
+
+        // Reset upload button
+        const uploadBtn = document.getElementById('uploadBtn');
+        if (uploadBtn) {
+            uploadBtn.disabled = false;
+            uploadBtn.innerHTML = '<i class="bi bi-upload"></i> Upload and Parse';
+        }
+
+        // Reset load button
+        if (loadBtn) {
+            loadBtn.disabled = false;
+            loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
+            loadBtn.style.display = 'inline-block';
+        }
+
+        console.log('Form reset complete - ready for new upload');
+    }
+
+    function showStatus(message, type) {
+        console.log('showStatus called:', message, 'Type:', type);
+
+        // Always show alert for important messages
+        if (type === 'success') {
+            alert('✓ ' + message);
+        } else if (type === 'danger') {
+            alert('✗ Error: ' + message);
+        }
+
+        const statusMsg = document.getElementById('statusMsg');
+
+        if (!statusMsg) {
+            console.error('statusMsg element not found in DOM!');
+            return;
+        }
+
+        statusMsg.className = `alert alert-${type} mt-3`;
+        statusMsg.textContent = message;
+        statusMsg.style.display = 'block';
+
+        // Try to scroll to it if it exists
+        try {
+            statusMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (e) {
+            console.warn('Could not scroll to status message:', e);
+        }
+
+        console.log('Status shown successfully');
+    }
+
+    // Add manual reset button to page
+    const uploadCard = document.querySelector('.card-body');
+    if (uploadCard) {
+        const resetBtn = document.createElement('button');
+        resetBtn.type = 'button';
+        resetBtn.className = 'btn btn-outline-secondary btn-sm mt-2';
+        resetBtn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Start Over';
+        resetBtn.onclick = resetForm;
+        uploadCard.appendChild(resetBtn);
+    }
+
+}); // End DOMContentLoaded
+</script>
+{% endblock %}

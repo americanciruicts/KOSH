@@ -194,64 +194,43 @@
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                {{ form.location.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.location_from.label(class="form-label fw-semibold text-dark") }}
                                 <div class="input-group">
                                     <span class="input-group-text bg-primary text-white">
                                         <i class="bi bi-geo-alt-fill"></i>
                                     </span>
-                                    {{ form.location(class="form-control form-control-lg border-2", placeholder="e.g., 1101101, 1201201, Receiving Area") }}
+                                    {{ form.location_from(class="form-control form-control-lg border-2", placeholder="e.g., Receiving Area") }}
                                 </div>
-                                {% if form.location.errors %}
+                                {% if form.location_from.errors %}
                                     <div class="invalid-feedback d-block">
-                                        {% for error in form.location.errors %}
+                                        {% for error in form.location_from.errors %}
                                             <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
                                         {% endfor %}
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-geo-alt"></i> Warehouse storage location (from tblLoc)
+                                    <i class="bi bi-geo-alt"></i> Source location
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                {{ form.itar_classification.label(class="form-label fw-semibold text-dark") }}
-                                {{ form.itar_classification(class="form-select form-select-lg border-2", id="itarClassification") }}
-                                {% if form.itar_classification.errors %}
+                                {{ form.location_to.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    <span class="input-group-text bg-primary text-white">
+                                        <i class="bi bi-geo-alt-fill"></i>
+                                    </span>
+                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999") }}
+                                </div>
+                                {% if form.location_to.errors %}
                                     <div class="invalid-feedback d-block">
-                                        {% for error in form.itar_classification.errors %}
+                                        {% for error in form.location_to.errors %}
                                             <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
                                         {% endfor %}
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-shield-check"></i> Export control classification
-                                    {% if not user_can_see_itar %}
-                                        <br><span class="text-danger small">(ITAR items require special authorization)</span>
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Export Notes Section (Hidden by default) -->
-                    <div class="row mb-4" id="exportNotesDiv" style="display: none;">
-                        <div class="col-12">
-                            <div class="alert alert-warning border-2 border-warning">
-                                <h6 class="text-warning mb-3">
-                                    <i class="bi bi-exclamation-triangle-fill me-2"></i> Export Control Notes Required
-                                </h6>
-                                {{ form.export_control_notes.label(class="form-label fw-semibold text-dark") }}
-                                {{ form.export_control_notes(class="form-control border-warning", placeholder="Enter export control notes or restrictions", rows="3") }}
-                                {% if form.export_control_notes.errors %}
-                                    <div class="invalid-feedback d-block">
-                                        {% for error in form.export_control_notes.errors %}
-                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                                <div class="form-text text-warning">
-                                    <i class="bi bi-info-circle"></i> Additional notes about export restrictions or compliance requirements
+                                    <i class="bi bi-geo-alt"></i> Destination location
                                 </div>
                             </div>
                         </div>
@@ -531,32 +510,20 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     });
-    
-    // Handle ITAR classification change
-    const itarClassification = document.getElementById('itarClassification');
-    const exportNotesDiv = document.getElementById('exportNotesDiv');
-    
-    if (itarClassification && exportNotesDiv) {
-        // Show/hide export notes based on classification
-        function toggleExportNotes() {
-            const classification = itarClassification.value;
-            if (classification === 'ITAR' || classification === 'EAR99' || classification === 'SENSITIVE') {
-                exportNotesDiv.style.display = 'block';
-            } else {
-                exportNotesDiv.style.display = 'none';
-            }
-        }
-        
-        // Initial state
-        toggleExportNotes();
-        
-        // Listen for changes
-        itarClassification.addEventListener('change', toggleExportNotes);
-    }
-    
-    // Add form validation
+
+    // CRITICAL: Prevent double-click/double-submission
     const form = document.querySelector('form');
+    const submitBtn = form.querySelector('[type="submit"]');
+    let isSubmitting = false;
+
     form.addEventListener('submit', function(e) {
+        // CRITICAL: Block duplicate submissions
+        if (isSubmitting) {
+            e.preventDefault();
+            console.warn('Form already submitting, ignoring duplicate submission');
+            return false;
+        }
+
         const partNumber = document.getElementById('partNumberInput').value.trim();
         const quantity = document.getElementById('quantity').value;
 
@@ -573,7 +540,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('quantity').focus();
             return false;
         }
-        
+
         // Add confirmation for large quantities
         if (quantity > 1000) {
             if (!confirm(`Are you sure you want to stock ${quantity} units? This is a large quantity.`)) {
@@ -581,6 +548,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
         }
+
+        // CRITICAL: Mark as submitting and disable button
+        isSubmitting = true;
+        submitBtn.disabled = true;
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+
+        // Safety: Re-enable after 10 seconds in case redirect fails
+        setTimeout(() => {
+            isSubmitting = false;
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+        }, 10000);
     });
     
     // Add keyboard shortcuts
