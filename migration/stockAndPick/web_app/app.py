@@ -28,6 +28,10 @@ from flask_caching import Cache
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
+from io import BytesIO
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +62,45 @@ app.config['COMPRESS_MIMETYPES'] = [
 app.config['COMPRESS_LEVEL'] = 6  # Balance between compression and speed
 app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses > 500 bytes
 compress = Compress(app)
+
+# Column definitions for shortage/job report exports
+SHORTAGE_EXPORT_COLUMNS = [
+    {'key': 'line_no',      'label': 'LINE #',       'width': 8,  'default': False},
+    {'key': 'aci_pn',       'label': 'ACI PN',       'width': 15, 'default': True},
+    {'key': 'pcn',          'label': 'PCN',           'width': 12, 'default': True},
+    {'key': 'mpn',          'label': 'MPN',           'width': 25, 'default': True},
+    {'key': 'manufacturer', 'label': 'MANUFACTURER',  'width': 20, 'default': False},
+    {'key': 'description',  'label': 'DESCRIPTION',   'width': 30, 'default': False},
+    {'key': 'qty',          'label': 'QTY',           'width': 8,  'default': True},
+    {'key': 'order_qty',    'label': 'ORDER QTY',     'width': 12, 'default': True},
+    {'key': 'req',          'label': 'REQ',           'width': 8,  'default': True},
+    {'key': 'item',         'label': 'ITEM',          'width': 15, 'default': True},
+    {'key': 'qty_on_hand',  'label': 'ON HAND QTY',   'width': 14, 'default': True},
+    {'key': 'location',     'label': 'LOCATION',      'width': 15, 'default': True},
+    {'key': 'unit_cost',    'label': 'UNIT COST',     'width': 12, 'default': False},
+    {'key': 'line_cost',    'label': 'LINE COST',     'width': 12, 'default': False},
+]
+
+def get_export_cell_value(item, column_key, order_qty=None):
+    """Extract cell value for a report column from a DB row."""
+    mapping = {
+        'line_no':      lambda i: i.get('line_no', ''),
+        'aci_pn':       lambda i: i.get('aci_pn', ''),
+        'pcn':          lambda i: i.get('pcn') or '',
+        'mpn':          lambda i: i.get('mpn', ''),
+        'manufacturer': lambda i: i.get('manufacturer') or '',
+        'description':  lambda i: i.get('description') or '',
+        'qty':          lambda i: i.get('qty', 0),
+        'order_qty':    lambda i: i.get('order_qty') or order_qty or '',
+        'req':          lambda i: i.get('req') or (int(i.get('qty', 0) or 0) * (order_qty or 1)),
+        'item':         lambda i: i.get('item') or i.get('aci_pn') or '',
+        'qty_on_hand':  lambda i: i.get('qty_on_hand') if i.get('qty_on_hand') is not None else i.get('on_hand', 0),
+        'location':     lambda i: i.get('location') or '',
+        'unit_cost':    lambda i: i.get('unit_cost') or '',
+        'line_cost':    lambda i: i.get('line_cost') or '',
+    }
+    extractor = mapping.get(column_key, lambda i: '')
+    return extractor(item)
 
 # CSRF Configuration
 # Enable CSRF protection with proper configuration
@@ -201,7 +244,8 @@ def inject_current_time():
         'current_time': datetime.now().strftime('%B %d, %Y %I:%M %p'),
         'current_year': datetime.now().year,
         'current_user': g.get('current_user', {}),
-        'user_can_see_itar': g.get('user_can_see_itar', False)
+        'user_can_see_itar': g.get('user_can_see_itar', False),
+        'is_admin': is_admin_user()
     }
 
 @app.template_filter('moment_fromnow')
@@ -310,6 +354,16 @@ USER_ROLES = [
     ('Operator', 'Operator'),
     ('ITAR', 'ITAR')
 ]
+
+# Users authorized to access admin pages (user management, notifications)
+# in addition to users with the 'Admin' role
+ADMIN_AUTHORIZED_USERS = {'kanav', 'preet'}
+
+def is_admin_user():
+    """Check if current session user has admin-level access (by role or authorized list)."""
+    if session.get('role') == 'Admin':
+        return True
+    return session.get('username', '').lower() in ADMIN_AUTHORIZED_USERS
 
 LOCATION_RANGES = [
     ('1000-1999', '1000-1999'),
@@ -586,9 +640,9 @@ class DatabaseManager:
             # Record the stock transaction in tblTransaction
             cursor.execute("""
                 INSERT INTO pcb_inventory."tblTransaction"
-                (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
-                VALUES ('STOCK', %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s)
-            """, (job, str(pcn) if pcn else None, mpn, dc, quantity, location_from, location_to, work_order, work_order, username))
+                (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
+                VALUES ('STOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s)
+            """, (job, str(pcn) if pcn else None, mpn, dc, msd, quantity, location_from, location_to, work_order, work_order, username))
 
             conn.commit()
             logger.info(f"Stock operation completed: {quantity} units of {job} (PCN: {pcn}) moved from {location_from} to {location_to}")
@@ -825,13 +879,14 @@ class DatabaseManager:
                     # Single PCN pick - insert one transaction record
                     cursor.execute("""
                         INSERT INTO pcb_inventory."tblTransaction"
-                        (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
                         SELECT
                             'PICK',
                             %s,
                             pcn,
                             mpn,
                             CASE WHEN dc ~ '^[0-9]+$' THEN dc::integer ELSE NULL END as dc,
+                            msd,
                             %s,
                             TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
                             'Receiving Area',
@@ -892,13 +947,14 @@ class DatabaseManager:
                             WHERE prev_total < %s
                         )
                         INSERT INTO pcb_inventory."tblTransaction"
-                        (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
                         SELECT
                             'PICK',
                             %s,
                             pcn::text,
                             mpn,
                             CASE WHEN dc ~ '^[0-9]+$' THEN dc::integer ELSE NULL END as dc,
+                            msd,
                             qty_picked,
                             TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
                             'Receiving Area',
@@ -974,8 +1030,9 @@ class DatabaseManager:
             return {'success': False, 'error': error_msg}
 
     def restock_pcb(self, pcn: int = None, item: str = None, quantity: int = 0,
-                    location_to: str = 'Count Area', username: str = 'system') -> Dict[str, Any]:
-        """Restock parts from MFG floor to specified location."""
+                    location_from: str = 'MFG Floor', location_to: str = 'Count Area',
+                    username: str = 'system') -> Dict[str, Any]:
+        """Restock parts from specified source location to destination location."""
         # CRITICAL: Input validation
         if not isinstance(quantity, int) or quantity < 1 or quantity > 10000:
             return {
@@ -1078,7 +1135,7 @@ class DatabaseManager:
                         'requested_qty': quantity
                     }
 
-                # Update warehouse inventory - move from MFG to specified location
+                # Update warehouse inventory - move from specified source to destination
                 # Use COALESCE to handle NULL onhandqty
                 # Cast mfg_qty to integer for arithmetic, then back to text
                 # SECURE: Use conditional query execution
@@ -1087,7 +1144,7 @@ class DatabaseManager:
                         UPDATE pcb_inventory."tblWhse_Inventory"
                         SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
                             onhandqty = COALESCE(onhandqty, 0) + %s,
-                            loc_from = 'MFG Floor',
+                            loc_from = %s,
                             loc_to = %s
                         WHERE pcn::text = %s
                     """
@@ -1096,12 +1153,12 @@ class DatabaseManager:
                         UPDATE pcb_inventory."tblWhse_Inventory"
                         SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
                             onhandqty = COALESCE(onhandqty, 0) + %s,
-                            loc_from = 'MFG Floor',
+                            loc_from = %s,
                             loc_to = %s
                         WHERE item = %s
                     """
 
-                cursor.execute(update_query, (quantity, quantity, location_to, search_param))
+                cursor.execute(update_query, (quantity, quantity, location_from, location_to, search_param))
 
                 updated_rows = cursor.rowcount
 
@@ -1113,14 +1170,19 @@ class DatabaseManager:
                     }
 
                 # Record the restock transaction
+                # Get MSD from warehouse inventory
+                cursor.execute("SELECT msd FROM pcb_inventory.\"tblWhse_Inventory\" WHERE pcn::text = %s LIMIT 1", (str(pcn_num),))
+                msd_result = cursor.fetchone()
+                msd = msd_result[0] if msd_result else None
+
                 cursor.execute("""
                     INSERT INTO pcb_inventory."tblTransaction"
-                    (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, userid)
-                    VALUES ('RESTOCK', %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), 'MFG Floor', %s, %s)
-                """, (item_num, pcn_num, mpn, dc, quantity, location_to, username))
+                    (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, userid)
+                    VALUES ('RESTOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s)
+                """, (item_num, pcn_num, mpn, dc, msd, quantity, location_from, location_to, username))
 
                 conn.commit()
-                logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from MFG Floor to {location_to}")
+                logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from {location_from} to {location_to}")
 
                 # Clear cache after inventory change
                 cache.delete_memoized(self.get_current_inventory)
@@ -1535,37 +1597,35 @@ class DatabaseManager:
                 self.return_connection(conn)
 
     def get_pcn_history(self, limit: int = 100, filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Get PCN transaction history with warehouse inventory data."""
+        """Get PCN transaction history with warehouse inventory data - shows ALL transactions."""
         conn = None
         try:
             conn = self.get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Query from tblTransaction with warehouse inventory data
-                # Get unique PCNs (no duplicates) - show only the most recent transaction per PCN
-                # Use subquery to get unique PCNs first, then sort by newest
+                # Show ALL transactions (removed DISTINCT ON to show complete history)
                 query = """
-                    SELECT * FROM (
-                        SELECT DISTINCT ON (t.pcn)
-                            t.record_no,
-                            t.trantype as status,
-                            t.item as job,
-                            t.pcn,
-                            t.id as transaction_id,
-                            COALESCE(w.mpn, t.mpn) as mpn,
-                            COALESCE(w.dc::text, t.dc::text) as dc,
-                            COALESCE(w.msd, '0') as msd,
-                            t.tranqty::integer as quantity,
-                            COALESCE(w.mfg_qty::integer, 0) as mfg_qty,
-                            t.tran_time as generated_at,
-                            t.loc_from,
-                            COALESCE(w.loc_to, t.loc_to) as location,
-                            t.wo,
-                            COALESCE(w.po, t.po) as po,
-                            t.userid as user_id
-                        FROM pcb_inventory."tblTransaction" t
-                        LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-                            ON t.pcn = w.pcn
-                        WHERE t.pcn IS NOT NULL
+                    SELECT
+                        t.record_no,
+                        t.trantype as status,
+                        t.item as job,
+                        t.pcn,
+                        t.id as transaction_id,
+                        COALESCE(w.mpn, t.mpn) as mpn,
+                        COALESCE(w.dc::text, t.dc::text) as dc,
+                        COALESCE(t.msd, w.msd, '0') as msd,
+                        t.tranqty::integer as quantity,
+                        COALESCE(w.mfg_qty::integer, 0) as mfg_qty,
+                        t.tran_time as generated_at,
+                        t.loc_from,
+                        COALESCE(w.loc_to, t.loc_to) as location,
+                        t.wo,
+                        COALESCE(w.po, t.po) as po,
+                        t.userid as user_id
+                    FROM pcb_inventory."tblTransaction" t
+                    LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                        ON t.pcn = w.pcn
+                    WHERE t.pcn IS NOT NULL
                 """
                 params = []
 
@@ -1580,8 +1640,7 @@ class DatabaseManager:
                         query += " AND t.trantype = %s"
                         params.append(filters['status'])
 
-                query += " ORDER BY t.pcn, t.id DESC"
-                query += " ) sub ORDER BY CAST(pcn AS INTEGER) DESC, transaction_id DESC LIMIT %s"
+                query += " ORDER BY t.id DESC LIMIT %s"
                 params.append(limit)
 
                 cur.execute(query, params)
@@ -1609,7 +1668,7 @@ class DatabaseManager:
                             t.id as transaction_id,
                             COALESCE(w.mpn, t.mpn) as mpn,
                             COALESCE(w.dc::text, t.dc::text) as dc,
-                            COALESCE(w.msd, '0') as msd,
+                            COALESCE(t.msd, w.msd, '0') as msd,
                             t.tranqty::integer as quantity,
                             COALESCE(w.mfg_qty::integer, 0) as mfg_qty,
                             t.tran_time as generated_at,
@@ -1909,7 +1968,7 @@ def require_itar_access(f):
 def load_current_user():
     """Load current user information into g object."""
     g.current_user = {
-        'username': session.get('username', 'anonymous'),
+        'username': session.get('full_name', session.get('username', 'anonymous')),
         'role': session.get('role', 'USER'),
         'itar_authorized': session.get('itar_authorized', False)
     }
@@ -1983,7 +2042,7 @@ def database_health_check():
         }), 500
 
 @app.route('/login', methods=['GET', 'POST'])
-@limiter.limit("5 per minute")  # Protect against brute force attacks
+@limiter.limit("10 per minute", methods=["POST"])  # Only rate-limit actual login attempts
 def login():
     """Secure login page with bulletproof authentication."""
     # If already logged in, redirect to dashboard
@@ -2039,9 +2098,30 @@ def login():
                 session['user_id'] = user['id']
                 session['username'] = user['userlogin']
                 session['full_name'] = user['username']
-                session['role'] = user['usersecurity']
-                session['itar_authorized'] = True if user['usersecurity'] == 'Admin' else False
+                # Set role from DB, but override to Admin for authorized users
+                db_role = user['usersecurity']
+                if user['userlogin'].lower() in ADMIN_AUTHORIZED_USERS and db_role != 'Admin':
+                    session['role'] = 'Admin'
+                    logger.info(f"User {username} promoted to Admin (in ADMIN_AUTHORIZED_USERS, DB role: '{db_role}')")
+                else:
+                    session['role'] = db_role
+                    logger.info(f"User {username} role from DB: '{db_role}' (type: {type(db_role).__name__})")
+                session['itar_authorized'] = True if session['role'] == 'Admin' else False
                 session.permanent = remember  # Remember me functionality
+
+                # Record login notification for all users except super admin (kanav)
+                if user['userlogin'].lower() != 'kanav':
+                    try:
+                        ip_address = request.remote_addr or request.headers.get('X-Forwarded-For', 'Unknown')
+                        cursor.execute("""
+                            INSERT INTO pcb_inventory."tblLoginNotifications"
+                            (user_id, username, full_name, login_time, ip_address, seen)
+                            VALUES (%s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', %s, FALSE)
+                        """, (user['id'], user['userlogin'], user['username'], ip_address))
+                        logger.info(f"Login notification recorded for user: {username}")
+                    except Exception as notif_error:
+                        logger.error(f"Failed to record login notification: {notif_error}")
+
                 conn.commit()
 
                 logger.info(f"Successful login: {username}")
@@ -2303,6 +2383,7 @@ def restock():
                 pcn=form.pcn.data if form.pcn.data else None,
                 item=form.item.data if form.item.data else None,
                 quantity=form.quantity.data,
+                location_from=form.location_from.data or 'Count Area',
                 location_to=form.location_to.data,
                 username=username
             )
@@ -3100,6 +3181,427 @@ def reports():
         flash(f"Error loading reports: {e}", 'error')
         return render_template('reports.html', summary=[], audit_log=[])
 
+# ============================================================================
+# SHORTAGE REPORT ROUTES
+# ============================================================================
+
+@app.route('/shortage_report')
+@require_auth
+def shortage_report():
+    """Shortage Report page - list saved reports and generate new ones."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get list of saved reports
+        cursor.execute("""
+            SELECT id, job, report_name, total_lines, shortage_lines,
+                   total_cost, shortage_cost, created_by, created_at, notes, order_qty
+            FROM pcb_inventory."tblShortageReport"
+            ORDER BY created_at DESC
+            LIMIT 50
+        """)
+        saved_reports = cursor.fetchall()
+
+        # Get list of jobs that have BOMs loaded
+        cursor.execute("""
+            SELECT DISTINCT job FROM pcb_inventory."tblBOM"
+            WHERE job IS NOT NULL AND job != ''
+            ORDER BY job
+        """)
+        available_jobs = [row['job'] for row in cursor.fetchall()]
+
+        return render_template('shortage_report.html',
+                             saved_reports=saved_reports,
+                             available_jobs=available_jobs,
+                             column_definitions=SHORTAGE_EXPORT_COLUMNS)
+    except Exception as e:
+        logger.error(f"Error loading shortage report page: {e}")
+        flash(f"Error loading page: {e}", 'error')
+        return render_template('shortage_report.html', saved_reports=[], available_jobs=[],
+                             column_definitions=SHORTAGE_EXPORT_COLUMNS)
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/shortage_report/generate', methods=['POST'])
+@require_auth
+def generate_shortage_report():
+    """Generate a new shortage report for a job."""
+    job = request.form.get('job', '').strip()
+    report_name = request.form.get('report_name', '').strip()
+    notes = request.form.get('notes', '').strip()
+    order_qty_input = request.form.get('order_qty', '1').strip()
+
+    if not job:
+        flash('Please enter a job number.', 'danger')
+        return redirect(url_for('shortage_report'))
+
+    try:
+        order_qty = int(order_qty_input)
+        if order_qty < 1:
+            raise ValueError
+    except (ValueError, TypeError):
+        flash('Order Qty must be a positive whole number.', 'danger')
+        return redirect(url_for('shortage_report'))
+
+    if not report_name:
+        report_name = f"Shortage Report - {job} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Check if job has BOM data
+        cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job,))
+        if cursor.fetchone()['count'] == 0:
+            flash(f'No BOM data found for job {job}. Please load BOM first.', 'warning')
+            return redirect(url_for('shortage_report'))
+
+        # Get total BOM line count
+        cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job,))
+        total_bom_lines = cursor.fetchone()['count']
+
+        # Get the latest revision for this job
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job,))
+        rev_row = cursor.fetchone()
+        job_rev = rev_row['job_rev'] if rev_row else None
+
+        # Generate report data by comparing BOM vs Inventory
+        # INNER JOIN: only include BOM items that have inventory matches
+        # Excludes items on MFG Floor and only uses latest revision
+        cursor.execute("""
+            SELECT
+                b.line as line_no,
+                b.aci_pn,
+                w.pcn,
+                b.mpn,
+                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
+                w.item as item,
+                COALESCE(w.loc_to, '') as location,
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                b.man as manufacturer,
+                b."DESC" as description
+            FROM pcb_inventory."tblBOM" b
+            INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+            WHERE b.job = %s
+                AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+            ORDER BY
+                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
+                b.line
+        """, (job, job, job))
+        matched_items = cursor.fetchall()
+
+        if not matched_items:
+            flash(f'No inventory matches found for job {job} BOM items.', 'warning')
+            return redirect(url_for('shortage_report'))
+
+        # Calculate REQ for each item and count shortages
+        report_items = []
+        shortage_count = 0
+        for item in matched_items:
+            qty = int(item['qty'] or 0)
+            req = qty * order_qty
+            on_hand = int(item['qty_on_hand'] or 0)
+            item['req'] = req
+            item['order_qty'] = order_qty
+            if on_hand < req:
+                shortage_count += 1
+            report_items.append(item)
+
+        # Calculate costs
+        total_cost = sum(
+            float(item['qty'] or 0) * float(item['unit_cost'] or 0)
+            for item in report_items
+        )
+        shortage_cost = sum(
+            float(item['req'] or 0) * float(item['unit_cost'] or 0)
+            for item in report_items if item['qty_on_hand'] < item['req']
+        )
+
+        # Create the report header
+        username = session.get('username', 'Unknown')
+        cursor.execute("""
+            INSERT INTO pcb_inventory."tblShortageReport"
+            (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (job, report_name, total_bom_lines, shortage_count, total_cost, shortage_cost, username, notes, order_qty, job_rev))
+        report_id = cursor.fetchone()['id']
+
+        # Insert all matched line items (items found in inventory)
+        for item in report_items:
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblShortageReportItems"
+                (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
+                 item, location, unit_cost, line_cost, manufacturer, description, req)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
+                item['qty'], item['qty_on_hand'], order_qty,
+                item['item'], item['location'], float(item['unit_cost'] or 0),
+                float(item['qty'] or 0) * float(item['unit_cost'] or 0),
+                item['manufacturer'], item['description'], item['req']
+            ))
+
+        conn.commit()
+        flash(f'Shortage report generated! {len(report_items)} items matched inventory, {shortage_count} have shortages.', 'success')
+        return redirect(url_for('view_shortage_report', report_id=report_id))
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error generating shortage report: {e}")
+        flash(f"Error generating report: {e}", 'danger')
+        return redirect(url_for('shortage_report'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/shortage_report/view/<int:report_id>')
+@require_auth
+def view_shortage_report(report_id):
+    """View a saved shortage report."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get report header
+        cursor.execute("""
+            SELECT id, job, report_name, total_lines, shortage_lines,
+                   total_cost, shortage_cost, created_by, created_at, notes, order_qty, job_rev
+            FROM pcb_inventory."tblShortageReport"
+            WHERE id = %s
+        """, (report_id,))
+        report = cursor.fetchone()
+
+        if not report:
+            flash('Report not found.', 'danger')
+            return redirect(url_for('shortage_report'))
+
+        # Get report line items (exclude MFG Floor items)
+        cursor.execute("""
+            SELECT line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
+                   item, location, unit_cost, line_cost, manufacturer, description, req
+            FROM pcb_inventory."tblShortageReportItems"
+            WHERE report_id = %s AND COALESCE(location, '') != 'MFG Floor'
+            ORDER BY
+                CASE WHEN line_no ~ '^[0-9]+$' THEN CAST(line_no AS INTEGER) ELSE 999999 END,
+                line_no
+        """, (report_id,))
+        items = cursor.fetchall()
+
+        return render_template('shortage_report_view.html', report=report, items=items,
+                                       column_definitions=SHORTAGE_EXPORT_COLUMNS)
+
+    except Exception as e:
+        logger.error(f"Error viewing shortage report: {e}")
+        flash(f"Error loading report: {e}", 'danger')
+        return redirect(url_for('shortage_report'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/shortage_report/export/<int:report_id>', methods=['GET', 'POST'])
+@require_auth
+def export_shortage_report(report_id):
+    """Export shortage report to Excel with optional column customization."""
+    conn = None
+    try:
+        # Parse column config from POST body, or use defaults
+        if request.method == 'POST' and request.is_json:
+            config = request.get_json()
+            selected_columns = config.get('columns', [])
+            highlighted_columns = set(config.get('highlighted', []))
+            export_filter = config.get('filter', 'all')
+        else:
+            selected_columns = [c['key'] for c in SHORTAGE_EXPORT_COLUMNS if c['default']]
+            highlighted_columns = set()
+            export_filter = 'all'
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get report header
+        cursor.execute("""
+            SELECT job, report_name, total_lines, shortage_lines,
+                   total_cost, shortage_cost, created_by, created_at, order_qty, job_rev
+            FROM pcb_inventory."tblShortageReport"
+            WHERE id = %s
+        """, (report_id,))
+        report = cursor.fetchone()
+
+        if not report:
+            return jsonify({'success': False, 'error': 'Report not found.'}), 404
+
+        # Get report line items (exclude MFG Floor)
+        cursor.execute("""
+            SELECT line_no, aci_pn, pcn, mpn, qty_required as qty, order_qty,
+                   req, item, qty_on_hand, location,
+                   unit_cost, line_cost, manufacturer, description
+            FROM pcb_inventory."tblShortageReportItems"
+            WHERE report_id = %s AND COALESCE(location, '') != 'MFG Floor'
+            ORDER BY
+                CASE WHEN line_no ~ '^[0-9]+$' THEN CAST(line_no AS INTEGER) ELSE 999999 END,
+                line_no
+        """, (report_id,))
+        items = cursor.fetchall()
+
+        # Apply filter: shortages only
+        if export_filter == 'shortages_only':
+            items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
+
+        # Build active column list from selection
+        col_registry = {c['key']: c for c in SHORTAGE_EXPORT_COLUMNS}
+        active_cols = [col_registry[k] for k in selected_columns if k in col_registry]
+        if not active_cols:
+            active_cols = [col_registry[k] for k in [c['key'] for c in SHORTAGE_EXPORT_COLUMNS if c['default']]]
+        num_cols = len(active_cols)
+        last_col = get_column_letter(num_cols)
+
+        # Create Excel workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Shortage Report"
+
+        # Styles
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1E40AF", end_color="1E40AF", fill_type="solid")
+        shortage_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        highlight_fill = PatternFill(start_color="FFFDE7", end_color="FFFDE7", fill_type="solid")
+        border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+
+        # Title section
+        ws.merge_cells(f'A1:{last_col}1')
+        ws['A1'] = f"Shortage Report - Job: {report['job']}"
+        ws['A1'].font = Font(bold=True, size=16)
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A2:{last_col}2')
+        ws['A2'] = f"Generated: {report['created_at'].strftime('%Y-%m-%d %H:%M') if report['created_at'] else 'N/A'} by {report['created_by']} | Rev: {report.get('job_rev', 'N/A')} | Order Qty: {report.get('order_qty', 'N/A')}"
+        ws['A2'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A3:{last_col}3')
+        ws['A3'] = f"Shortage Items: {report['shortage_lines']} of {report['total_lines']} BOM lines"
+        ws['A3'].alignment = Alignment(horizontal='center')
+
+        # Headers (row 5)
+        for col_idx, col_def in enumerate(active_cols, 1):
+            cell = ws.cell(row=5, column=col_idx, value=col_def['label'])
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center')
+
+        # Data rows
+        for row_idx, item in enumerate(items, 6):
+            is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
+            for col_idx, col_def in enumerate(active_cols, 1):
+                value = get_export_cell_value(item, col_def['key'])
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = border
+                if is_shortage:
+                    cell.fill = shortage_fill
+                elif col_def['key'] in highlighted_columns:
+                    cell.fill = highlight_fill
+
+        # Column widths
+        for col_idx, col_def in enumerate(active_cols, 1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = col_def['width']
+
+        # Save to BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        # Create response
+        filename = f"Shortage_Report_{report['job']}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting shortage report: {e}")
+        if request.method == 'POST':
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash(f"Error exporting report: {e}", 'danger')
+        return redirect(url_for('view_shortage_report', report_id=report_id))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/shortage_report/delete/<int:report_id>', methods=['POST'])
+@require_auth
+def delete_shortage_report(report_id):
+    """Delete a saved shortage report."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        # Delete report (cascade will delete items)
+        cursor.execute('DELETE FROM pcb_inventory."tblShortageReport" WHERE id = %s', (report_id,))
+        conn.commit()
+
+        flash('Report deleted successfully.', 'success')
+        return redirect(url_for('shortage_report'))
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error deleting shortage report: {e}")
+        flash(f"Error deleting report: {e}", 'danger')
+        return redirect(url_for('shortage_report'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/api/bom/jobs')
+@require_auth
+def get_bom_jobs():
+    """API endpoint to get list of jobs with BOMs."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT DISTINCT job FROM pcb_inventory."tblBOM"
+            WHERE job IS NOT NULL AND job != ''
+            ORDER BY job
+        """)
+        jobs = [row['job'] for row in cursor.fetchall()]
+
+        return jsonify({'success': True, 'jobs': jobs})
+
+    except Exception as e:
+        logger.error(f"Error getting BOM jobs: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+# ============================================================================
+# END SHORTAGE REPORT ROUTES
+# ============================================================================
+
 @app.route('/sources')
 @require_auth
 def sources():
@@ -3320,6 +3822,7 @@ def sso_login():
 
         if username:
             session['username'] = username
+            session['full_name'] = data.get('full_name', username.split('@')[0].capitalize())
             session['role'] = role
             session['itar_authorized'] = itar_authorized
             session['aci_auth_token'] = auth_token
@@ -3336,7 +3839,79 @@ def sso_login():
         logger.error(f"SSO login error: {e}")
         return jsonify({'success': False, 'error': 'SSO login failed'}), 500
 
-# Authentication now handled by ACI Dashboard SSO
+@app.route('/sso/callback')
+@csrf.exempt
+def sso_callback():
+    """Handle SSO callback redirect from ACI FORGE.
+    Validates the SSO JWT token and creates a KOSH session."""
+    from jose import jwt as jose_jwt, JWTError as JoseJWTError
+
+    sso_secret = os.environ.get('SSO_SECRET_KEY', '')
+    token = request.args.get('token', '')
+
+    if not token:
+        flash('SSO login failed: No token provided.', 'danger')
+        return redirect(url_for('login'))
+
+    if not sso_secret:
+        flash('SSO not configured on this server.', 'danger')
+        return redirect(url_for('login'))
+
+    try:
+        payload = jose_jwt.decode(token, sso_secret, algorithms=['HS256'])
+    except JoseJWTError:
+        flash('SSO login failed: Invalid or expired token.', 'danger')
+        return redirect(url_for('login'))
+
+    if payload.get('type') != 'sso':
+        flash('SSO login failed: Invalid token type.', 'danger')
+        return redirect(url_for('login'))
+
+    if payload.get('target_app') != 'kosh':
+        flash('SSO login failed: Token not intended for this application.', 'danger')
+        return redirect(url_for('login'))
+
+    username = payload.get('sub', '')
+
+    # Look up user in KOSH database
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT id, userid, username, userlogin, usersecurity
+            FROM pcb_inventory."tblUser"
+            WHERE userlogin = %s
+        """, (username,))
+        user = cursor.fetchone()
+
+        if not user:
+            flash(f'SSO login failed: User "{username}" not found in KOSH. Contact your administrator.', 'danger')
+            return redirect(url_for('login'))
+
+        # Create KOSH session (same as regular login)
+        session.clear()
+        session['user_id'] = user['id']
+        session['username'] = user['userlogin']
+        session['full_name'] = user['username']
+        session['role'] = user['usersecurity']
+        session['itar_authorized'] = True if user['usersecurity'] == 'Admin' else False
+        session['sso_login'] = True
+        session.permanent = True
+        conn.commit()
+
+        logger.info(f"SSO login successful for user: {username}")
+        flash(f'Welcome, {user["username"] or username}! (Signed in via ACI FORGE)', 'success')
+        return redirect(url_for('index'))
+
+    except Exception as e:
+        logger.error(f"SSO callback error: {e}")
+        flash('SSO login failed: Internal error.', 'danger')
+        return redirect(url_for('login'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
 
 # API Endpoints
 @app.route('/api/inventory')
@@ -3950,9 +4525,9 @@ def api_generate_pcn():
             # Insert into tblTransaction
             cursor.execute("""
                 INSERT INTO pcb_inventory."tblTransaction"
-                (record_no, trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s)
-                RETURNING id, pcn, item, mpn, dc, tranqty, created_at
+                (record_no, trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s)
+                RETURNING id, pcn, item, mpn, dc, msd, tranqty, created_at
             """, (
                 None,  # record_no
                 'PCN Generation',  # trantype
@@ -3960,6 +4535,7 @@ def api_generate_pcn():
                 pcn_number,  # pcn
                 data.get('mpn'),  # mpn
                 data.get('date_code'),  # dc
+                data.get('msd'),  # msd
                 data.get('quantity', '0'),  # tranqty
                 '-',  # loc_from
                 data.get('location', 'Inventory'),  # loc_to
@@ -4067,7 +4643,7 @@ def api_get_pcn_details(pcn_number):
 
             # If not in tblWhse_Inventory, try tblTransaction
             cursor.execute("""
-                SELECT pcn, item, mpn, tranqty, dc, loc_from, loc_to, wo, po, userid, created_at
+                SELECT pcn, item, mpn, tranqty, dc, msd, loc_from, loc_to, wo, po, userid, created_at
                 FROM pcb_inventory."tblTransaction"
                 WHERE pcn::text = %s
                 ORDER BY created_at DESC
@@ -4085,6 +4661,7 @@ def api_get_pcn_details(pcn_number):
                     'mpn': transaction_record['mpn'],
                     'quantity': transaction_record['tranqty'],
                     'date_code': transaction_record['dc'],
+                    'msd': transaction_record['msd'],
                     'location': transaction_record['loc_to'],
                     'location_from': transaction_record['loc_from'],
                     'work_order': transaction_record['wo'],
@@ -4863,7 +5440,7 @@ def api_bom_parse():
                     if next_cell_value:
                         metadata['cust_rev'] = next_cell_value
 
-                # Build Quantity / WO Quantity
+                # Order Qty / WO Quantity
                 if ('BUILD QTY' in cell_text or 'BUILD QUANTITY' in cell_text or
                     'WO QTY' in cell_text or 'WORK ORDER QTY' in cell_text):
                     if next_cell_value:
@@ -5060,6 +5637,45 @@ def api_bom_load():
                     cur.execute("ROLLBACK TO SAVEPOINT before_bom_insert")
                     raise Exception(f"Failed to insert line {item.get('line')}: {e}")
 
+            # Upsert tblJob record
+            username = session.get('username', 'Unknown')
+            build_qty_val = metadata.get('build_qty')
+            try:
+                build_qty_int = int(build_qty_val) if build_qty_val else 1
+            except (ValueError, TypeError):
+                build_qty_int = 1
+
+            cur.execute("""
+                INSERT INTO pcb_inventory."tblJob"
+                (job_number, customer, cust_pn, build_qty, job_rev, cust_rev, last_rev,
+                 wo_number, notes, status, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'New', %s)
+                ON CONFLICT (job_number) DO UPDATE SET
+                    customer = EXCLUDED.customer,
+                    cust_pn = EXCLUDED.cust_pn,
+                    build_qty = EXCLUDED.build_qty,
+                    job_rev = EXCLUDED.job_rev,
+                    cust_rev = EXCLUDED.cust_rev,
+                    last_rev = EXCLUDED.last_rev,
+                    wo_number = EXCLUDED.wo_number,
+                    notes = EXCLUDED.notes,
+                    updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+                RETURNING id
+            """, (
+                job,
+                metadata.get('customer', ''),
+                metadata.get('cust_pn', ''),
+                build_qty_int,
+                metadata.get('job_rev', ''),
+                metadata.get('cust_rev', ''),
+                metadata.get('last_rev', ''),
+                metadata.get('wo_number', ''),
+                metadata.get('notes', ''),
+                username
+            ))
+            job_id = cur.fetchone()[0]
+            logger.info(f"Upserted tblJob record for {job} (id={job_id})")
+
             conn.commit()
             logger.info(f"Loaded {inserted_count} BOM items for Job {job}")
 
@@ -5067,6 +5683,7 @@ def api_bom_load():
                 'success': True,
                 'message': 'BOM loaded successfully',
                 'job': job,
+                'job_id': job_id,
                 'inserted_count': inserted_count,
                 'deleted_count': deleted_count
             })
@@ -5092,6 +5709,1020 @@ def api_bom_load():
 def inventory_history_page():
     """Inventory history page showing all changes"""
     return render_template('history.html')
+
+# Admin Login Notifications
+@app.route('/admin/notifications')
+@require_auth
+def admin_notifications():
+    """Admin page to view login notifications - only accessible by Admin role or authorized users."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get all login notifications, most recent first
+        cursor.execute("""
+            SELECT id, user_id, username, full_name, login_time, ip_address, seen, seen_at
+            FROM pcb_inventory."tblLoginNotifications"
+            ORDER BY login_time DESC
+            LIMIT 100
+        """)
+        notifications = cursor.fetchall()
+
+        # Count unseen notifications
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pcb_inventory."tblLoginNotifications" WHERE seen = FALSE
+        """)
+        unseen_count = cursor.fetchone()['count']
+
+        return render_template('admin_notifications.html',
+                             notifications=notifications,
+                             unseen_count=unseen_count)
+
+    except Exception as e:
+        logger.error(f"Error loading admin notifications: {e}")
+        flash('Error loading notifications.', 'danger')
+        return redirect(url_for('index'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/admin/notifications/mark-seen', methods=['POST'])
+@require_auth
+def mark_notifications_seen():
+    """Mark all notifications as seen."""
+    if not is_admin_user():
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE pcb_inventory."tblLoginNotifications"
+            SET seen = TRUE, seen_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+            WHERE seen = FALSE
+        """)
+        conn.commit()
+
+        return jsonify({'success': True, 'message': 'All notifications marked as seen'})
+
+    except Exception as e:
+        logger.error(f"Error marking notifications as seen: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/admin/notifications/clear', methods=['POST'])
+@require_auth
+def clear_notifications():
+    """Clear all old notifications (keep last 7 days)."""
+    if not is_admin_user():
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            DELETE FROM pcb_inventory."tblLoginNotifications"
+            WHERE login_time < NOW() - INTERVAL '7 days'
+        """)
+        deleted_count = cursor.rowcount
+        conn.commit()
+
+        return jsonify({'success': True, 'message': f'Cleared {deleted_count} old notifications'})
+
+    except Exception as e:
+        logger.error(f"Error clearing notifications: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/api/admin/notification-count')
+@require_auth
+def get_notification_count():
+    """Get count of unseen login notifications for admin."""
+    if not is_admin_user():
+        return jsonify({'count': 0})
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pcb_inventory."tblLoginNotifications" WHERE seen = FALSE
+        """)
+        result = cursor.fetchone()
+
+        return jsonify({'count': result['count']})
+
+    except Exception as e:
+        logger.error(f"Error getting notification count: {e}")
+        return jsonify({'count': 0})
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+# ==================== Jobs Management ====================
+
+@app.route('/jobs')
+@require_auth
+def jobs_list():
+    """Jobs list page with search."""
+    search_query = request.args.get('q', '').strip()
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        if search_query:
+            cursor.execute("""
+                SELECT id, job_number, description, customer, cust_pn, build_qty,
+                       job_rev, status, created_by, created_at
+                FROM pcb_inventory."tblJob"
+                WHERE job_number ILIKE %s OR customer ILIKE %s OR description ILIKE %s
+                ORDER BY created_at DESC
+            """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%'))
+        else:
+            cursor.execute("""
+                SELECT id, job_number, description, customer, cust_pn, build_qty,
+                       job_rev, status, created_by, created_at
+                FROM pcb_inventory."tblJob"
+                ORDER BY created_at DESC
+            """)
+        jobs = cursor.fetchall()
+
+        return render_template('jobs.html', jobs=jobs, search_query=search_query)
+
+    except Exception as e:
+        logger.error(f"Error loading jobs list: {e}")
+        flash(f"Error loading jobs: {e}", 'danger')
+        return render_template('jobs.html', jobs=[], search_query=search_query)
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>')
+@require_auth
+def job_detail(job_number):
+    """Job detail page with live inventory lookup."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get job record
+        cursor.execute("""
+            SELECT * FROM pcb_inventory."tblJob"
+            WHERE job_number = %s
+        """, (job_number,))
+        job = cursor.fetchone()
+
+        if not job:
+            flash(f'Job {job_number} not found.', 'danger')
+            return redirect(url_for('jobs_list'))
+
+        build_qty = int(job['build_qty'] or 1)
+        order_qty = int(job['order_qty'] or 1)
+
+        # Get latest revision for this job
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job_number,))
+        rev_row = cursor.fetchone()
+        job_rev = rev_row['job_rev'] if rev_row else None
+
+        # Get BOM lines with live inventory lookup
+        # Exclude MFG Floor items and filter to latest rev
+        cursor.execute("""
+            SELECT
+                b.line as line_no,
+                b.aci_pn,
+                b."DESC" as description,
+                b.mpn,
+                b.man as manufacturer,
+                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(w.onhandqty), 0) as on_hand,
+                w.pcn,
+                w.item,
+                COALESCE(w.loc_to, '') as location,
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+            FROM pcb_inventory."tblBOM" b
+            LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+            WHERE b.job = %s
+                AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            GROUP BY b.line, b.aci_pn, b."DESC", b.mpn, b.man, b.qty, b.cost, w.pcn, w.item, w.loc_to
+            ORDER BY
+                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
+                b.line
+        """, (job_number, job_number, job_number))
+        raw_lines = cursor.fetchall()
+
+        # Calculate REQ and shortage for each line
+        # REQ = QTY per board × Order QTY (the actual production quantity)
+        job_lines = []
+        shortage_count = 0
+        for line in raw_lines:
+            qty = int(line['qty'] or 0)
+            req = qty * order_qty
+            on_hand = int(line['on_hand'] or 0)
+            shortage = on_hand - req
+            location = line['location'] if on_hand > 0 else ''
+
+            job_lines.append({
+                'line_no': line['line_no'],
+                'aci_pn': line['aci_pn'],
+                'description': line['description'],
+                'mpn': line['mpn'],
+                'manufacturer': line['manufacturer'],
+                'qty': qty,
+                'req': req,
+                'on_hand': on_hand,
+                'pcn': line['pcn'],
+                'item': line['item'],
+                'location': location,
+                'unit_cost': float(line['unit_cost'] or 0),
+                'shortage': shortage
+            })
+            if shortage < 0:
+                shortage_count += 1
+
+        # Compute status from inventory data
+        total_bom_lines = len(set(l['line_no'] for l in raw_lines))
+        lines_with_location = len(set(l['line_no'] for l in job_lines if l['location']))
+
+        if lines_with_location == 0:
+            computed_status = 'New'
+        elif lines_with_location < total_bom_lines:
+            computed_status = 'In Prep'
+        else:
+            computed_status = 'In Mfg'
+
+        # Update status if changed
+        if computed_status != job['status']:
+            cursor.execute("""
+                UPDATE pcb_inventory."tblJob"
+                SET status = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+                WHERE job_number = %s
+            """, (computed_status, job_number))
+            conn.commit()
+            job['status'] = computed_status
+
+        # Fetch related shortage reports for this job
+        cursor.execute("""
+            SELECT id, report_name, order_qty, total_lines, shortage_lines,
+                   created_by, created_at
+            FROM pcb_inventory."tblShortageReport"
+            WHERE job = %s
+            ORDER BY created_at DESC
+        """, (job_number,))
+        related_reports = cursor.fetchall()
+
+        return render_template('job_detail.html',
+                             job=job,
+                             lines=job_lines,
+                             shortage_count=shortage_count,
+                             total_lines=total_bom_lines,
+                             related_reports=related_reports,
+                             job_rev=job_rev,
+                             column_definitions=SHORTAGE_EXPORT_COLUMNS)
+
+    except Exception as e:
+        logger.error(f"Error loading job detail: {e}")
+        flash(f"Error loading job: {e}", 'danger')
+        return redirect(url_for('jobs_list'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/update-build-qty', methods=['POST'])
+@require_auth
+def job_update_build_qty(job_number):
+    """Update build quantity for a job."""
+    conn = None
+    try:
+        data = request.get_json()
+        build_qty = int(data.get('build_qty', 1))
+        if build_qty < 1:
+            build_qty = 1
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE pcb_inventory."tblJob"
+            SET build_qty = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+            WHERE job_number = %s
+        """, (build_qty, job_number))
+        conn.commit()
+
+        return jsonify({'success': True, 'build_qty': build_qty})
+    except Exception as e:
+        logger.error(f"Error updating build qty: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/update-order-qty', methods=['POST'])
+@require_auth
+def job_update_order_qty(job_number):
+    """Update order quantity for a job."""
+    conn = None
+    try:
+        data = request.get_json()
+        order_qty = int(data.get('order_qty', 1))
+        if order_qty < 1:
+            order_qty = 1
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE pcb_inventory."tblJob"
+            SET order_qty = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+            WHERE job_number = %s
+        """, (order_qty, job_number))
+        conn.commit()
+
+        return jsonify({'success': True, 'order_qty': order_qty})
+    except Exception as e:
+        logger.error(f"Error updating order qty: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/generate-shortage', methods=['POST'])
+@require_auth
+def job_generate_shortage(job_number):
+    """Generate a shortage report from the job page."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get job record
+        cursor.execute("""
+            SELECT * FROM pcb_inventory."tblJob" WHERE job_number = %s
+        """, (job_number,))
+        job = cursor.fetchone()
+
+        if not job:
+            flash(f'Job {job_number} not found.', 'danger')
+            return redirect(url_for('jobs_list'))
+
+        order_qty = int(job['order_qty'] or 1)
+
+        # Default report name
+        report_name = f"Shortage Report - {job_number} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        # Get latest revision for this job
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job_number,))
+        rev_row = cursor.fetchone()
+        job_rev = rev_row['job_rev'] if rev_row else None
+
+        # Get total BOM line count (latest rev only)
+        if job_rev:
+            cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s AND job_rev = %s", (job_number, job_rev))
+        else:
+            cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job_number,))
+        total_bom_lines = cursor.fetchone()['count']
+
+        if total_bom_lines == 0:
+            flash(f'No BOM data found for job {job_number}. Please load BOM first.', 'warning')
+            return redirect(url_for('job_detail', job_number=job_number))
+
+        # INNER JOIN: only BOM items with inventory matches
+        # Exclude MFG Floor items and filter to latest rev
+        cursor.execute("""
+            SELECT
+                b.line as line_no,
+                b.aci_pn,
+                w.pcn,
+                b.mpn,
+                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
+                w.item as item,
+                COALESCE(w.loc_to, '') as location,
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                b.man as manufacturer,
+                b."DESC" as description
+            FROM pcb_inventory."tblBOM" b
+            INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+            WHERE b.job = %s
+                AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+            ORDER BY
+                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
+                b.line
+        """, (job_number, job_number, job_number))
+        matched_items = cursor.fetchall()
+
+        if not matched_items:
+            flash(f'No inventory matches found for job {job_number} BOM items.', 'warning')
+            return redirect(url_for('job_detail', job_number=job_number))
+
+        # Calculate REQ and count shortages
+        report_items = []
+        shortage_count = 0
+        for item in matched_items:
+            qty = int(item['qty'] or 0)
+            req = qty * order_qty
+            on_hand = int(item['qty_on_hand'] or 0)
+            item['req'] = req
+            item['order_qty'] = order_qty
+            if on_hand < req:
+                shortage_count += 1
+            report_items.append(item)
+
+        total_cost = sum(float(item['qty'] or 0) * float(item['unit_cost'] or 0) for item in report_items)
+        shortage_cost = sum(float(item['req'] or 0) * float(item['unit_cost'] or 0) for item in report_items if item['qty_on_hand'] < item['req'])
+
+        username = session.get('username', 'Unknown')
+        cursor.execute("""
+            INSERT INTO pcb_inventory."tblShortageReport"
+            (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (job_number, report_name, total_bom_lines, shortage_count, total_cost, shortage_cost, username, '', order_qty, job_rev))
+        report_id = cursor.fetchone()['id']
+
+        for item in report_items:
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblShortageReportItems"
+                (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
+                 item, location, unit_cost, line_cost, manufacturer, description, req)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
+                item['qty'], item['qty_on_hand'], order_qty,
+                item['item'], item['location'], float(item['unit_cost'] or 0),
+                float(item['qty'] or 0) * float(item['unit_cost'] or 0),
+                item['manufacturer'], item['description'], item['req']
+            ))
+
+        conn.commit()
+        flash(f'Shortage report generated! {len(report_items)} items matched, {shortage_count} shortages.', 'success')
+        return redirect(url_for('job_detail', job_number=job_number))
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error generating shortage report from job: {e}")
+        flash(f"Error generating report: {e}", 'danger')
+        return redirect(url_for('job_detail', job_number=job_number))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/export', methods=['GET', 'POST'])
+@require_auth
+def job_export(job_number):
+    """Export job report to Excel with optional column customization."""
+    conn = None
+    try:
+        # Parse column config from POST body, or use defaults
+        if request.method == 'POST' and request.is_json:
+            config = request.get_json()
+            selected_columns = config.get('columns', [])
+            highlighted_columns = set(config.get('highlighted', []))
+            export_filter = config.get('filter', 'all')
+        else:
+            selected_columns = [c['key'] for c in SHORTAGE_EXPORT_COLUMNS if c['default']]
+            highlighted_columns = set()
+            export_filter = 'all'
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get job record
+        cursor.execute("""
+            SELECT * FROM pcb_inventory."tblJob" WHERE job_number = %s
+        """, (job_number,))
+        job = cursor.fetchone()
+
+        if not job:
+            return jsonify({'success': False, 'error': f'Job {job_number} not found.'}), 404
+
+        build_qty = int(job['build_qty'] or 1)
+        order_qty = int(job['order_qty'] or 1)
+
+        # Get latest revision
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job_number,))
+        rev_row = cursor.fetchone()
+        job_rev = rev_row['job_rev'] if rev_row else None
+
+        # Get BOM lines with live inventory lookup
+        cursor.execute("""
+            SELECT
+                b.line as line_no,
+                b.aci_pn,
+                b.mpn,
+                b.man as manufacturer,
+                b."DESC" as description,
+                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(w.onhandqty), 0) as on_hand,
+                w.pcn,
+                w.item,
+                COALESCE(w.loc_to, '') as location,
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+            FROM pcb_inventory."tblBOM" b
+            INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+            WHERE b.job = %s
+                AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+            ORDER BY
+                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
+                b.line
+        """, (job_number, job_number, job_number))
+        raw_items = cursor.fetchall()
+
+        # Enrich items with calculated fields
+        items = []
+        for item in raw_items:
+            qty = int(item['qty'] or 0)
+            on_hand = int(item['on_hand'] or 0)
+            req = qty * order_qty
+            item['qty_on_hand'] = on_hand
+            item['order_qty'] = order_qty
+            item['req'] = req
+            item['line_cost'] = float(qty) * float(item['unit_cost'] or 0)
+            items.append(item)
+
+        # Apply filter: shortages only
+        if export_filter == 'shortages_only':
+            items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
+
+        # Build active column list from selection
+        col_registry = {c['key']: c for c in SHORTAGE_EXPORT_COLUMNS}
+        active_cols = [col_registry[k] for k in selected_columns if k in col_registry]
+        if not active_cols:
+            active_cols = [col_registry[k] for k in [c['key'] for c in SHORTAGE_EXPORT_COLUMNS if c['default']]]
+        num_cols = len(active_cols)
+        last_col = get_column_letter(num_cols)
+
+        # Build Excel workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Job Report"
+
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1E40AF", end_color="1E40AF", fill_type="solid")
+        shortage_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        highlight_fill = PatternFill(start_color="FFFDE7", end_color="FFFDE7", fill_type="solid")
+        border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+
+        # Title
+        ws.merge_cells(f'A1:{last_col}1')
+        ws['A1'] = f"Job Report - {job_number}"
+        ws['A1'].font = Font(bold=True, size=16)
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A2:{last_col}2')
+        ws['A2'] = f"Customer: {job.get('customer', 'N/A')} | Rev: {job_rev or 'N/A'} | Order Qty: {order_qty}"
+        ws['A2'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A3:{last_col}3')
+        ws['A3'] = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Items: {len(items)}"
+        ws['A3'].alignment = Alignment(horizontal='center')
+
+        # Headers
+        for col_idx, col_def in enumerate(active_cols, 1):
+            cell = ws.cell(row=5, column=col_idx, value=col_def['label'])
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center')
+
+        # Data rows
+        for row_idx, item in enumerate(items, 6):
+            is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
+            for col_idx, col_def in enumerate(active_cols, 1):
+                value = get_export_cell_value(item, col_def['key'], order_qty)
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = border
+                if is_shortage:
+                    cell.fill = shortage_fill
+                elif col_def['key'] in highlighted_columns:
+                    cell.fill = highlight_fill
+
+        # Column widths
+        for col_idx, col_def in enumerate(active_cols, 1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = col_def['width']
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"Job_{job_number}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting job: {e}")
+        if request.method == 'POST':
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash(f"Error exporting job: {e}", 'danger')
+        return redirect(url_for('job_detail', job_number=job_number))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/delete', methods=['POST'])
+@require_auth
+def job_delete(job_number):
+    """Delete a job record."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('DELETE FROM pcb_inventory."tblJob" WHERE job_number = %s', (job_number,))
+        if cursor.rowcount == 0:
+            flash(f'Job {job_number} not found.', 'danger')
+        else:
+            conn.commit()
+            flash(f'Job {job_number} deleted successfully.', 'success')
+
+        return redirect(url_for('jobs_list'))
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error deleting job: {e}")
+        flash(f"Error deleting job: {e}", 'danger')
+        return redirect(url_for('jobs_list'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/create-revision', methods=['POST'])
+@require_auth
+def job_create_revision(job_number):
+    """Create a new revision by archiving old BOM lines and rebuilding the job under a new rev."""
+    conn = None
+    try:
+        data = request.get_json()
+        new_rev = data.get('new_rev', '').strip()
+        if not new_rev:
+            return jsonify({'success': False, 'error': 'Revision identifier is required.'}), 400
+
+        username = session.get('username', 'unknown')
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get the current revision
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job_number,))
+        rev_row = cursor.fetchone()
+        current_rev = rev_row['job_rev'] if rev_row else None
+
+        # Check if new rev already exists in archive (prevent reuse of archived rev names)
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pcb_inventory."tblBOM_Archive"
+            WHERE job = %s AND job_rev = %s
+        """, (job_number, new_rev))
+        if cursor.fetchone()['count'] > 0:
+            return jsonify({'success': False, 'error': f'Revision {new_rev} was previously used for this job.'}), 400
+
+        # Get current BOM lines to verify they exist
+        if current_rev:
+            cursor.execute("""
+                SELECT id, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
+                       job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at
+                FROM pcb_inventory."tblBOM"
+                WHERE job = %s AND job_rev = %s
+            """, (job_number, current_rev))
+        else:
+            cursor.execute("""
+                SELECT id, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
+                       job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at
+                FROM pcb_inventory."tblBOM"
+                WHERE job = %s
+            """, (job_number,))
+
+        source_lines = cursor.fetchall()
+        if not source_lines:
+            return jsonify({'success': False, 'error': 'No BOM lines found for this job.'}), 400
+
+        # Step 1: Archive the old BOM lines
+        for line in source_lines:
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblBOM_Archive"
+                (original_id, job, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
+                 job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at, archived_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                line['id'], job_number, line['line'], line['DESC'], line['man'], line['mpn'],
+                line['aci_pn'], line['qty'], line['pou'], line['loc'], line['cost'],
+                line['job_rev'], line['last_rev'], line['cust'], line['cust_pn'], line['cust_rev'],
+                line['date_loaded'], line['created_at'], username
+            ))
+
+        # Step 2: Update existing BOM lines in place with new revision (no duplication)
+        if current_rev:
+            cursor.execute("""
+                UPDATE pcb_inventory."tblBOM"
+                SET job_rev = %s, last_rev = %s,
+                    date_loaded = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YYYY HH24:MI:SS')
+                WHERE job = %s AND job_rev = %s
+            """, (new_rev, current_rev, job_number, current_rev))
+        else:
+            cursor.execute("""
+                UPDATE pcb_inventory."tblBOM"
+                SET job_rev = %s, last_rev = %s,
+                    date_loaded = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YYYY HH24:MI:SS')
+                WHERE job = %s
+            """, (new_rev, current_rev or '', job_number))
+
+        # Step 3: Update tblJob with new revision info
+        cursor.execute("""
+            UPDATE pcb_inventory."tblJob"
+            SET job_rev = %s, last_rev = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+            WHERE job_number = %s
+        """, (new_rev, current_rev or '', job_number))
+
+        conn.commit()
+        return jsonify({'success': True, 'message': f'Revision {new_rev} created. Old revision {current_rev or "N/A"} archived. {len(source_lines)} lines updated.'})
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error creating revision: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/api/bom/job-check/<job_number>')
+@require_auth
+def api_job_check(job_number):
+    """Check if a job already exists in tblJob."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT id, job_number, status, build_qty, customer
+            FROM pcb_inventory."tblJob" WHERE job_number = %s
+        """, (job_number,))
+        job = cursor.fetchone()
+
+        if job:
+            return jsonify({'exists': True, 'job': dict(job)})
+        return jsonify({'exists': False})
+
+    except Exception as e:
+        logger.error(f"Error checking job: {e}")
+        return jsonify({'exists': False, 'error': str(e)})
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+# ==================== Admin User Management CRUD ====================
+
+@app.route('/admin/users')
+@require_auth
+def admin_users():
+    """Admin page to manage users - CRUD operations."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute("""
+                SELECT id, userid, username, userlogin, usersecurity
+                FROM pcb_inventory."tblUser"
+                ORDER BY id
+            """)
+            users = cursor.fetchall()
+        return render_template('user_management.html', users=users)
+    except Exception as e:
+        logger.error(f"Error loading users: {e}")
+        flash('Error loading users.', 'danger')
+        return redirect(url_for('index'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/admin/users/create', methods=['POST'])
+@require_auth
+def admin_create_user():
+    """Create a new user."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    userlogin = request.form.get('userlogin', '').strip().lower()
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    usersecurity = request.form.get('usersecurity', 'user').strip()
+
+    # Validation
+    if not userlogin:
+        flash('Login username is required.', 'danger')
+        return redirect(url_for('admin_users'))
+    if not username:
+        username = userlogin
+    if not password or len(password) < 6:
+        flash('Password must be at least 6 characters.', 'danger')
+        return redirect(url_for('admin_users'))
+    if usersecurity not in ('Admin', 'user'):
+        usersecurity = 'user'
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Check for duplicate userlogin
+            cursor.execute("""
+                SELECT id FROM pcb_inventory."tblUser" WHERE userlogin = %s
+            """, (userlogin,))
+            if cursor.fetchone():
+                flash(f'Username "{userlogin}" already exists.', 'danger')
+                return redirect(url_for('admin_users'))
+
+            # Hash password
+            password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblUser" (username, userlogin, password, usersecurity)
+                VALUES (%s, %s, %s, %s)
+            """, (username, userlogin, password_hash, usersecurity))
+            conn.commit()
+
+        flash(f'User "{userlogin}" created successfully.', 'success')
+        logger.info(f"Admin {session.get('username')} created user: {userlogin}")
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        flash('Error creating user.', 'danger')
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/edit/<int:user_id>', methods=['POST'])
+@require_auth
+def admin_edit_user(user_id):
+    """Edit an existing user."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    username = request.form.get('username', '').strip()
+    usersecurity = request.form.get('usersecurity', 'user').strip()
+    new_password = request.form.get('password', '').strip()
+
+    if not username:
+        flash('Full name is required.', 'danger')
+        return redirect(url_for('admin_users'))
+    if usersecurity not in ('Admin', 'user'):
+        usersecurity = 'user'
+
+    # Prevent admin from demoting themselves
+    if user_id == session.get('user_id') and usersecurity != 'Admin':
+        flash('You cannot change your own role away from Admin.', 'danger')
+        return redirect(url_for('admin_users'))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            if new_password:
+                if len(new_password) < 6:
+                    flash('Password must be at least 6 characters.', 'danger')
+                    return redirect(url_for('admin_users'))
+                password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                cursor.execute("""
+                    UPDATE pcb_inventory."tblUser"
+                    SET username = %s, usersecurity = %s, password = %s
+                    WHERE id = %s
+                """, (username, usersecurity, password_hash, user_id))
+            else:
+                cursor.execute("""
+                    UPDATE pcb_inventory."tblUser"
+                    SET username = %s, usersecurity = %s
+                    WHERE id = %s
+                """, (username, usersecurity, user_id))
+            conn.commit()
+
+        flash('User updated successfully.', 'success')
+        logger.info(f"Admin {session.get('username')} edited user ID: {user_id}")
+    except Exception as e:
+        logger.error(f"Error editing user: {e}")
+        flash('Error updating user.', 'danger')
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/delete/<int:user_id>', methods=['POST'])
+@require_auth
+def admin_delete_user(user_id):
+    """Delete a user."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    # Prevent admin from deleting themselves
+    if user_id == session.get('user_id'):
+        flash('You cannot delete your own account.', 'danger')
+        return redirect(url_for('admin_users'))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Get username for logging
+            cursor.execute("""
+                SELECT userlogin FROM pcb_inventory."tblUser" WHERE id = %s
+            """, (user_id,))
+            user = cursor.fetchone()
+
+            if not user:
+                flash('User not found.', 'danger')
+                return redirect(url_for('admin_users'))
+
+            cursor.execute("""
+                DELETE FROM pcb_inventory."tblUser" WHERE id = %s
+            """, (user_id,))
+            conn.commit()
+
+        flash(f'User "{user["userlogin"]}" deleted successfully.', 'success')
+        logger.info(f"Admin {session.get('username')} deleted user: {user['userlogin']}")
+    except Exception as e:
+        logger.error(f"Error deleting user: {e}")
+        flash('Error deleting user.', 'danger')
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+    return redirect(url_for('admin_users'))
+
 
 @app.errorhandler(CSRFError)
 def handle_csrf_error(e):

@@ -1518,7 +1518,7 @@ def require_itar_access(f):
 def load_current_user():
     """Load current user information into g object."""
     g.current_user = {
-        'username': session.get('username', 'anonymous'),
+        'username': session.get('full_name', session.get('username', 'anonymous')),
         'role': session.get('role', 'USER'),
         'itar_authorized': session.get('itar_authorized', False)
     }
@@ -2884,7 +2884,79 @@ def sso_login():
         logger.error(f"SSO login error: {e}")
         return jsonify({'success': False, 'error': 'SSO login failed'}), 500
 
-# Authentication now handled by ACI Dashboard SSO
+@app.route('/sso/callback')
+@csrf.exempt
+def sso_callback():
+    """Handle SSO callback redirect from ACI FORGE.
+    Validates the SSO JWT token and creates a KOSH session."""
+    from jose import jwt as jose_jwt, JWTError as JoseJWTError
+
+    sso_secret = os.environ.get('SSO_SECRET_KEY', '')
+    token = request.args.get('token', '')
+
+    if not token:
+        flash('SSO login failed: No token provided.', 'danger')
+        return redirect(url_for('login'))
+
+    if not sso_secret:
+        flash('SSO not configured on this server.', 'danger')
+        return redirect(url_for('login'))
+
+    try:
+        payload = jose_jwt.decode(token, sso_secret, algorithms=['HS256'])
+    except JoseJWTError:
+        flash('SSO login failed: Invalid or expired token.', 'danger')
+        return redirect(url_for('login'))
+
+    if payload.get('type') != 'sso':
+        flash('SSO login failed: Invalid token type.', 'danger')
+        return redirect(url_for('login'))
+
+    if payload.get('target_app') != 'kosh':
+        flash('SSO login failed: Token not intended for this application.', 'danger')
+        return redirect(url_for('login'))
+
+    username = payload.get('sub', '')
+
+    # Look up user in KOSH database
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("""
+            SELECT id, userid, username, userlogin, usersecurity
+            FROM pcb_inventory."tblUser"
+            WHERE userlogin = %s
+        """, (username,))
+        user = cursor.fetchone()
+
+        if not user:
+            flash(f'SSO login failed: User "{username}" not found in KOSH. Contact your administrator.', 'danger')
+            return redirect(url_for('login'))
+
+        # Create KOSH session (same as regular login)
+        session.clear()
+        session['user_id'] = user['id']
+        session['username'] = user['userlogin']
+        session['full_name'] = user['username']
+        session['role'] = user['usersecurity']
+        session['itar_authorized'] = True if user['usersecurity'] == 'Admin' else False
+        session['sso_login'] = True
+        session.permanent = True
+        conn.commit()
+
+        logger.info(f"SSO login successful for user: {username}")
+        flash(f'Welcome, {user["username"] or username}! (Signed in via ACI FORGE)', 'success')
+        return redirect(url_for('index'))
+
+    except Exception as e:
+        logger.error(f"SSO callback error: {e}")
+        flash('SSO login failed: Internal error.', 'danger')
+        return redirect(url_for('login'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
 
 # API Endpoints
 @app.route('/api/inventory')
