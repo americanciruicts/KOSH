@@ -40,6 +40,7 @@ services:
       - POSTGRES_PASSWORD=stockpick_pass
       - DATABASE_URL=postgresql://stockpick_user:stockpick_pass@aci-database:5432/kosh
       - FLASK_RUN_PORT=5000
+      - SSO_SECRET_KEY=D4T_WY71xsF0_UB4QjIzlAjVlj-M5kEG0jsIws6isvPn5NNK4s5-_E_--WI6C6YT6jkerJ3EHncBEuG3tK5Rlg
     expose:
       - "5000"
     # Using external database, no dependency needed

@@ -1,0 +1,532 @@
+{% extends "base.html" %}
+{% block title %}Job {{ job.job_number }} - KOSH{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        nav, .navbar, .modern-navbar, footer, .btn, button, .dark-mode-toggle,
+        .no-print, .dropdown {
+            display: none !important;
+        }
+        body { padding-top: 0 !important; margin: 0 !important; background: white !important; }
+        .container-fluid { margin-top: 0 !important; padding: 20px !important; }
+        .card { border: none !important; box-shadow: none !important; }
+        .table { font-size: 11px !important; }
+        .shortage-row { background-color: #fee2e2 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+    .shortage-row { background-color: #fee2e2 !important; }
+    [data-theme="dark"] .shortage-row { background-color: rgba(239, 68, 68, 0.2) !important; }
+    .stat-card { text-align: center; padding: 15px; }
+    .stat-card .stat-value { font-size: 2rem; font-weight: 700; }
+    .stat-card .stat-label { font-size: 0.875rem; color: var(--text-secondary); }
+</style>
+{% endblock %}
+
+{% block page_header %}
+<div class="row mb-2" style="background: linear-gradient(135deg, #d1fae5 0%, #6ee7b7 50%, #34d399 100%); border-radius: 12px; padding: 15px 20px; margin: 0;">
+    <div class="col-md-8">
+        <h4 class="mb-1">
+            <i class="bi bi-briefcase-fill me-2"></i>
+            Job {{ job.job_number }}
+        </h1>
+        <p class="mb-0">
+            Customer: <strong>{{ job.customer or 'N/A' }}</strong> |
+            Customer P/N: <strong>{{ job.cust_pn or 'N/A' }}</strong>
+            {% if job_rev %} | Rev: <strong>{{ job_rev }}</strong>{% endif %}
+        </p>
+    </div>
+    <div class="col-md-4 text-end no-print">
+        <a href="{{ url_for('jobs_list') }}" class="btn btn-light">
+            <i class="bi bi-arrow-left me-1"></i>Back to Jobs
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Action Toolbar -->
+<div class="d-flex flex-wrap gap-2 mb-3 no-print justify-content-center">
+    <button onclick="showExportModal('{{ url_for('job_export', job_number=job.job_number) }}')" class="btn btn-success">
+        <i class="bi bi-file-earmark-excel me-1"></i>Export Job View
+    </button>
+    <form method="POST" action="{{ url_for('job_generate_shortage', job_number=job.job_number) }}" class="d-inline m-0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn btn-warning" onclick="return confirm('Generate shortage report using Order Qty {{ job.order_qty or 1 }}?')">
+            <i class="bi bi-exclamation-triangle me-1"></i>Generate Shortage Report
+        </button>
+    </form>
+    <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#createRevisionModal">
+        <i class="bi bi-plus-circle me-1"></i>Create Revision
+    </button>
+    <button onclick="window.print()" class="btn btn-outline-secondary">
+        <i class="bi bi-printer me-1"></i>Print
+    </button>
+</div>
+
+<!-- Summary Statistics -->
+<div class="row mb-3">
+    <div class="col-md-4 col-6">
+        <div class="card">
+            <div class="card-body stat-card">
+                <div class="stat-value text-success" id="orderQtyDisplay" style="cursor: pointer;" title="Click to edit" onclick="editOrderQty()">
+                    {{ job.order_qty or 1 }}
+                    <i class="bi bi-pencil-fill" style="font-size: 0.75rem; opacity: 0.5;"></i>
+                </div>
+                <div id="orderQtyEdit" style="display: none;">
+                    <div class="input-group input-group-sm mx-auto" style="max-width: 160px;">
+                        <input type="number" class="form-control text-center fw-bold" id="orderQtyInput" value="{{ job.order_qty or 1 }}" min="1">
+                        <button class="btn btn-success" onclick="saveOrderQty()"><i class="bi bi-check-lg"></i></button>
+                        <button class="btn btn-outline-secondary" onclick="cancelOrderQty()"><i class="bi bi-x-lg"></i></button>
+                    </div>
+                </div>
+                <div class="stat-label">Order Qty</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 col-6">
+        <div class="card">
+            <div class="card-body stat-card">
+                <div class="stat-value text-info">{{ total_lines }}</div>
+                <div class="stat-label">Total BOM Lines</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4 col-6">
+        <div class="card">
+            <div class="card-body stat-card">
+                <div class="stat-value text-danger">{{ shortage_count }}</div>
+                <div class="stat-label">Shortage Items</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if job.notes %}
+<div class="alert alert-info mb-4">
+    <i class="bi bi-sticky me-2"></i><strong>Notes:</strong> {{ job.notes }}
+</div>
+{% endif %}
+
+<!-- Job Details Card -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h6 class="mb-0"><i class="bi bi-info-circle me-2"></i>Job Details</h6>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-2"><strong>Job Rev:</strong> {{ job.job_rev or '-' }}</div>
+            <div class="col-md-2"><strong>Cust Rev:</strong> {{ job.cust_rev or '-' }}</div>
+            <div class="col-md-2"><strong>Last Rev:</strong> {{ job.last_rev or '-' }}</div>
+            <div class="col-md-2"><strong>WO #:</strong> {{ job.wo_number or '-' }}</div>
+            <div class="col-md-2"><strong>Created By:</strong> {{ job.created_by or '-' }}</div>
+            <div class="col-md-2"><strong>Created:</strong> {{ job.created_at.strftime('%m/%d/%Y') if job.created_at else '-' }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Line Items Table -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-table me-2"></i>Job Line Items ({{ lines|length }} rows)</h5>
+        <div class="no-print">
+            <span class="badge bg-danger me-2">Red = Shortage</span>
+            <input type="text" class="form-control form-control-sm d-inline-block" style="width: 200px;"
+                   id="searchInput" placeholder="Search parts...">
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-striped mb-0" id="jobTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Line</th>
+                        <th>PCN</th>
+                        <th>ACI PN</th>
+                        <th>Description</th>
+                        <th>MPN</th>
+                        <th class="text-center">QTY</th>
+                        <th class="text-center">REQ</th>
+                        <th class="text-center">On Hand</th>
+                        <th>Location</th>
+                        <th class="text-center">Shortage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for line in lines %}
+                    <tr class="{% if line.shortage < 0 %}shortage-row{% endif %}">
+                        <td>{{ line.line_no }}</td>
+                        <td><small>{{ line.pcn or '-' }}</small></td>
+                        <td><strong>{{ line.aci_pn or '-' }}</strong></td>
+                        <td>
+                            <small>{{ line.description or '-' }}</small>
+                            {% if line.manufacturer %}
+                            <br><span class="text-muted" style="font-size: 0.75rem;">{{ line.manufacturer }}</span>
+                            {% endif %}
+                        </td>
+                        <td><small>{{ line.mpn or '-' }}</small></td>
+                        <td class="text-center">{{ line.qty }}</td>
+                        <td class="text-center"><strong>{{ line.req }}</strong></td>
+                        <td class="text-center">
+                            {% if line.on_hand == 0 %}
+                            <span class="text-danger fw-bold">0</span>
+                            {% else %}
+                            {{ line.on_hand }}
+                            {% endif %}
+                        </td>
+                        <td>{{ line.location or '-' }}</td>
+                        <td class="text-center">
+                            {% if line.shortage < 0 %}
+                            <span class="badge bg-danger">{{ line.shortage }}</span>
+                            {% elif line.shortage == 0 %}
+                            <span class="text-muted">0</span>
+                            {% else %}
+                            <span class="text-success">+{{ line.shortage }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <td colspan="6" class="text-end"><strong>Totals:</strong></td>
+                        <td class="text-center"><strong>{{ lines|map(attribute='req')|sum }}</strong></td>
+                        <td class="text-center"><strong>{{ lines|map(attribute='on_hand')|sum }}</strong></td>
+                        <td></td>
+                        <td class="text-center">
+                            <strong class="{% if lines|map(attribute='shortage')|sum < 0 %}text-danger{% else %}text-success{% endif %}">
+                                {{ lines|map(attribute='shortage')|sum }}
+                            </strong>
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Related Shortage Reports -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Shortage Reports ({{ related_reports|length }})</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if related_reports %}
+        <div class="table-responsive">
+            <table class="table table-hover table-striped mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Report Name</th>
+                        <th class="text-center">Order QTY</th>
+                        <th class="text-center">Total Lines</th>
+                        <th class="text-center">Shortages</th>
+                        <th>Created By</th>
+                        <th>Created</th>
+                        <th class="text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for report in related_reports %}
+                    <tr>
+                        <td>{{ report.report_name }}</td>
+                        <td class="text-center">{{ report.order_qty or '-' }}</td>
+                        <td class="text-center">{{ report.total_lines }}</td>
+                        <td class="text-center">
+                            {% if report.shortage_lines > 0 %}
+                            <span class="badge bg-danger">{{ report.shortage_lines }}</span>
+                            {% else %}
+                            <span class="badge bg-success">0</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ report.created_by }}</td>
+                        <td>{{ report.created_at.strftime('%m/%d/%Y %H:%M') if report.created_at else '-' }}</td>
+                        <td class="text-center">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('view_shortage_report', report_id=report.id) }}" class="btn btn-outline-primary" title="View">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <button type="button" class="btn btn-outline-success" title="Export Excel"
+                                        onclick="showExportModal('{{ url_for('export_shortage_report', report_id=report.id) }}')">
+                                    <i class="bi bi-file-earmark-excel"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-4">
+            <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+            <p class="mt-2 mb-0">No shortage reports generated yet. Click "Generate Shortage Report" above to create one.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+<!-- Create Revision Modal -->
+<div class="modal fade" id="createRevisionModal" tabindex="-1" aria-labelledby="createRevisionModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="createRevisionModalLabel">
+                    <i class="bi bi-plus-circle me-2"></i>Create New Revision
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>Create a new revision for Job <strong>{{ job.job_number }}</strong>.</p>
+                {% if job_rev %}
+                <p class="text-muted">Current revision: <strong>{{ job_rev }}</strong></p>
+                {% endif %}
+                <div class="mb-3">
+                    <label for="newRevInput" class="form-label">New Revision</label>
+                    <input type="text" class="form-control" id="newRevInput" placeholder="e.g., B, C, D..." maxlength="50">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-info" onclick="createRevision()">
+                    <i class="bi bi-plus-circle me-1"></i>Create Revision
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Export Configuration Modal -->
+<div class="modal fade" id="exportConfigModal" tabindex="-1" aria-labelledby="exportConfigModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="exportConfigModalLabel">
+                    <i class="bi bi-gear me-2"></i>Configure Excel Export
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Select columns to include, set their order, and optionally highlight columns with color.
+                </p>
+                <div class="mb-3 p-2 border rounded bg-light">
+                    <label class="form-label fw-bold mb-2"><i class="bi bi-funnel me-1"></i>Items to Export</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exportFilter" id="filterAll" value="all" checked>
+                        <label class="form-check-label" for="filterAll">All items</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exportFilter" id="filterShortages" value="shortages_only">
+                        <label class="form-check-label" for="filterShortages">Shortages only <span class="text-danger">(On Hand &lt; REQ)</span></label>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end mb-2">
+                    <button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="selectAllColumns()">Select All</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="deselectAllColumns()">Deselect All</button>
+                </div>
+                <ul class="list-group" id="columnList"></ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="exportBtn" onclick="executeExport()">
+                    <i class="bi bi-file-earmark-excel me-1"></i>Export Excel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.getElementById('searchInput').addEventListener('keyup', function() {
+        const searchText = this.value.toLowerCase();
+        const rows = document.querySelectorAll('#jobTable tbody tr');
+        rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(searchText) ? '' : 'none';
+        });
+    });
+
+    // Order Qty (order_qty) edit
+    function editOrderQty() {
+        document.getElementById('orderQtyDisplay').style.display = 'none';
+        document.getElementById('orderQtyEdit').style.display = 'block';
+        document.getElementById('orderQtyInput').focus();
+        document.getElementById('orderQtyInput').select();
+    }
+
+    function cancelOrderQty() {
+        document.getElementById('orderQtyDisplay').style.display = '';
+        document.getElementById('orderQtyEdit').style.display = 'none';
+    }
+
+    function saveOrderQty() {
+        const val = parseInt(document.getElementById('orderQtyInput').value) || 1;
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        fetch('{{ url_for("job_update_order_qty", job_number=job.job_number) }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({order_qty: val})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(err => alert('Error: ' + err.message));
+    }
+
+    document.getElementById('orderQtyInput').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') saveOrderQty();
+        if (e.key === 'Escape') cancelOrderQty();
+    });
+
+    // Export column configuration
+    const AVAILABLE_COLUMNS = {{ column_definitions | tojson }};
+    let currentExportUrl = '';
+
+    function initColumnList() {
+        const list = document.getElementById('columnList');
+        list.innerHTML = '';
+        AVAILABLE_COLUMNS.forEach(col => {
+            const li = document.createElement('li');
+            li.className = 'list-group-item d-flex align-items-center py-2';
+            li.dataset.key = col.key;
+            li.innerHTML = `
+                <input type="checkbox" class="form-check-input me-2 col-checkbox" ${col.default ? 'checked' : ''}>
+                <span class="flex-grow-1">${col.label}</span>
+                <button class="btn btn-sm btn-outline-warning me-1 highlight-btn" title="Highlight column in yellow" onclick="toggleHighlight(this)">
+                    <i class="bi bi-paint-bucket"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary me-1" title="Move up" onclick="moveColumn(this, -1)">
+                    <i class="bi bi-arrow-up"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" title="Move down" onclick="moveColumn(this, 1)">
+                    <i class="bi bi-arrow-down"></i>
+                </button>
+            `;
+            list.appendChild(li);
+        });
+    }
+
+    function toggleHighlight(btn) {
+        btn.classList.toggle('btn-outline-warning');
+        btn.classList.toggle('btn-warning');
+    }
+
+    function moveColumn(btn, direction) {
+        const li = btn.closest('li');
+        const list = li.parentElement;
+        if (direction === -1 && li.previousElementSibling) {
+            list.insertBefore(li, li.previousElementSibling);
+        } else if (direction === 1 && li.nextElementSibling) {
+            list.insertBefore(li.nextElementSibling, li);
+        }
+    }
+
+    function selectAllColumns() {
+        document.querySelectorAll('#columnList .col-checkbox').forEach(cb => cb.checked = true);
+    }
+
+    function deselectAllColumns() {
+        document.querySelectorAll('#columnList .col-checkbox').forEach(cb => cb.checked = false);
+    }
+
+    function executeExport() {
+        const items = document.querySelectorAll('#columnList li');
+        const columns = [];
+        const highlighted = [];
+
+        items.forEach(li => {
+            const checkbox = li.querySelector('.col-checkbox');
+            if (checkbox.checked) {
+                columns.push(li.dataset.key);
+                const hlBtn = li.querySelector('.highlight-btn');
+                if (hlBtn.classList.contains('btn-warning')) {
+                    highlighted.push(li.dataset.key);
+                }
+            }
+        });
+
+        if (columns.length === 0) {
+            alert('Please select at least one column.');
+            return;
+        }
+
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        const btn = document.getElementById('exportBtn');
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating...';
+        btn.disabled = true;
+
+        fetch(currentExportUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                columns: columns,
+                highlighted: highlighted,
+                filter: document.querySelector('input[name="exportFilter"]:checked').value
+            })
+        })
+        .then(resp => {
+            if (!resp.ok) throw new Error('Export failed');
+            const cd = resp.headers.get('Content-Disposition');
+            let filename = 'Export.xlsx';
+            if (cd) {
+                const match = cd.match(/filename="?([^"]+)"?/);
+                if (match) filename = match[1];
+            }
+            return resp.blob().then(blob => ({ blob, filename }));
+        })
+        .then(({ blob, filename }) => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(a.href);
+            bootstrap.Modal.getInstance(document.getElementById('exportConfigModal')).hide();
+        })
+        .catch(err => alert('Export failed: ' + err.message))
+        .finally(() => {
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+        });
+    }
+
+    function showExportModal(url) {
+        currentExportUrl = url;
+        initColumnList();
+        new bootstrap.Modal(document.getElementById('exportConfigModal')).show();
+    }
+
+    // Create Revision
+    function createRevision() {
+        const newRev = document.getElementById('newRevInput').value.trim();
+        if (!newRev) {
+            alert('Please enter a revision identifier.');
+            return;
+        }
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        fetch('{{ url_for("job_create_revision", job_number=job.job_number) }}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({new_rev: newRev})
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(err => alert('Error: ' + err.message));
+    }
+</script>
+{% endblock %}

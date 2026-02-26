@@ -67,6 +67,34 @@
         </div>
     </div>
 
+    <!-- Job Exists Modal -->
+    <div class="modal fade" id="jobExistsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Job Already Exists</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Job <strong id="existingJobNumber"></strong> already exists in the system.</p>
+                    <div class="mb-2">
+                        <small class="text-muted">Status: <span id="existingJobStatus" class="badge bg-primary"></span></small><br>
+                        <small class="text-muted">Customer: <span id="existingJobCustomer"></span></small>
+                    </div>
+                    <p>Would you like to <strong>reload the BOM</strong> (replace existing data) or <strong>view the job</strong>?</p>
+                </div>
+                <div class="modal-footer">
+                    <a id="viewJobLink" href="#" class="btn btn-primary">
+                        <i class="bi bi-eye me-1"></i>View Job
+                    </a>
+                    <button type="button" class="btn btn-warning" data-bs-dismiss="modal">
+                        <i class="bi bi-arrow-repeat me-1"></i>Reload BOM
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- BOM Preview Section -->
     <div class="row mt-4" id="previewSection" style="display: none;">
         <div class="col-12">
@@ -93,7 +121,7 @@
                             <span id="metaCustPN">-</span>
                         </div>
                         <div class="col-md-3">
-                            <strong>Build Qty:</strong><br>
+                            <strong>Order Qty:</strong><br>
                             <span id="metaBuildQty" class="text-success fw-bold">-</span>
                         </div>
                     </div>
@@ -212,6 +240,28 @@ document.addEventListener('DOMContentLoaded', function() {
             if (result.success) {
                 parsedBomData = result;
                 displayPreview(result);
+
+                // Check if job already exists
+                const jobNum = result.metadata.job;
+                if (jobNum) {
+                    try {
+                        const checkResp = await fetch(`/api/bom/job-check/${encodeURIComponent(jobNum)}`, {
+                            headers: { 'X-CSRFToken': csrfToken }
+                        });
+                        const checkResult = await checkResp.json();
+                        if (checkResult.exists) {
+                            document.getElementById('existingJobNumber').textContent = jobNum;
+                            document.getElementById('existingJobStatus').textContent = checkResult.job.status || 'New';
+                            document.getElementById('existingJobCustomer').textContent = checkResult.job.customer || '-';
+                            document.getElementById('viewJobLink').href = `/jobs/${encodeURIComponent(jobNum)}`;
+                            const modal = new bootstrap.Modal(document.getElementById('jobExistsModal'));
+                            modal.show();
+                        }
+                    } catch (e) {
+                        console.warn('Job check failed (non-critical):', e);
+                    }
+                }
+
                 showStatus(`Successfully parsed ${result.total_items} items from BOM`, 'success');
             } else {
                 showStatus('Error: ' + result.error, 'danger');
@@ -263,13 +313,12 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             if (result.success) {
-                showStatus(`Success! Loaded ${result.inserted_count} items. Deleted ${result.deleted_count} old records.`, 'success');
+                showStatus(`Success! Loaded ${result.inserted_count} items for Job ${result.job}.`, 'success');
 
-                // Auto-reset after 2 seconds so user can immediately upload another file
+                // Redirect to job detail page after 1.5 seconds
                 setTimeout(() => {
-                    resetForm();
-                    showStatus('Ready for next upload', 'success');
-                }, 2000);
+                    window.location.href = `/jobs/${encodeURIComponent(result.job)}`;
+                }, 1500);
             } else {
                 showStatus('Load failed: ' + result.error + '. Please try again.', 'danger');
                 loadBtn.disabled = false;

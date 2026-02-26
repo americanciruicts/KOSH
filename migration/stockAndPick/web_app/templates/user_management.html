@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block title %}User Management - KOSH{% endblock %}
+
+{% block page_header %}
+<div class="row mb-4" style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 50%, #93c5fd 100%); border-radius: 12px; padding: 25px; margin: 0;">
+    <div class="col-12">
+        <h1 class="mb-2">
+            <i class="bi bi-people-fill me-2"></i>
+            User Management
+        </h1>
+        <p class="mb-0">Create, edit, and manage user accounts and access roles</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Create New User Card -->
+    <div class="col-lg-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-person-plus me-2"></i>Create New User</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('admin_create_user') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="mb-3">
+                        <label for="userlogin" class="form-label">Login Username <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="userlogin" name="userlogin"
+                               placeholder="e.g., john" required autocomplete="off">
+                        <div class="form-text">Used to log in to the system</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Full Name</label>
+                        <input type="text" class="form-control" id="username" name="username"
+                               placeholder="e.g., John Smith" autocomplete="off">
+                        <div class="form-text">Display name (defaults to login username)</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="password" name="password"
+                                   placeholder="Min 6 characters" required minlength="6">
+                            <button type="button" class="btn btn-outline-secondary" onclick="generatePassword()" title="Auto-generate password">
+                                <i class="bi bi-key-fill"></i>
+                            </button>
+                        </div>
+                        <div id="generatedPasswordAlert" class="alert alert-success mt-2 py-2 px-3 d-none" style="font-size: 0.85rem;">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span><i class="bi bi-clipboard-check me-1"></i>Generated: <strong id="generatedPasswordText"></strong></span>
+                                <button type="button" class="btn btn-sm btn-outline-success py-0 px-2" onclick="copyPassword()">
+                                    <i class="bi bi-copy"></i> Copy
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="usersecurity" class="form-label">Role <span class="text-danger">*</span></label>
+                        <select class="form-select" id="usersecurity" name="usersecurity">
+                            <option value="user" selected>User - Standard access</option>
+                            <option value="Admin">Admin - Full access</option>
+                        </select>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-person-plus me-2"></i>Create User
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Users Table -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-people me-2"></i>All Users</h5>
+                <span class="badge bg-primary">{{ users|length }} users</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Full Name</th>
+                                <th>Login Username</th>
+                                <th>Role</th>
+                                <th style="width: 140px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for user in users %}
+                            <tr>
+                                <td><strong>{{ user.username }}</strong></td>
+                                <td>{{ user.userlogin }}</td>
+                                <td>
+                                    {% if user.usersecurity == 'Admin' %}
+                                    <span class="badge bg-primary">Admin</span>
+                                    {% else %}
+                                    <span class="badge bg-success">User</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <button type="button" class="btn btn-outline-primary"
+                                                onclick="openEditModal({{ user.id }}, '{{ user.username }}', '{{ user.userlogin }}', '{{ user.usersecurity }}')"
+                                                title="Edit">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        {% if user.id != session.get('user_id') %}
+                                        <button type="button" class="btn btn-outline-danger"
+                                                onclick="openDeleteModal({{ user.id }}, '{{ user.userlogin }}')"
+                                                title="Delete">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit User Modal -->
+<div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="editForm" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Edit User</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Login Username</label>
+                        <input type="text" class="form-control" id="editUserlogin" disabled>
+                        <div class="form-text">Login username cannot be changed</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editUsername" class="form-label">Full Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="editUsername" name="username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editRole" class="form-label">Role</label>
+                        <select class="form-select" id="editRole" name="usersecurity">
+                            <option value="user">User - Standard access</option>
+                            <option value="Admin">Admin - Full access</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="editPassword" class="form-label">New Password</label>
+                        <input type="password" class="form-control" id="editPassword" name="password"
+                               placeholder="Leave blank to keep current" minlength="6">
+                        <div class="form-text">Only fill this if you want to change the password</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-lg me-1"></i>Save Changes
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2 text-danger"></i>Delete User</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete user <strong id="deleteUsername"></strong>? This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST" style="display: inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-trash me-1"></i>Delete
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function openEditModal(userId, username, userlogin, role) {
+        document.getElementById('editForm').action = '/admin/users/edit/' + userId;
+        document.getElementById('editUserlogin').value = userlogin;
+        document.getElementById('editUsername').value = username;
+        document.getElementById('editRole').value = role;
+        document.getElementById('editPassword').value = '';
+        const modal = new bootstrap.Modal(document.getElementById('editModal'));
+        modal.show();
+    }
+
+    function openDeleteModal(userId, userlogin) {
+        document.getElementById('deleteForm').action = '/admin/users/delete/' + userId;
+        document.getElementById('deleteUsername').textContent = userlogin;
+        const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+        modal.show();
+    }
+
+    function generatePassword() {
+        const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+        const lower = 'abcdefghjkmnpqrstuvwxyz';
+        const digits = '23456789';
+        const all = upper + lower + digits;
+        // Ensure at least one of each type
+        let password = '';
+        password += upper[Math.floor(Math.random() * upper.length)];
+        password += lower[Math.floor(Math.random() * lower.length)];
+        password += digits[Math.floor(Math.random() * digits.length)];
+        for (let i = 0; i < 5; i++) {
+            password += all[Math.floor(Math.random() * all.length)];
+        }
+        // Shuffle the password
+        password = password.split('').sort(() => Math.random() - 0.5).join('');
+
+        const input = document.getElementById('password');
+        input.value = password;
+        input.type = 'text';
+
+        const alert = document.getElementById('generatedPasswordAlert');
+        document.getElementById('generatedPasswordText').textContent = password;
+        alert.classList.remove('d-none');
+    }
+
+    function copyPassword() {
+        const password = document.getElementById('password').value;
+        navigator.clipboard.writeText(password).then(() => {
+            const btn = event.currentTarget;
+            btn.innerHTML = '<i class="bi bi-check-lg"></i> Copied';
+            setTimeout(() => { btn.innerHTML = '<i class="bi bi-copy"></i> Copy'; }, 2000);
+        });
+    }
+</script>
+{% endblock %}
