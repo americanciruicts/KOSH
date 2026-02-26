@@ -1816,14 +1816,14 @@
         <div class="dropdown">
             <button class="btn btn-light dropdown-toggle user-profile-btn" type="button" id="userMenu" data-bs-toggle="dropdown" aria-expanded="false">
                 <div class="user-avatar">
-                    {{ session.get('username', 'U')[0]|upper }}
+                    {{ session.get('full_name', session.get('username', 'U'))[0]|upper }}
                 </div>
-                <span class="user-name">{{ session.get('username', 'User') }}</span>
+                <span class="user-name">{{ session.get('full_name', session.get('username', 'User')) }}</span>
             </button>
             <ul class="dropdown-menu dropdown-menu-end user-dropdown" aria-labelledby="userMenu">
                 <li class="user-dropdown-header">
                     <div class="user-avatar-large">
-                        {{ session.get('username', 'U')[0]|upper }}
+                        {{ session.get('full_name', session.get('username', 'U'))[0]|upper }}
                     </div>
                     <div class="user-info">
                         <div class="user-full-name">{{ session.get('full_name', session.get('username', 'User')) }}</div>
