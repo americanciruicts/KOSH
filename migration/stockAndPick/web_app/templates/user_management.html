@@ -96,7 +96,7 @@
                             {% for user in users %}
                             <tr>
                                 <td><strong>{{ user.username }}</strong></td>
-                                <td>{{ user.userlogin }}</td>
+                                <td><code style="font-size: inherit; color: inherit;"><!--email_off-->{{ user.userlogin }}<!--/email_off--></code></td>
                                 <td>
                                     {% if user.usersecurity == 'Admin' %}
                                     <span class="badge bg-primary">Admin</span>
