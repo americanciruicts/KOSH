@@ -142,17 +142,10 @@
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                {{ form.po.label(class="form-label fw-semibold text-dark") }}
-                                {{ form.po(class="form-control form-control-lg border-2", placeholder="e.g., JOB-2024-001, Job-12345", id="poInput") }}
-                                {% if form.po.errors %}
-                                    <div class="invalid-feedback d-block">
-                                        {% for error in form.po.errors %}
-                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
+                                {{ form.mpn.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.mpn(class="form-control form-control-lg border-2", placeholder="e.g., RC0603FR-07383KL", id="mpnInput", readonly=true) }}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-briefcase"></i> Job Number (optional)
+                                    <i class="bi bi-cpu"></i> Auto-filled from PCN scan
                                 </div>
                             </div>
                         </div>
@@ -191,7 +184,7 @@
                     <div class="mb-3">
                         {{ form.quantity.label(class="form-label fw-bold") }}
                         <div class="input-group input-group-lg">
-                            {{ form.quantity(class="form-control", placeholder="Enter quantity", min="1", step="1", id="quantityInput") }}
+                            {{ form.quantity(class="form-control", placeholder="Enter quantity", min="0", step="1", id="quantityInput") }}
                             <span class="input-group-text">units</span>
                         </div>
                         {% if form.quantity.errors %}
@@ -449,8 +442,6 @@ document.addEventListener('DOMContentLoaded', function() {
         'pcnInput',      // PCN Number
         'mpnInput',      // MPN
         'partNumberInput', // Part Number/Item
-        'poInput',       // PO
-        'partNumberInput',      // Job Number
         'quantityInput'  // Quantity
     ];
 
@@ -549,10 +540,26 @@ function checkInventory() {
                 const item = data.data[0];
                 currentInventoryCheck = item;
                 console.log('Inventory found:', item);
-                showAvailableQuantity(`Available: ${item.qty} units at ${item.location}`, 'success');
+
+                const qty = parseInt(item.qty) || 0;
+                if (qty > 0) {
+                    showAvailableQuantity(`Available: ${qty} units at ${item.location}`, 'success');
+                } else {
+                    showAvailableQuantity(`Item found but 0 units available at ${item.location || 'N/A'}`, 'warning');
+                }
 
                 // Update quantity input max value
-                document.getElementById('quantityInput').max = item.qty;
+                document.getElementById('quantityInput').max = qty;
+
+                // Auto-populate quantity when looking up a specific PCN
+                // (user can still edit the value)
+                if (pcn && qty > 0) {
+                    const qtyInput = document.getElementById('quantityInput');
+                    if (qtyInput && !qtyInput.value) {
+                        qtyInput.value = qty;
+                        console.log('✅ Auto-filled quantity from PCN lookup:', qty);
+                    }
+                }
 
                 // Check expiration status
                 if (item.expiration) {
@@ -561,9 +568,21 @@ function checkInventory() {
                     hideExpirationWarning();
                 }
             } else {
+                // If the job field value is numeric and not found, it might be a PCN
+                // Auto-redirect to PCN lookup
+                if (/^\d+$/.test(job.trim()) && !pcn) {
+                    console.log('Job not found but looks like a PCN number, trying PCN lookup for:', job.trim());
+                    const pcnInput = document.getElementById('pcnInput');
+                    if (pcnInput) {
+                        pcnInput.value = job.trim();
+                        document.getElementById('partNumberInput').value = '';
+                        fetchAndPopulatePCNDetails(job.trim());
+                        return;
+                    }
+                }
                 currentInventoryCheck = null;
-                console.warn('No inventory found for job:', job, 'type:', pcbType);
-                showAvailableQuantity(`Job "${job}" with type "${pcbType}" not found in inventory`, 'danger');
+                console.warn('No inventory found for job:', job);
+                showAvailableQuantity(`Item "${job}" not found in warehouse inventory`, 'danger');
                 document.getElementById('quantityInput').max = '';
                 hideExpirationWarning();
             }
@@ -784,8 +803,8 @@ function showConfirmationModal() {
     const quantity = parseInt(document.getElementById('quantityInput').value);
     const pcbType = 'Bare'; // Default PCB type since field was removed
 
-    if (!job || !quantity) {
-        alert('Please fill in all required fields: Job Number and Quantity');
+    if (!job || (quantity !== 0 && !quantity) || isNaN(quantity) || quantity < 0) {
+        alert('Please fill in all required fields: Job Number and Quantity (>= 0)');
         return;
     }
 
@@ -834,7 +853,7 @@ function showConfirmationModal() {
                         }, 10000);
                     }
                 } else {
-                    alert(`Job ${job} with component type ${pcbType} not found in inventory. Please check your inputs.`);
+                    alert(`Item ${job} not found in warehouse inventory. Please check your inputs.`);
                     showAvailableQuantity('Not found in inventory', 'danger');
                 }
             })
@@ -895,7 +914,6 @@ function parseAndFillBarcode(code) {
             if (data.job) document.getElementById('partNumberInput').value = data.job;
             if (data.mpn) document.getElementById('mpnInput').value = data.mpn;
             if (data.part_number) document.getElementById('partNumberInput').value = data.part_number;
-            if (data.po) document.getElementById('poInput').value = data.po;
             if (data.quantity) document.getElementById('quantityInput').value = data.quantity;
             if (data.dc) document.getElementById('dc').value = data.dc;
             return;
@@ -949,7 +967,7 @@ function parseAndFillBarcode(code) {
                 // pcbType field removed - defaulting to 'Bare'
                 if (dateCode) document.getElementById('dc').value = dateCode;
                 if (msd) document.getElementById('msdInput').value = msd;
-                if (po) document.getElementById('poInput').value = po;
+                // po field removed
 
                 console.log('🎉 ALL FIELDS FILLED from barcode on PICK page!');
                 return; // Exit early - we're done!
@@ -1014,7 +1032,7 @@ function parseAndFillBarcode(code) {
             if (job) document.getElementById('partNumberInput').value = job;
             if (mpn) document.getElementById('mpnInput').value = mpn;
             if (partNumber) document.getElementById('partNumberInput').value = partNumber;
-            if (po) document.getElementById('poInput').value = po;
+            // po field removed
             if (quantity) document.getElementById('quantityInput').value = quantity;
             if (pcbType) document.getElementById('pcbTypeInput').value = pcbType;
             if (dateCode) document.getElementById('dc').value = dateCode;
@@ -1147,7 +1165,115 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
 
         const result = await response.json();
 
+        if (result.success && result.multiple) {
+            // Multiple items share this PCN - ask user to select the correct one
+            console.warn('Multiple items found for PCN:', pcnNumber, result.matches);
+            const selected = await showPCNSelectionDialog(pcnNumber, result.matches);
+            if (selected) {
+                const filtered = await fetch(`/api/pcn/details/${pcnNumber}?item=${encodeURIComponent(selected.job)}`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' }
+                });
+                const filteredResult = await filtered.json();
+                if (filteredResult.success && !filteredResult.multiple) {
+                    return fetchAndPopulatePCNDetailsFromData(pcnNumber, filteredResult);
+                }
+            }
+            return;
+        }
+
         if (result.success) {
+            return fetchAndPopulatePCNDetailsFromData(pcnNumber, result);
+        } else {
+            console.warn('PCN lookup failed:', result.error);
+        }
+
+    } catch (error) {
+        console.error('Error fetching PCN details:', error);
+    }
+}
+
+// Show selection dialog when multiple items share the same PCN
+function showPCNSelectionDialog(pcnNumber, matches) {
+    return new Promise((resolve) => {
+        let html = `<div class="modal fade" id="pcnSelectModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Multiple Items Found for PCN ${pcnNumber}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>This PCN is associated with multiple items. Please select the correct one:</p>
+                        <div class="list-group">`;
+
+        matches.forEach((m, i) => {
+            html += `<button type="button" class="list-group-item list-group-item-action pcn-select-btn" data-index="${i}">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Item: ${m.job || 'N/A'}</strong><br>
+                        <small class="text-muted">MPN: ${m.mpn || 'N/A'} | Qty: ${m.quantity || 0} | Loc: ${m.location || 'N/A'}</small>
+                    </div>
+                    <i class="bi bi-chevron-right"></i>
+                </div>
+            </button>`;
+        });
+
+        html += `</div></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        const existing = document.getElementById('pcnSelectModal');
+        if (existing) {
+            var oldModal = bootstrap.Modal.getInstance(existing);
+            if (oldModal) oldModal.dispose();
+            existing.remove();
+        }
+        // Also clean up any stale backdrops
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modalEl = document.getElementById('pcnSelectModal');
+        const modal = new bootstrap.Modal(modalEl);
+        let resolved = false;
+
+        modalEl.querySelectorAll('.pcn-select-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.index);
+                resolved = true;
+                const selected = matches[idx];
+                modal.hide();
+                // Wait for Bootstrap to fully clean up before resolving
+                setTimeout(() => {
+                    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+                    document.body.classList.remove('modal-open');
+                    document.body.style.removeProperty('overflow');
+                    document.body.style.removeProperty('padding-right');
+                    modalEl.remove();
+                    resolve(selected);
+                }, 300);
+            });
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('overflow');
+            document.body.style.removeProperty('padding-right');
+            modalEl.remove();
+            if (!resolved) resolve(null);
+        });
+
+        modal.show();
+    });
+}
+
+// Populate form fields from PCN details data
+function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
             console.log('PCN details fetched:', result);
 
             // Show a visual indicator that data is being auto-filled
@@ -1200,20 +1326,16 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
                 console.log('⚠️ No mpn in result');
             }
 
-            // DO NOT autofill Job Number field - user will manually input
-            // Job Number field (poInput) left empty for manual entry
-            console.log('⚠️ Job Number field left empty for manual entry');
-
-            if (result.quantity) {
-                const qtyInput = document.getElementById('quantityInput');
-                if (qtyInput) {
-                    qtyInput.value = result.quantity;
-                    console.log('✅ Filled Quantity:', result.quantity);
-                } else {
-                    console.error('❌ Quantity field not found!');
-                }
+            // Auto-populate quantity from PCN (editable by user)
+            const qtyInput = document.getElementById('quantityInput');
+            if (qtyInput) {
+                const qty = parseInt(result.quantity) || 0;
+                qtyInput.value = qty;
+                qtyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                qtyInput.dispatchEvent(new Event('change', { bubbles: true }));
+                console.log('✅ Auto-filled Quantity:', qty, '(editable)');
             } else {
-                console.log('⚠️ No quantity in result');
+                console.error('❌ Quantity field not found!');
             }
 
             if (result.date_code) {
@@ -1273,13 +1395,6 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
             `;
             document.body.appendChild(notification);
             setTimeout(() => notification.remove(), 4000);
-
-        } else {
-            console.warn('PCN lookup failed:', result.error);
-        }
-    } catch (error) {
-        console.error('Error fetching PCN details:', error);
-    }
 }
 </script>
 {% endblock %}

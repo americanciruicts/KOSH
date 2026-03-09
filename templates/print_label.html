@@ -5,7 +5,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <meta name="version" content="3.5-ULTRA-THIN">
+    <meta name="version" content="2.0-new-template">
     <title>{{ data.pcn_number }}</title>
     <style type="text/css">
         /* NEW TEMPLATE VERSION 2.0 - Page setup - exact 3x1 inch label */
@@ -26,8 +26,7 @@
         .label-box {
             width: 3in;
             height: 1in;
-            padding: 0.05in;
-            border: 2px solid black;
+            padding: 0.08in 0.12in;
             background: white;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             margin: 0 auto;
@@ -40,16 +39,16 @@
         /* Top section with PCN, Barcode, and QTY */
         .label-top {
             display: grid;
-            grid-template-columns: 1fr auto 0.8fr;
+            grid-template-columns: auto 1fr auto;
             align-items: center;
-            gap: 3px;
-            margin-bottom: 3px;
-            padding-bottom: 2px;
-            border-bottom: 1px solid #ddd;
+            gap: 6px;
+            margin-bottom: 4px;
+            padding-bottom: 3px;
+            border-bottom: 1.5px solid #000;
         }
 
         .pcn-section {
-            font-size: 13px;
+            font-size: 15px;
             font-weight: bold;
             color: #000;
         }
@@ -65,13 +64,13 @@
         }
 
         .qty-label {
-            font-size: 8px;
+            font-size: 9px;
             font-weight: bold;
-            color: #666;
+            color: #333;
         }
 
         .qty-value {
-            font-size: 14px;
+            font-size: 16px;
             font-weight: bold;
             color: #000;
         }
@@ -79,10 +78,10 @@
         /* Bottom section with details */
         .label-details {
             display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 5px;
-            font-size: 8px;
-            line-height: 1.4;
+            grid-template-columns: 1.8fr 1fr;
+            gap: 6px;
+            font-size: 10px;
+            line-height: 1.5;
             flex: 1;
             align-items: start;
         }
@@ -90,14 +89,14 @@
         .details-left {
             display: flex;
             flex-direction: column;
-            gap: 1px;
+            gap: 2px;
         }
 
         .details-right {
             text-align: right;
             display: flex;
             flex-direction: column;
-            gap: 1px;
+            gap: 2px;
         }
 
         .detail-line {
@@ -105,7 +104,7 @@
         }
 
         .detail-line strong {
-            font-weight: 600;
+            font-weight: 700;
         }
 
         /* Control buttons (screen only) */
@@ -179,10 +178,10 @@
             .label-box {
                 width: 3in;
                 height: 1in;
-                padding: 0.05in;
+                padding: 0.08in 0.12in;
                 margin: 0 !important;
                 box-shadow: none;
-                border: 2px solid black;
+                border: none;
                 page-break-inside: avoid;
                 page-break-after: avoid;
                 page-break-before: avoid;
@@ -246,41 +245,29 @@
         <button onclick="closePreview()" class="btn btn-close">✖️ Close</button>
     </div>
 
-    <!-- Barcode generation - PCN ONLY v3.2 -->
-    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js?v={{ data._cache_bust }}"></script>
+    <!-- Barcode generation -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
     <script>
-        // Version check - PCN ONLY BARCODE v3.2 FORCED
-        console.log('✅ PCN ONLY BARCODE v3.2 FORCE LOADED - Cache bust: {{ data._cache_bust }}');
+        // Version check - NEW TEMPLATE v2.0
+        console.log('✅ NEW LABEL TEMPLATE v2.0 LOADED');
 
         window.addEventListener('load', function() {
             try {
-                // FORCE use of ONLY PCN number - ignore any barcode_data from database
+                // Barcode contains ONLY the PCN number
                 let barcodeData = "{{ data.pcn_number }}";
+                console.log('📦 Barcode data (PCN only):', barcodeData);
 
-                // Debug logging
-                console.log('=== BARCODE GENERATION DEBUG ===');
-                console.log('Database barcode_data:', "{{ data.barcode_data if data.barcode_data else 'None' }}");
-                console.log('PCN number:', "{{ data.pcn_number }}");
-                console.log('Using for barcode:', barcodeData);
-                console.log('================================');
-
-                // Generate CODE128 barcode - Optimized for scanner readability
-                const barcodeSettings = {
+                // Generate compact barcode with ALL data
+                JsBarcode("#labelBarcode", barcodeData, {
                     format: "CODE128",
-                    width: 1.0,           // THIN bars - optimal for scanner readability
-                    height: 40,           // Taller for easier scanning
-                    displayValue: false,  // NO text under barcode
-                    margin: 3,
+                    width: 1,
+                    height: 18,
+                    displayValue: false,
+                    margin: 0,
                     background: "#ffffff",
                     lineColor: "#000000"
-                };
-
-                console.log('🎯 BARCODE WIDTH:', barcodeSettings.width, '(should be 1.0 - THIN)');
-                console.log('📏 BARCODE HEIGHT:', barcodeSettings.height);
-
-                JsBarcode("#labelBarcode", barcodeData, barcodeSettings);
-
-                console.log('✅ CODE128 barcode generated successfully for PCN: {{ data.pcn_number }}');
+                });
+                console.log('✅ Barcode generated successfully for PCN: {{ data.pcn_number }}');
 
                 // Auto-trigger print dialog after barcode is generated
                 setTimeout(function() {

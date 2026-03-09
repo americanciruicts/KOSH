@@ -9,7 +9,7 @@
         <p class="mb-0 fs-6">Remove components from inventory • Safety validated • Audit tracked</p>
     </div>
     <div class="col-md-4 text-end">
-        <a href="{{ url_for('inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
+        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
             <i class="bi bi-table"></i> View Inventory
         </a>
         <a href="{{ url_for('stock') }}" class="btn btn-light btn-lg fw-bold">
@@ -94,7 +94,7 @@
                             <div class="mb-3">
                                 <label for="pcnInput" class="form-label fw-semibold text-dark">PCN Number</label>
                                 <div class="input-group">
-                                    <input type="text" class="form-control form-control-lg border-2" id="pcnInput" name="pcn_number" placeholder="e.g., 00001, 00523">
+                                    <input type="text" class="form-control form-control-lg border-2" id="pcnInput" name="pcn" placeholder="e.g., 00001, 00523">
                                     <button type="button" class="btn btn-primary" id="checkInventoryBtn">
                                         <i class="bi bi-search"></i>
                                     </button>
@@ -142,34 +142,12 @@
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
-                                {{ form.po.label(class="form-label fw-semibold text-dark") }}
-                                {{ form.po(class="form-control form-control-lg border-2", placeholder="e.g., JOB-2024-001, Job-12345", id="poInput") }}
-                                {% if form.po.errors %}
-                                    <div class="invalid-feedback d-block">
-                                        {% for error in form.po.errors %}
-                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
+                                {{ form.mpn.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.mpn(class="form-control form-control-lg border-2", placeholder="e.g., RC0603FR-07383KL", id="mpnInput", readonly=true) }}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-briefcase"></i> Job Number (optional)
+                                    <i class="bi bi-cpu"></i> Auto-filled from PCN scan
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <div class="mb-3">
-                        {{ form.pcb_type.label(class="form-label fw-bold") }}
-                        {{ form.pcb_type(class="form-control form-control-lg", placeholder="Enter: Bare, Partial, Completed, Ready to Ship", id="pcbTypeInput") }}
-                        {% if form.pcb_type.errors %}
-                            <div class="text-danger small mt-1">
-                                {% for error in form.pcb_type.errors %}
-                                    <div>{{ error }}</div>
-                                {% endfor %}
-                            </div>
-                        {% endif %}
-                        <div class="form-text">
-                            <i class="bi bi-info-circle"></i> Component type must match inventory record
                         </div>
                     </div>
 
@@ -206,7 +184,7 @@
                     <div class="mb-3">
                         {{ form.quantity.label(class="form-label fw-bold") }}
                         <div class="input-group input-group-lg">
-                            {{ form.quantity(class="form-control", placeholder="Enter quantity", min="1", step="1", id="quantityInput") }}
+                            {{ form.quantity(class="form-control", placeholder="Enter quantity", min="0", step="1", id="quantityInput") }}
                             <span class="input-group-text">units</span>
                         </div>
                         {% if form.quantity.errors %}
@@ -226,7 +204,25 @@
                             </div>
                         </div>
                     </div>
-                    
+
+                    <div class="mb-3">
+                        {{ form.work_order.label(class="form-label fw-bold") }}
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text"><i class="bi bi-clipboard-check"></i></span>
+                            {{ form.work_order(class="form-control", placeholder="e.g., 6846-028", id="workOrderInput") }}
+                        </div>
+                        {% if form.work_order.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.work_order.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">
+                            <i class="bi bi-info-circle"></i> Work Order # for this pick operation (optional)
+                        </div>
+                    </div>
+
                     <div class="d-grid gap-2">
                         {{ form.submit(class="btn btn-primary btn-lg", id="pickSubmitBtn") }}
                         <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
@@ -385,23 +381,59 @@ let currentInventoryCheck = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     const form = document.getElementById('pickForm');
-    const jobInput = document.getElementById('jobInput');
-    const pcbTypeInput = document.getElementById('pcbTypeInput');
+    const partNumberInput = document.getElementById('partNumberInput');
     const quantityInput = document.getElementById('quantityInput');
     const checkInventoryBtn = document.getElementById('checkInventoryBtn');
     const quickSearchInput = document.getElementById('quickSearchInput');
     const quickSearchBtn = document.getElementById('quickSearchBtn');
 
     // Check if essential elements exist
-    if (!form || !jobInput || !pcbTypeInput || !quantityInput) {
+    if (!form || !partNumberInput || !quantityInput) {
         console.error('Essential form elements not found');
         return;
     }
+
+    // Clear form on page load/refresh to prevent stale data
+    console.log('🔄 Resetting form on page load');
+    form.reset();
+    // Clear any cached inventory check data
+    currentInventoryCheck = null;
+    hideAvailableQuantity();
+    hideExpirationWarning();
 
     // Auto-focus on PCN number field (first field) if no other element is focused
     const pcnInput = document.getElementById('pcnInput');
     if (pcnInput && (!document.activeElement || document.activeElement === document.body)) {
         setTimeout(() => pcnInput.focus(), 100);
+
+        // Add event listener for manual PCN input to auto-populate fields
+        let pcnInputTimeout = null;
+        pcnInput.addEventListener('input', function(e) {
+            const pcnValue = e.target.value.trim();
+
+            // Clear previous timeout
+            if (pcnInputTimeout) {
+                clearTimeout(pcnInputTimeout);
+            }
+
+            // Only fetch if PCN has 1-5 digits (valid PCN range)
+            if (pcnValue && /^\d{1,5}$/.test(pcnValue)) {
+                // Wait 500ms after user stops typing before fetching
+                pcnInputTimeout = setTimeout(function() {
+                    console.log('🔍 Auto-fetching PCN details for:', pcnValue);
+                    fetchAndPopulatePCNDetails(pcnValue);
+                }, 500);
+            }
+        });
+
+        // Also trigger on blur (when user clicks away from field)
+        pcnInput.addEventListener('blur', function(e) {
+            const pcnValue = e.target.value.trim();
+            if (pcnValue && /^\d{1,5}$/.test(pcnValue)) {
+                console.log('🔍 Fetching PCN details on blur:', pcnValue);
+                fetchAndPopulatePCNDetails(pcnValue);
+            }
+        });
     }
 
     // BARCODE SCANNER SUPPORT: Auto-advance through fields on Enter/Tab
@@ -410,9 +442,6 @@ document.addEventListener('DOMContentLoaded', function() {
         'pcnInput',      // PCN Number
         'mpnInput',      // MPN
         'partNumberInput', // Part Number/Item
-        'poInput',       // PO
-        'jobInput',      // Job Number
-        'pcbTypeInput',  // PCB Type
         'quantityInput'  // Quantity
     ];
 
@@ -439,9 +468,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // Check inventory when part number or component type changes
-    jobInput.addEventListener('blur', checkInventory);
-    pcbTypeInput.addEventListener('change', checkInventory);
+    // Check inventory when part number changes
+    partNumberInput.addEventListener('blur', checkInventory);
     checkInventoryBtn.addEventListener('click', checkInventory);
     
     // Quick search functionality
@@ -469,21 +497,22 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function checkInventory() {
-    const jobInput = document.getElementById('jobInput');
-    const pcbTypeInput = document.getElementById('pcbTypeInput');
+    const partNumberInput = document.getElementById('partNumberInput');
+    const pcnInput = document.getElementById('pcnInput');
 
-    if (!jobInput || !pcbTypeInput) {
+    if (!partNumberInput) {
         console.error('Form elements not found in checkInventory');
         return;
     }
 
-    const job = jobInput.value.trim();
-    const pcbType = pcbTypeInput.value.trim();
+    const job = partNumberInput.value.trim();
+    const pcn = pcnInput ? pcnInput.value.trim() : '';
+    const pcbType = 'Bare';  // Default since field was removed
 
-    console.log('Checking inventory for:', { job, pcbType });
+    console.log('Checking inventory for:', { job, pcn, pcbType });
 
-    if (!job || !pcbType) {
-        console.log('Missing job or pcbType, hiding quantity display');
+    if (!job) {
+        console.log('Missing job, hiding quantity display');
         hideAvailableQuantity();
         hideExpirationWarning();
         return;
@@ -492,7 +521,12 @@ function checkInventory() {
     // Show loading state
     showAvailableQuantity('Checking inventory...', 'info');
 
-    const searchUrl = `/api/search?job=${encodeURIComponent(job)}&pcb_type=${encodeURIComponent(pcbType)}`;
+    // IMPORTANT: If PCN is specified, check inventory for that specific PCN only
+    let searchUrl = `/api/search?job=${encodeURIComponent(job)}`;
+    if (pcn) {
+        searchUrl += `&pcn=${encodeURIComponent(pcn)}`;
+        console.log('🔍 Checking specific PCN:', pcn);
+    }
     console.log('Fetching:', searchUrl);
 
     fetch(searchUrl)
@@ -506,10 +540,26 @@ function checkInventory() {
                 const item = data.data[0];
                 currentInventoryCheck = item;
                 console.log('Inventory found:', item);
-                showAvailableQuantity(`Available: ${item.qty} units at ${item.location}`, 'success');
+
+                const qty = parseInt(item.qty) || 0;
+                if (qty > 0) {
+                    showAvailableQuantity(`Available: ${qty} units at ${item.location}`, 'success');
+                } else {
+                    showAvailableQuantity(`Item found but 0 units available at ${item.location || 'N/A'}`, 'warning');
+                }
 
                 // Update quantity input max value
-                document.getElementById('quantityInput').max = item.qty;
+                document.getElementById('quantityInput').max = qty;
+
+                // Auto-populate quantity when looking up a specific PCN
+                // (user can still edit the value)
+                if (pcn && qty > 0) {
+                    const qtyInput = document.getElementById('quantityInput');
+                    if (qtyInput && !qtyInput.value) {
+                        qtyInput.value = qty;
+                        console.log('✅ Auto-filled quantity from PCN lookup:', qty);
+                    }
+                }
 
                 // Check expiration status
                 if (item.expiration) {
@@ -518,9 +568,21 @@ function checkInventory() {
                     hideExpirationWarning();
                 }
             } else {
+                // If the job field value is numeric and not found, it might be a PCN
+                // Auto-redirect to PCN lookup
+                if (/^\d+$/.test(job.trim()) && !pcn) {
+                    console.log('Job not found but looks like a PCN number, trying PCN lookup for:', job.trim());
+                    const pcnInput = document.getElementById('pcnInput');
+                    if (pcnInput) {
+                        pcnInput.value = job.trim();
+                        document.getElementById('partNumberInput').value = '';
+                        fetchAndPopulatePCNDetails(job.trim());
+                        return;
+                    }
+                }
                 currentInventoryCheck = null;
-                console.warn('No inventory found for job:', job, 'type:', pcbType);
-                showAvailableQuantity(`Job "${job}" with type "${pcbType}" not found in inventory`, 'danger');
+                console.warn('No inventory found for job:', job);
+                showAvailableQuantity(`Item "${job}" not found in warehouse inventory`, 'danger');
                 document.getElementById('quantityInput').max = '';
                 hideExpirationWarning();
             }
@@ -678,7 +740,7 @@ function performQuickSearch() {
         .then(data => {
             if (data.success && data.data.length > 0) {
                 let html = '<div class="table-responsive"><table class="table table-sm table-hover">';
-                html += '<thead><tr><th>PCB Type</th><th>Qty</th><th>Location</th><th>Action</th></tr></thead><tbody>';
+                html += '<thead><tr><th>Item</th><th>Qty</th><th>Location</th><th>Action</th></tr></thead><tbody>';
                 
                 data.data.forEach(item => {
                     const badgeClass = {
@@ -689,11 +751,10 @@ function performQuickSearch() {
                     }[item.pcb_type] || 'secondary';
                     
                     html += `<tr>
-                        <td><span class="badge bg-${badgeClass}">${item.pcb_type}</span></td>
                         <td><strong>${item.qty}</strong></td>
                         <td><code>${item.location}</code></td>
                         <td>
-                            <button class="btn btn-outline-primary btn-sm" onclick="fillForm('${item.job}', '${item.pcb_type}')">
+                            <button class="btn btn-outline-primary btn-sm" onclick="fillForm('${item.job}')">
                                 <i class="bi bi-arrow-right"></i> Use
                             </button>
                         </td>
@@ -722,27 +783,35 @@ function performQuickSearch() {
         });
 }
 
-function fillForm(job, pcbType) {
-    document.getElementById('jobInput').value = job;
-    document.getElementById('pcbTypeInput').value = pcbType;
+function fillForm(job) {
+    document.getElementById('partNumberInput').value = job;
     checkInventory();
     document.getElementById('quantityInput').focus();
 }
 
-function showConfirmationModal() {
-    const job = document.getElementById('jobInput').value.trim();
-    const pcbType = document.getElementById('pcbTypeInput').value.trim();
-    const quantity = parseInt(document.getElementById('quantityInput').value);
+// CRITICAL: Prevent double-submission
+let isPickSubmitting = false;
 
-    if (!job || !pcbType || !quantity) {
-        alert('Please fill in all required fields: Job Number, Component Type, and Quantity');
+function showConfirmationModal() {
+    // CRITICAL: Block duplicate submissions
+    if (isPickSubmitting) {
+        console.warn('Pick already submitting, ignoring duplicate request');
+        return;
+    }
+
+    const job = document.getElementById('partNumberInput').value.trim();
+    const quantity = parseInt(document.getElementById('quantityInput').value);
+    const pcbType = 'Bare'; // Default PCB type since field was removed
+
+    if (!job || (quantity !== 0 && !quantity) || isNaN(quantity) || quantity < 0) {
+        alert('Please fill in all required fields: Job Number and Quantity (>= 0)');
         return;
     }
 
     // Auto-check inventory if not already checked
     if (!currentInventoryCheck) {
         console.log('Auto-checking inventory before confirming...');
-        fetch(`/api/search?job=${encodeURIComponent(job)}&pcb_type=${encodeURIComponent(pcbType)}`)
+        fetch(`/api/search?job=${encodeURIComponent(job)}`)
             .then(response => response.json())
             .then(data => {
                 if (data.success && data.data.length > 0) {
@@ -757,19 +826,34 @@ function showConfirmationModal() {
 
                     // Use native browser confirm dialog
                     const remaining = currentInventoryCheck.qty - quantity;
-                    const message = `Are you sure you want to pick the following PCBs?\n\n` +
-                                  `Job: ${job}\n` +
-                                  `PCB Type: ${pcbType}\n` +
+                    const message = `Are you sure you want to pick the following items?\n\n` +
+                                  `Item: ${job}\n` +
                                   `Quantity: ${quantity}\n` +
                                   `Remaining After Pick: ${remaining}\n\n` +
                                   `This action cannot be undone, but is logged in the audit trail.`;
 
                     if (confirm(message)) {
+                        // CRITICAL: Mark as submitting to prevent double-clicks
+                        isPickSubmitting = true;
                         const form = document.getElementById('pickForm');
+                        const submitBtn = form.querySelector('[type="submit"]');
+                        if (submitBtn) {
+                            submitBtn.disabled = true;
+                            submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+                        }
                         HTMLFormElement.prototype.submit.call(form);
+
+                        // Safety: Re-enable after 10 seconds in case of error
+                        setTimeout(() => {
+                            isPickSubmitting = false;
+                            if (submitBtn) {
+                                submitBtn.disabled = false;
+                                submitBtn.innerHTML = '<i class="bi bi-box-arrow-down"></i> Pick Parts';
+                            }
+                        }, 10000);
                     }
                 } else {
-                    alert(`Job ${job} with component type ${pcbType} not found in inventory. Please check your inputs.`);
+                    alert(`Item ${job} not found in warehouse inventory. Please check your inputs.`);
                     showAvailableQuantity('Not found in inventory', 'danger');
                 }
             })
@@ -788,16 +872,31 @@ function showConfirmationModal() {
 
     // Use native browser confirm dialog
     const remaining = currentInventoryCheck.qty - quantity;
-    const message = `Are you sure you want to pick the following PCBs?\n\n` +
-                  `Job: ${job}\n` +
-                  `PCB Type: ${pcbType}\n` +
+    const message = `Are you sure you want to pick the following items?\n\n` +
+                  `Item: ${job}\n` +
                   `Quantity: ${quantity}\n` +
                   `Remaining After Pick: ${remaining}\n\n` +
                   `This action cannot be undone, but is logged in the audit trail.`;
 
     if (confirm(message)) {
+        // CRITICAL: Mark as submitting to prevent double-clicks
+        isPickSubmitting = true;
         const form = document.getElementById('pickForm');
+        const submitBtn = form.querySelector('[type="submit"]');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+        }
         HTMLFormElement.prototype.submit.call(form);
+
+        // Safety: Re-enable after 10 seconds in case of error
+        setTimeout(() => {
+            isPickSubmitting = false;
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-box-arrow-down"></i> Pick Parts';
+            }
+        }, 10000);
     }
 }
 
@@ -812,13 +911,10 @@ function parseAndFillBarcode(code) {
         if (code.startsWith('{') && code.endsWith('}')) {
             const data = JSON.parse(code);
             if (data.pcn_number) document.getElementById('pcnInput').value = data.pcn_number;
-            if (data.job) document.getElementById('jobInput').value = data.job;
+            if (data.job) document.getElementById('partNumberInput').value = data.job;
             if (data.mpn) document.getElementById('mpnInput').value = data.mpn;
             if (data.part_number) document.getElementById('partNumberInput').value = data.part_number;
-            // Fill Job Number field (po field on pick page) - priority: job > part_number > po
-            if (data.job || data.part_number || data.po) document.getElementById('poInput').value = data.job || data.part_number || data.po;
             if (data.quantity) document.getElementById('quantityInput').value = data.quantity;
-            if (data.pcb_type) document.getElementById('pcbTypeInput').value = data.pcb_type;
             if (data.dc) document.getElementById('dc').value = data.dc;
             return;
         }
@@ -865,14 +961,13 @@ function parseAndFillBarcode(code) {
 
                 // Fill ALL form fields directly
                 if (pcn) document.getElementById('pcnInput').value = pcn;
-                if (job) document.getElementById('jobInput').value = job;
+                if (job) document.getElementById('partNumberInput').value = job;
                 if (mpn) document.getElementById('mpnInput').value = mpn;
                 if (quantity) document.getElementById('quantityInput').value = quantity;
-                if (pcbType) document.getElementById('pcbTypeInput').value = pcbType;
+                // pcbType field removed - defaulting to 'Bare'
                 if (dateCode) document.getElementById('dc').value = dateCode;
                 if (msd) document.getElementById('msdInput').value = msd;
-                // Fill Job Number field (po field on pick page) - priority: job > po
-                if (job || po) document.getElementById('poInput').value = job || po;
+                // po field removed
 
                 console.log('🎉 ALL FIELDS FILLED from barcode on PICK page!');
                 return; // Exit early - we're done!
@@ -934,11 +1029,10 @@ function parseAndFillBarcode(code) {
 
             // Fill form fields with parsed data
             if (pcn) document.getElementById('pcnInput').value = pcn;
-            if (job) document.getElementById('jobInput').value = job;
+            if (job) document.getElementById('partNumberInput').value = job;
             if (mpn) document.getElementById('mpnInput').value = mpn;
             if (partNumber) document.getElementById('partNumberInput').value = partNumber;
-            // Fill Job Number field (po field on pick page) - priority: job > po
-            if (job || po) document.getElementById('poInput').value = job || po;
+            // po field removed
             if (quantity) document.getElementById('quantityInput').value = quantity;
             if (pcbType) document.getElementById('pcbTypeInput').value = pcbType;
             if (dateCode) document.getElementById('dc').value = dateCode;
@@ -957,7 +1051,7 @@ function parseAndFillBarcode(code) {
         }
         // If it's alphanumeric, assume it's a job number
         else {
-            document.getElementById('jobInput').value = trimmedCode;
+            document.getElementById('partNumberInput').value = trimmedCode;
             console.log('Single value treated as job number:', trimmedCode);
         }
 
@@ -1048,5 +1142,259 @@ document.addEventListener('DOMContentLoaded', function() {
         scanAllBtn.addEventListener('click', startScanner);
     }
 });
+
+// Function to fetch PCN details and auto-populate form fields
+async function fetchAndPopulatePCNDetails(pcnNumber) {
+    if (!pcnNumber) return;
+
+    console.log('🔍 Fetching PCN details for:', pcnNumber);
+
+    try {
+        const response = await fetch(`/api/pcn/details/${pcnNumber}`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'Cache-Control': 'no-cache'
+            }
+        });
+
+        if (!response.ok) {
+            console.warn(`PCN ${pcnNumber} not found in database`);
+            return;
+        }
+
+        const result = await response.json();
+
+        if (result.success && result.multiple) {
+            // Multiple items share this PCN - ask user to select the correct one
+            console.warn('Multiple items found for PCN:', pcnNumber, result.matches);
+            const selected = await showPCNSelectionDialog(pcnNumber, result.matches);
+            if (selected) {
+                const filtered = await fetch(`/api/pcn/details/${pcnNumber}?item=${encodeURIComponent(selected.job)}`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' }
+                });
+                const filteredResult = await filtered.json();
+                if (filteredResult.success && !filteredResult.multiple) {
+                    return fetchAndPopulatePCNDetailsFromData(pcnNumber, filteredResult);
+                }
+            }
+            return;
+        }
+
+        if (result.success) {
+            return fetchAndPopulatePCNDetailsFromData(pcnNumber, result);
+        } else {
+            console.warn('PCN lookup failed:', result.error);
+        }
+
+    } catch (error) {
+        console.error('Error fetching PCN details:', error);
+    }
+}
+
+// Show selection dialog when multiple items share the same PCN
+function showPCNSelectionDialog(pcnNumber, matches) {
+    return new Promise((resolve) => {
+        let html = `<div class="modal fade" id="pcnSelectModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Multiple Items Found for PCN ${pcnNumber}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>This PCN is associated with multiple items. Please select the correct one:</p>
+                        <div class="list-group">`;
+
+        matches.forEach((m, i) => {
+            html += `<button type="button" class="list-group-item list-group-item-action pcn-select-btn" data-index="${i}">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Item: ${m.job || 'N/A'}</strong><br>
+                        <small class="text-muted">MPN: ${m.mpn || 'N/A'} | Qty: ${m.quantity || 0} | Loc: ${m.location || 'N/A'}</small>
+                    </div>
+                    <i class="bi bi-chevron-right"></i>
+                </div>
+            </button>`;
+        });
+
+        html += `</div></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        const existing = document.getElementById('pcnSelectModal');
+        if (existing) {
+            var oldModal = bootstrap.Modal.getInstance(existing);
+            if (oldModal) oldModal.dispose();
+            existing.remove();
+        }
+        // Also clean up any stale backdrops
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modalEl = document.getElementById('pcnSelectModal');
+        const modal = new bootstrap.Modal(modalEl);
+        let resolved = false;
+
+        modalEl.querySelectorAll('.pcn-select-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.index);
+                resolved = true;
+                const selected = matches[idx];
+                modal.hide();
+                // Wait for Bootstrap to fully clean up before resolving
+                setTimeout(() => {
+                    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+                    document.body.classList.remove('modal-open');
+                    document.body.style.removeProperty('overflow');
+                    document.body.style.removeProperty('padding-right');
+                    modalEl.remove();
+                    resolve(selected);
+                }, 300);
+            });
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('overflow');
+            document.body.style.removeProperty('padding-right');
+            modalEl.remove();
+            if (!resolved) resolve(null);
+        });
+
+        modal.show();
+    });
+}
+
+// Populate form fields from PCN details data
+function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
+            console.log('PCN details fetched:', result);
+
+            // Show a visual indicator that data is being auto-filled
+            const pcnInput = document.getElementById('pcnInput');
+            if (pcnInput) {
+                pcnInput.classList.add('border-success');
+                pcnInput.classList.add('border-3');
+                setTimeout(() => {
+                    pcnInput.classList.remove('border-success');
+                    pcnInput.classList.remove('border-3');
+                }, 2000);
+            }
+
+            // Auto-populate form fields with fetched data (ALWAYS overwrite to ensure data is filled)
+            console.log('=== STARTING AUTO-FILL ===');
+
+            if (result.part_number || result.job) {
+                const partNumberInput = document.getElementById('partNumberInput');
+                if (partNumberInput) {
+                    partNumberInput.value = result.job || result.part_number;
+                    console.log('✅ Filled Job Number:', result.job || result.part_number);
+                } else {
+                    console.error('❌ Job field not found!');
+                }
+            } else {
+                console.log('⚠️ No job or part_number in result');
+            }
+
+            if (result.part_number) {
+                const partInput = document.getElementById('partNumberInput');
+                if (partInput) {
+                    partInput.value = result.part_number;
+                    console.log('✅ Filled Part Number:', result.part_number);
+                } else {
+                    console.error('❌ Part Number field not found!');
+                }
+            } else {
+                console.log('⚠️ No part_number in result');
+            }
+
+            if (result.mpn) {
+                const mpnInput = document.getElementById('mpnInput');
+                if (mpnInput) {
+                    mpnInput.value = result.mpn;
+                    console.log('✅ Filled MPN:', result.mpn);
+                } else {
+                    console.error('❌ MPN field not found!');
+                }
+            } else {
+                console.log('⚠️ No mpn in result');
+            }
+
+            // Auto-populate quantity from PCN (editable by user)
+            const qtyInput = document.getElementById('quantityInput');
+            if (qtyInput) {
+                const qty = parseInt(result.quantity) || 0;
+                qtyInput.value = qty;
+                qtyInput.dispatchEvent(new Event('input', { bubbles: true }));
+                qtyInput.dispatchEvent(new Event('change', { bubbles: true }));
+                console.log('✅ Auto-filled Quantity:', qty, '(editable)');
+            } else {
+                console.error('❌ Quantity field not found!');
+            }
+
+            if (result.date_code) {
+                const dcInput = document.getElementById('dc');
+                if (dcInput) {
+                    dcInput.value = result.date_code;
+                    console.log('✅ Filled Date Code:', result.date_code);
+                } else {
+                    console.error('❌ Date Code field not found!');
+                }
+            } else {
+                console.log('⚠️ No date_code in result');
+            }
+
+            if (result.msd) {
+                const msdInput = document.getElementById('msd');
+                if (msdInput) {
+                    msdInput.value = result.msd;
+                    console.log('✅ Filled MSD:', result.msd);
+                } else {
+                    console.error('❌ MSD field not found!');
+                }
+            } else {
+                console.log('⚠️ No msd in result');
+            }
+
+            if (result.location) {
+                const locationInput = document.getElementById('location');
+                if (locationInput) {
+                    locationInput.value = result.location;
+                    console.log('✅ Filled Location:', result.location);
+                } else {
+                    console.error('❌ Location field not found!');
+                }
+            } else {
+                console.log('⚠️ No location in result');
+            }
+
+            console.log('=== AUTO-FILL COMPLETE ===');
+
+            // IMPORTANT: Auto-check inventory after PCN autofill to get TOTAL available quantity
+            // This ensures validation uses the correct total, not just the PCN's individual quantity
+            const partNumber = result.job || result.part_number;
+            if (partNumber) {
+                console.log('🔍 Auto-checking inventory for item:', partNumber);
+                checkInventory();
+            }
+
+            // Show success notification
+            const notification = document.createElement('div');
+            notification.className = 'alert alert-success alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3';
+            notification.style.zIndex = '9999';
+            notification.innerHTML = `
+                <i class="bi bi-check-circle-fill me-2"></i>
+                <strong>PCN Data Loaded!</strong> Fields auto-populated from PCN ${pcnNumber}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(notification);
+            setTimeout(() => notification.remove(), 4000);
+}
 </script>
 {% endblock %}

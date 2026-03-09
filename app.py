@@ -13,9 +13,9 @@ from typing import Dict, Any, List, Optional
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, g, make_response
 from expiration_manager import ExpirationManager, ExpirationStatus
 from flask_wtf import FlaskForm
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, CSRFError
 from wtforms import StringField, IntegerField, SelectField, SubmitField, HiddenField
-from wtforms.validators import DataRequired, NumberRange, Length, ValidationError, Optional
+from wtforms.validators import DataRequired, InputRequired, NumberRange, Length, ValidationError, Optional
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
@@ -26,6 +26,12 @@ import secrets
 import bcrypt
 from flask_caching import Cache
 from flask_compress import Compress
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
+from io import BytesIO
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,6 +42,12 @@ app = Flask(__name__)
 # Use environment variable for secret key, fallback to a consistent key
 # IMPORTANT: In production, always set SECRET_KEY environment variable
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'kosh-pcb-inventory-secret-key-2025-production-v1')
+
+# Session Configuration
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)  # 8 hour session timeout
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevent JavaScript access to session cookie
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF protection
 
 # Enable Flask-Caching for performance
 app.config['CACHE_TYPE'] = 'simple'  # In-memory cache
@@ -51,14 +63,62 @@ app.config['COMPRESS_LEVEL'] = 6  # Balance between compression and speed
 app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses > 500 bytes
 compress = Compress(app)
 
+# Column definitions for shortage/job report exports
+SHORTAGE_EXPORT_COLUMNS = [
+    {'key': 'line_no',      'label': 'LINE #',       'width': 8,  'default': False},
+    {'key': 'aci_pn',       'label': 'ACI PN',       'width': 15, 'default': True},
+    {'key': 'pcn',          'label': 'PCN',           'width': 12, 'default': True},
+    {'key': 'mpn',          'label': 'MPN',           'width': 25, 'default': True},
+    {'key': 'manufacturer', 'label': 'MANUFACTURER',  'width': 20, 'default': False},
+    {'key': 'description',  'label': 'DESCRIPTION',   'width': 30, 'default': False},
+    {'key': 'qty',          'label': 'QTY',           'width': 8,  'default': True},
+    {'key': 'order_qty',    'label': 'ORDER QTY',     'width': 12, 'default': True},
+    {'key': 'req',          'label': 'REQ',           'width': 8,  'default': True},
+    {'key': 'item',         'label': 'ITEM',          'width': 15, 'default': True},
+    {'key': 'qty_on_hand',  'label': 'ON HAND QTY',   'width': 14, 'default': True},
+    {'key': 'location',     'label': 'LOCATION',      'width': 15, 'default': True},
+    {'key': 'unit_cost',    'label': 'UNIT COST',     'width': 12, 'default': False},
+    {'key': 'line_cost',    'label': 'LINE COST',     'width': 12, 'default': False},
+]
+
+def get_export_cell_value(item, column_key, order_qty=None):
+    """Extract cell value for a report column from a DB row."""
+    mapping = {
+        'line_no':      lambda i: i.get('line_no', ''),
+        'aci_pn':       lambda i: i.get('aci_pn', ''),
+        'pcn':          lambda i: i.get('pcn') or '',
+        'mpn':          lambda i: i.get('mpn', ''),
+        'manufacturer': lambda i: i.get('manufacturer') or '',
+        'description':  lambda i: i.get('description') or '',
+        'qty':          lambda i: i.get('qty', 0),
+        'order_qty':    lambda i: i.get('order_qty') or order_qty or '',
+        'req':          lambda i: i.get('req') or (int(i.get('qty', 0) or 0) * (order_qty or 1)),
+        'item':         lambda i: i.get('item') or i.get('aci_pn') or '',
+        'qty_on_hand':  lambda i: i.get('qty_on_hand') if i.get('qty_on_hand') is not None else i.get('on_hand', 0),
+        'location':     lambda i: i.get('location') or '',
+        'unit_cost':    lambda i: i.get('unit_cost') or '',
+        'line_cost':    lambda i: i.get('line_cost') or '',
+    }
+    extractor = mapping.get(column_key, lambda i: '')
+    return extractor(item)
+
 # CSRF Configuration
+# Enable CSRF protection with proper configuration
 app.config['WTF_CSRF_ENABLED'] = True
 app.config['WTF_CSRF_TIME_LIMIT'] = None  # No time limit on CSRF tokens
 app.config['WTF_CSRF_SSL_STRICT'] = False  # Allow non-HTTPS in development
 app.config['WTF_CSRF_CHECK_DEFAULT'] = True
-
-# Enable CSRF protection
+app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken', 'X-CSRF-Token']  # Accept CSRF token from headers
 csrf = CSRFProtect(app)
+
+# Enable rate limiting (protects against brute force attacks)
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per hour", "50 per minute"],
+    storage_uri="memory://",
+    strategy="fixed-window"
+)
 
 # Input validation functions
 def validate_job_number(job: str) -> bool:
@@ -184,7 +244,8 @@ def inject_current_time():
         'current_time': datetime.now().strftime('%B %d, %Y %I:%M %p'),
         'current_year': datetime.now().year,
         'current_user': g.get('current_user', {}),
-        'user_can_see_itar': g.get('user_can_see_itar', False)
+        'user_can_see_itar': g.get('user_can_see_itar', False),
+        'is_admin': is_admin_user()
     }
 
 @app.template_filter('moment_fromnow')
@@ -197,7 +258,8 @@ def moment_fromnow_filter(dt):
     if isinstance(dt, str):
         try:
             dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
-        except:
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Failed to parse timestamp: {dt}, error: {e}")
             return "Unknown"
 
     now = datetime.now()
@@ -260,7 +322,35 @@ def format_number_filter(value):
         return value
 
 # Database configuration from environment variables
-DB_CONFIG = {
+# Primary: Neon cloud database (if NEON_DATABASE_URL is set)
+# Fallback: Local PostgreSQL
+NEON_DATABASE_URL = os.getenv('NEON_DATABASE_URL', '')
+
+if NEON_DATABASE_URL:
+    # Parse Neon URL for connection config
+    from urllib.parse import urlparse
+    _parsed = urlparse(NEON_DATABASE_URL)
+    DB_CONFIG = {
+        'host': _parsed.hostname,
+        'port': int(_parsed.port or 5432),
+        'database': _parsed.path.lstrip('/'),
+        'user': _parsed.username,
+        'password': _parsed.password,
+        'sslmode': 'require'
+    }
+    logger.info(f"Using Neon database: {_parsed.hostname}")
+else:
+    DB_CONFIG = {
+        'host': os.getenv('POSTGRES_HOST', 'aci-database'),
+        'port': int(os.getenv('POSTGRES_PORT', 5432)),
+        'database': os.getenv('POSTGRES_DB', 'pcb_inventory'),
+        'user': os.getenv('POSTGRES_USER', 'stockpick_user'),
+        'password': os.getenv('POSTGRES_PASSWORD', 'stockpick_pass')
+    }
+    logger.info("Using local database")
+
+# Fallback local DB config (used if primary fails)
+LOCAL_DB_CONFIG = {
     'host': os.getenv('POSTGRES_HOST', 'aci-database'),
     'port': int(os.getenv('POSTGRES_PORT', 5432)),
     'database': os.getenv('POSTGRES_DB', 'pcb_inventory'),
@@ -292,6 +382,16 @@ USER_ROLES = [
     ('Operator', 'Operator'),
     ('ITAR', 'ITAR')
 ]
+
+# Users authorized to access admin pages (user management, notifications)
+# in addition to users with the 'Admin' role
+ADMIN_AUTHORIZED_USERS = {'kanav', 'preet'}
+
+def is_admin_user():
+    """Check if current session user has admin-level access (by role or authorized list)."""
+    if session.get('role') == 'Admin':
+        return True
+    return session.get('username', '').lower() in ADMIN_AUTHORIZED_USERS
 
 LOCATION_RANGES = [
     ('1000-1999', '1000-1999'),
@@ -326,13 +426,11 @@ class StockForm(FlaskForm):
     quantity = IntegerField('Quantity', validators=[DataRequired(), NumberRange(min=1)])
     location_from = StringField('Location From', validators=[DataRequired(), Length(min=1, max=50)], default='Receiving Area')
     location_to = StringField('Location To', validators=[DataRequired(), Length(min=1, max=50)], default='8000-8999')
-    itar_classification = SelectField('ITAR Classification', choices=ITAR_CLASSIFICATIONS, validators=[Optional()], default='NONE')
-    export_control_notes = StringField('Export Control Notes', validators=[Length(max=500)])
     submit = SubmitField('Stock Parts')
 
 class PickForm(FlaskForm):
     """Form for picking electronic parts."""
-    pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=1)])  # Optional - when specified, pick from that specific PCN only
+    pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=0)])  # Optional - when specified, pick from that specific PCN only
     job = StringField('Job Number (Item)', validators=[Length(max=50)])  # Optional - will use part_number if not provided
     mpn = StringField('MPN (Manufacturing Part Number)', validators=[Length(max=50)])
     part_number = StringField('Part Number', validators=[DataRequired(), Length(min=1, max=50)])  # Now required - serves as job identifier
@@ -341,15 +439,17 @@ class PickForm(FlaskForm):
     pcb_type = StringField('Component Type', validators=[Length(max=50)], default='Bare')
     dc = StringField('Date Code (DC)', validators=[Length(max=50)])
     msd = StringField('Moisture Sensitive Device (MSD)', validators=[Length(max=50)])
-    quantity = IntegerField('Quantity', validators=[DataRequired(), NumberRange(min=1)])
+    quantity = IntegerField('Quantity', validators=[InputRequired(), NumberRange(min=0)])
     submit = SubmitField('Pick Parts')
 
 class RestockForm(FlaskForm):
-    """Form for restocking parts from MFG floor back to Count Area."""
+    """Form for restocking parts from Count Area to specified location."""
     pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=1)])
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
     quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
-    submit = SubmitField('Restock to Count Area')
+    location_from = StringField('Source Location', validators=[Optional(), Length(max=50)], default='Count Area')
+    location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50)])
+    submit = SubmitField('Restock Parts')
 
     def validate(self, extra_validators=None):
         """Custom validation to ensure either PCN or Item is provided."""
@@ -366,22 +466,39 @@ class RestockForm(FlaskForm):
 # User authentication now handled by ACI Dashboard
 
 class DatabaseManager:
-    """Handle database operations using containerized PostgreSQL with connection pooling."""
-    
+    """Handle database operations using PostgreSQL with connection pooling and failover."""
+
     def __init__(self):
         self.db_config = DB_CONFIG
+        self.using_fallback = False
         # Initialize connection pool with optimized settings
         try:
             self.pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=5,     # Keep 5 connections ready
-                maxconn=25,    # Increased max connections to handle more concurrent requests
+                minconn=2,     # Reduced for Neon compatibility
+                maxconn=15,    # Reduced for Neon pooler limits
                 **self.db_config
             )
-            logger.info("Database connection pool initialized")
+            logger.info(f"Database connection pool initialized (primary)")
         except Exception as e:
-            logger.error(f"Failed to create connection pool: {e}")
-            raise
-    
+            logger.error(f"Failed to create primary connection pool: {e}")
+            # Try fallback to local DB if primary was Neon
+            if NEON_DATABASE_URL and LOCAL_DB_CONFIG != self.db_config:
+                logger.warning("Falling back to local database...")
+                try:
+                    self.db_config = LOCAL_DB_CONFIG
+                    self.pool = psycopg2.pool.ThreadedConnectionPool(
+                        minconn=5,
+                        maxconn=25,
+                        **self.db_config
+                    )
+                    self.using_fallback = True
+                    logger.info("Database connection pool initialized (fallback/local)")
+                except Exception as e2:
+                    logger.error(f"Failed to create fallback connection pool: {e2}")
+                    raise
+            else:
+                raise
+
     def get_connection(self):
         """Get a database connection from the pool."""
         try:
@@ -389,14 +506,30 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to get connection from pool: {e}")
             raise
-    
+
     def return_connection(self, conn):
         """Return a connection to the pool."""
         try:
             self.pool.putconn(conn)
         except Exception as e:
             logger.error(f"Failed to return connection to pool: {e}")
-    
+
+    def get_pool_stats(self):
+        """Get connection pool statistics for monitoring."""
+        try:
+            # Access private _used and _pool attributes for monitoring
+            # Note: This uses private attributes which is not ideal but psycopg2 doesn't expose pool stats
+            return {
+                'minconn': self.pool.minconn,
+                'maxconn': self.pool.maxconn,
+                'closed': self.pool.closed
+            }
+        except Exception as e:
+            logger.error(f"Failed to get pool stats: {e}")
+            return {
+                'error': str(e)
+            }
+
     def execute_function(self, function_name: str, params: tuple) -> Dict[str, Any]:
         """Execute a PostgreSQL function and return the result."""
         conn = None
@@ -465,7 +598,39 @@ class DatabaseManager:
                   itar_auth: bool = False, username: str = 'system', work_order: str = None,
                   dc: str = None, msd: str = None, pcn: int = None, mpn: str = None,
                   part_number: str = None) -> Dict[str, Any]:
-        """Stock PCB using the PostgreSQL stored procedure with all fields."""
+        """Stock PCB - directly updates warehouse inventory and transaction tables."""
+        # CRITICAL: Input validation
+        if not isinstance(quantity, int) or quantity < 1 or quantity > 10000:
+            return {
+                'success': False,
+                'error': f'Invalid quantity: {quantity}. Must be between 1 and 10,000.'
+            }
+
+        if not job or not isinstance(job, str) or len(job) > 50:
+            return {
+                'success': False,
+                'error': 'Invalid job identifier. Must be 1-50 characters.'
+            }
+
+        if not pcn:
+            return {
+                'success': False,
+                'error': 'PCN is required for stock operation'
+            }
+
+        try:
+            pcn_int = int(pcn)
+            if pcn_int < 0 or pcn_int > 99999:
+                return {
+                    'success': False,
+                    'error': f'Invalid PCN: {pcn}. Must be between 1 and 99999.'
+                }
+        except (ValueError, TypeError):
+            return {
+                'success': False,
+                'error': f'Invalid PCN format: {pcn}. Must be numeric.'
+            }
+
         # Validate locations exist
         if not self.validate_location(location_to):
             return {
@@ -474,86 +639,117 @@ class DatabaseManager:
             }
 
         conn = None
+        cursor = None
         try:
-            # Call the PostgreSQL function with all 15 parameters (now includes location_from and location_to)
-            result = self.execute_function('pcb_inventory.stock_pcb',
-                (job, pcb_type, quantity, location_from, location_to, itar_classification, user_role,
-                 itar_auth, username, pcn, work_order, dc, msd, mpn, part_number))
-            logger.info(f"Stock operation: {result}")
+            conn = self.get_connection()
+            # CRITICAL: Set SERIALIZABLE isolation to prevent race conditions
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE)
+            cursor = conn.cursor()
 
-            # Also update warehouse inventory - UPSERT to handle duplicates
-            if result.get('success'):
-                # Extract PCN from result if not provided
-                if not pcn:
-                    pcn = result.get('pcn')
+            # CRITICAL: Lock row with FOR UPDATE to prevent concurrent stock operations
+            # Check if PCN and item combination exists in warehouse
+            cursor.execute("""
+                SELECT id, onhandqty, mpn, dc, msd, po, loc_to, loc_from
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE item::text ILIKE %s AND pcn::text = %s
+                FOR UPDATE  -- Lock row to prevent race conditions
+                LIMIT 1
+            """, (job, str(pcn)))
 
-                # Validate PCN exists before warehouse update
-                if not pcn:
-                    logger.error("Stock succeeded but PCN is missing - cannot update warehouse")
-                    return {
-                        'success': False,
-                        'error': 'Stock operation succeeded but PCN is missing. Please contact support.'
-                    }
+            existing = cursor.fetchone()
 
-                conn = self.get_connection()
-                cursor = conn.cursor()
-                try:
-                    # First check if record exists
-                    cursor.execute("""
-                        SELECT id, onhandqty, mpn, dc, msd, po
-                        FROM pcb_inventory."tblWhse_Inventory"
-                        WHERE item = %s AND pcn = %s
-                        LIMIT 1
-                    """, (job, pcn))
-                    existing = cursor.fetchone()
+            if existing:
+                # Update existing record - add to existing quantity and update location
+                cursor.execute("""
+                    UPDATE pcb_inventory."tblWhse_Inventory"
+                    SET onhandqty = COALESCE(onhandqty, 0) + %s,
+                        loc_to = %s,
+                        loc_from = %s,
+                        dc = COALESCE(%s, dc),
+                        msd = COALESCE(%s, msd),
+                        po = COALESCE(%s, po),
+                        mpn = COALESCE(%s, mpn),
+                        migrated_at = CURRENT_TIMESTAMP
+                    WHERE item::text ILIKE %s AND pcn::text = %s
+                """, (quantity, location_to, location_from, dc, msd, work_order, mpn, job, str(pcn)))
+                logger.info(f"Updated warehouse inventory for item {job}, PCN {pcn} - added {quantity} units (moved from {location_from} to {location_to})")
+            else:
+                # PCN doesn't exist in warehouse yet - insert new record
+                cursor.execute("""
+                    INSERT INTO pcb_inventory."tblWhse_Inventory"
+                    (item, pcn, mpn, dc, onhandqty, loc_from, loc_to, msd, po, migrated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                """, (job, str(pcn), mpn or '', dc, quantity, location_from, location_to, msd, work_order))
+                logger.info(f"Inserted new warehouse inventory for item {job}, PCN {pcn} at {location_to}")
 
-                    if existing:
-                        # Update existing record - move from Count Area to location
-                        cursor.execute("""
-                            UPDATE pcb_inventory."tblWhse_Inventory"
-                            SET loc_to = %s,
-                                loc_from = CASE WHEN loc_from = '-' THEN 'Count Area' ELSE loc_from END,
-                                dc = COALESCE(%s, dc),
-                                msd = COALESCE(%s, msd),
-                                po = COALESCE(%s, po),
-                                mpn = COALESCE(%s, mpn),
-                                migrated_at = CURRENT_TIMESTAMP
-                            WHERE item = %s AND pcn = %s
-                        """, (location, dc, msd, work_order, mpn, job, pcn))
-                        logger.info(f"Updated warehouse inventory for item {job}, PCN {pcn} - moved to location {location}")
-                    else:
-                        # Insert new record
-                        cursor.execute("""
-                            INSERT INTO pcb_inventory."tblWhse_Inventory"
-                            (item, pcn, mpn, dc, onhandqty, loc_to, msd, po, loc_from, mfg_qty, migrated_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Receiving Area', 0, CURRENT_TIMESTAMP)
-                        """, (job, pcn, mpn or '', dc, quantity, location, msd, work_order))
-                        logger.info(f"Inserted new warehouse inventory for item {job}, PCN {pcn} at location {location}")
+            # Record the stock transaction in tblTransaction
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblTransaction"
+                (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
+                VALUES ('STOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s)
+            """, (job, str(pcn) if pcn else None, mpn, dc, msd, quantity, location_from, location_to, work_order, work_order, username))
 
-                    conn.commit()
+            conn.commit()
+            logger.info(f"Stock operation completed: {quantity} units of {job} (PCN: {pcn}) moved from {location_from} to {location_to}")
 
-                    # Clear cache after successful update
-                    cache.delete_memoized(self.get_current_inventory)
-                    cache.delete('stats_summary')
-                except Exception as e:
-                    if conn:
-                        conn.rollback()
-                    logger.error(f"Failed to update warehouse inventory: {e}")
-                    # Clear cache even on failure to prevent stale data
-                    cache.delete_memoized(self.get_current_inventory)
-                    cache.delete('stats_summary')
-                    return {
-                        'success': False,
-                        'error': f'Stock operation succeeded but warehouse update failed: {str(e)}'
-                    }
-                finally:
-                    cursor.close()
-                    self.return_connection(conn)
+            # Clear cache after successful update
+            cache.delete_memoized(self.get_current_inventory)
+            cache.delete('stats_summary')
 
-            return result
+            # Get the updated quantity after stocking
+            cursor.execute("""
+                SELECT COALESCE(SUM(onhandqty), 0) as total_qty
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE item::text ILIKE %s
+            """, (job,))
+            total_result = cursor.fetchone()
+            new_qty = int(total_result[0]) if total_result and total_result[0] else 0
+
+            return {
+                'success': True,
+                'message': f'Successfully stocked {quantity} units from {location_from} to {location_to}',
+                'pcn': pcn,
+                'stocked_qty': quantity,
+                'new_qty': new_qty,
+                'job': job,
+                'location_from': location_from,
+                'location_to': location_to
+            }
+
+        except psycopg2.extensions.TransactionRollbackError as e:
+            # Serialization failure - concurrent transaction conflict
+            if conn:
+                conn.rollback()
+            logger.warning(f"Stock operation serialization conflict: {e}")
+            return {
+                'success': False,
+                'error': 'This item is being accessed by another user. Please try again.'
+            }
+        except psycopg2.IntegrityError as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Stock operation integrity error: {e}")
+            return {
+                'success': False,
+                'error': 'Data integrity error. Please verify your inputs.'
+            }
         except Exception as e:
+            if conn:
+                conn.rollback()
+            logger.error(f"Stock operation failed: {e}", exc_info=True)
             error_msg = get_safe_error_message(e, "stock operation")
             return {'success': False, 'error': error_msg}
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception as e:
+                    logger.error(f"Error closing cursor: {e}")
+            if conn:
+                try:
+                    self.return_connection(conn)
+                except Exception as e:
+                    logger.error(f"Error returning connection: {e}")
     
     def pick_pcb(self, job: str, pcb_type: str, quantity: int,
                  user_role: str = 'USER', itar_auth: bool = False, username: str = 'system', work_order: str = None, pcn: int = None) -> Dict[str, Any]:
@@ -561,12 +757,43 @@ class DatabaseManager:
         If pcn is provided, picks from that specific PCN only.
         Otherwise, picks using FIFO across all PCNs for the item.
         """
+        # CRITICAL: Input validation to prevent invalid data
+        if not isinstance(quantity, int) or quantity < 0 or quantity > 10000:
+            return {
+                'success': False,
+                'error': f'Invalid quantity: {quantity}. Must be between 0 and 10,000.'
+            }
+
+        if not job or not isinstance(job, str) or len(job) > 50:
+            return {
+                'success': False,
+                'error': 'Invalid job identifier. Must be 1-50 characters.'
+            }
+
+        if pcn is not None:
+            try:
+                pcn_int = int(pcn)
+                if pcn_int < 0 or pcn_int > 99999:
+                    return {
+                        'success': False,
+                        'error': f'Invalid PCN: {pcn}. Must be between 1 and 99999.'
+                    }
+            except (ValueError, TypeError):
+                return {
+                    'success': False,
+                    'error': f'Invalid PCN format: {pcn}. Must be numeric.'
+                }
+
         conn = None
+        cursor = None
         try:
             conn = self.get_connection()
+            # CRITICAL: Set SERIALIZABLE isolation to prevent race conditions
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE)
             cursor = conn.cursor()
 
             try:
+                # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
                 # Use ILIKE for flexible matching (consistent with search_inventory)
                 # If PCN specified, check only that PCN
@@ -574,21 +801,24 @@ class DatabaseManager:
                     cursor.execute("""
                         SELECT onhandqty as total_qty
                         FROM pcb_inventory."tblWhse_Inventory"
-                        WHERE pcn = %s AND item::text ILIKE %s
+                        WHERE pcn::text = %s AND item::text ILIKE %s
                         AND onhandqty > 0
-                    """, (pcn, job))
+                        FOR UPDATE  -- Lock rows to prevent race conditions
+                    """, (str(pcn), job))
                 else:
                     cursor.execute("""
                         SELECT SUM(onhandqty) as total_qty
                         FROM pcb_inventory."tblWhse_Inventory"
                         WHERE item::text ILIKE %s
                         AND onhandqty > 0
+                        FOR UPDATE  -- Lock rows to prevent race conditions
                     """, (job,))
 
                 result = cursor.fetchone()
                 available_qty = int(result[0]) if result and result[0] else 0
 
                 if available_qty < quantity:
+                    conn.rollback()  # Release locks
                     pcn_msg = f" from PCN {pcn}" if pcn else ""
                     return {
                         'success': False,
@@ -602,25 +832,42 @@ class DatabaseManager:
                 # Update warehouse inventory - pick from specific locations using FIFO
                 # This ensures we only pick the exact quantity needed from specific rows
                 # If PCN is specified, only pick from that PCN
-                pcn_filter = "AND pcn = %s" if pcn else ""
-                query_params = [job]
-                if pcn:
-                    query_params.append(pcn)
-                query_params.extend([quantity, quantity, quantity, quantity, quantity])
+                # SECURE: Use conditional query execution instead of f-string interpolation
 
-                cursor.execute(f"""
-                    WITH inventory_ordered AS (
-                        SELECT
-                            pcn,
-                            item,
-                            onhandqty,
-                            migrated_at,
-                            SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) as running_total
-                        FROM pcb_inventory."tblWhse_Inventory"
-                        WHERE item::text ILIKE %s
-                        {pcn_filter}
-                        AND onhandqty > 0
-                    ),
+                if pcn:
+                    # PCN-specific pick query
+                    query_params = [job, str(pcn), quantity, quantity, quantity, quantity, quantity]
+                    pick_query = """
+                        WITH inventory_ordered AS (
+                            SELECT
+                                pcn,
+                                item,
+                                onhandqty,
+                                migrated_at,
+                                SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) as running_total
+                            FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s
+                            AND pcn::text = %s
+                            AND onhandqty > 0
+                        ),"""
+                else:
+                    # FIFO pick query (all PCNs for item)
+                    query_params = [job, quantity, quantity, quantity, quantity, quantity]
+                    pick_query = """
+                        WITH inventory_ordered AS (
+                            SELECT
+                                pcn,
+                                item,
+                                onhandqty,
+                                migrated_at,
+                                SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) as running_total
+                            FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s
+                            AND onhandqty > 0
+                        ),"""
+
+                # Complete the query (same for both cases)
+                pick_query += """
                     pick_rows AS (
                         SELECT
                             pcn,
@@ -652,10 +899,12 @@ class DatabaseManager:
                         mfg_qty = (COALESCE(w.mfg_qty::integer, 0) + r.qty_to_pick)::text,
                         loc_to = 'MFG Floor'
                     FROM rows_to_update r
-                    WHERE w.pcn = r.pcn
+                    WHERE w.pcn::text = r.pcn::text
                     AND w.item = r.item
                     AND r.qty_to_pick > 0
-                """, tuple(query_params))
+                """
+
+                cursor.execute(pick_query, tuple(query_params))
 
                 updated_rows = cursor.rowcount
 
@@ -663,30 +912,110 @@ class DatabaseManager:
                     conn.rollback()
                     return {
                         'success': False,
-                        'error': f'Job not found in inventory. Job {job} with component type {pcb_type} not found.',
+                        'error': f'Job not found in inventory. Item {job} not found in warehouse inventory.',
                         'job': job,
                         'pcb_type': pcb_type
                     }
 
                 # Record the pick transaction (movement from Receiving Area to MFG Floor)
-                cursor.execute("""
-                    INSERT INTO pcb_inventory."tblTransaction"
-                    (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, userid)
-                    SELECT
-                        'PICK',
-                        %s,
-                        pcn,
-                        mpn,
-                        dc::integer,
-                        %s,
-                        CURRENT_TIMESTAMP,
-                        'Receiving Area',
-                        'MFG Floor',
-                        %s
-                    FROM pcb_inventory."tblWhse_Inventory"
-                    WHERE item::text ILIKE %s
-                    LIMIT 1
-                """, (job, quantity, username, job))
+                # If PCN specified, record transaction for that specific PCN
+                # Otherwise, record for each PCN that was picked from using the FIFO logic
+                if pcn:
+                    # Single PCN pick - insert one transaction record
+                    # Use actual loc_to from warehouse inventory as loc_from (where the part really is)
+                    cursor.execute("""
+                        INSERT INTO pcb_inventory."tblTransaction"
+                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                        SELECT
+                            'PICK',
+                            %s,
+                            pcn,
+                            mpn,
+                            CASE WHEN dc ~ '^[0-9]+$' THEN dc::integer ELSE NULL END as dc,
+                            msd,
+                            %s,
+                            TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
+                            COALESCE(loc_to, 'Warehouse'),
+                            'MFG Floor',
+                            %s,
+                            %s
+                        FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE item::text ILIKE %s AND pcn::text = %s
+                        LIMIT 1
+                    """, (job, quantity, work_order, username, job, str(pcn)))
+                else:
+                    # Multi-PCN FIFO pick - insert transaction for each PCN picked from
+                    # Use same FIFO logic as the UPDATE query to record transactions accurately
+                    query_params = [job]  # No PCN filter for FIFO
+                    query_params.extend([quantity, quantity, quantity, quantity, quantity])
+                    query_params.extend([job, work_order, username])
+
+                    cursor.execute("""
+                        WITH inventory_ordered AS (
+                            SELECT
+                                pcn,
+                                item,
+                                mpn,
+                                dc,
+                                msd,
+                                loc_to,
+                                onhandqty,
+                                migrated_at,
+                                SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) as running_total
+                            FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s
+                            AND onhandqty > 0
+                        ),
+                        pick_rows AS (
+                            SELECT
+                                pcn,
+                                item,
+                                mpn,
+                                dc,
+                                msd,
+                                loc_to,
+                                onhandqty,
+                                running_total,
+                                LAG(running_total, 1, 0) OVER (ORDER BY migrated_at, pcn) as prev_total
+                            FROM inventory_ordered
+                            ORDER BY migrated_at, pcn
+                        ),
+                        rows_to_pick AS (
+                            SELECT
+                                pcn,
+                                item,
+                                mpn,
+                                dc,
+                                msd,
+                                loc_to,
+                                CASE
+                                    WHEN prev_total < %s AND running_total >= %s
+                                    THEN %s - prev_total
+                                    WHEN running_total <= %s
+                                    THEN onhandqty
+                                    ELSE 0
+                                END as qty_picked
+                            FROM pick_rows
+                            WHERE prev_total < %s
+                        )
+                        INSERT INTO pcb_inventory."tblTransaction"
+                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                        SELECT
+                            'PICK',
+                            %s,
+                            pcn::text,
+                            mpn,
+                            CASE WHEN dc ~ '^[0-9]+$' THEN dc::integer ELSE NULL END as dc,
+                            msd,
+                            qty_picked,
+                            TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
+                            COALESCE(loc_to, 'Warehouse'),
+                            'MFG Floor',
+                            %s,
+                            %s
+                        FROM rows_to_pick
+                        WHERE qty_picked > 0
+                    """, tuple(query_params))
 
                 # Get the new remaining quantity
                 cursor.execute("""
@@ -713,63 +1042,132 @@ class DatabaseManager:
                     'pcb_type': pcb_type
                 }
 
-            except Exception as e:
-
-
+            except psycopg2.extensions.TransactionRollbackError as e:
+                # Serialization failure - concurrent transaction conflict
                 if conn:
-
-
+                    conn.rollback()
+                logger.warning(f"Pick operation serialization conflict: {e}")
+                return {
+                    'success': False,
+                    'error': 'This item is being accessed by another user. Please try again.'
+                }
+            except psycopg2.IntegrityError as e:
+                if conn:
+                    conn.rollback()
+                logger.error(f"Pick operation integrity error: {e}")
+                return {
+                    'success': False,
+                    'error': 'Data integrity error. Please verify your inputs.'
+                }
+            except Exception as e:
+                if conn:
                     conn.rollback()
                 logger.error(f"Failed to pick from warehouse inventory: {e}")
                 raise
             finally:
-                cursor.close()
-                self.return_connection(conn)
+                if cursor:
+                    try:
+                        cursor.close()
+                    except Exception as e:
+                        logger.error(f"Error closing cursor: {e}")
+                if conn:
+                    try:
+                        self.return_connection(conn)
+                    except Exception as e:
+                        logger.error(f"Error returning connection: {e}")
 
         except Exception as e:
+            logger.error(f"Pick operation failed: {e}", exc_info=True)
             error_msg = get_safe_error_message(e, "pick operation")
             return {'success': False, 'error': error_msg}
 
     def restock_pcb(self, pcn: int = None, item: str = None, quantity: int = 0,
+                    location_from: str = 'MFG Floor', location_to: str = 'Count Area',
                     username: str = 'system') -> Dict[str, Any]:
-        """Restock parts from MFG floor back to Count Area."""
+        """Restock parts from specified source location to destination location."""
+        # CRITICAL: Input validation
+        if not isinstance(quantity, int) or quantity < 1 or quantity > 10000:
+            return {
+                'success': False,
+                'error': f'Invalid quantity: {quantity}. Must be between 1 and 10,000.'
+            }
+
+        if pcn is not None:
+            try:
+                pcn_int = int(pcn)
+                if pcn_int < 0 or pcn_int > 99999:
+                    return {
+                        'success': False,
+                        'error': f'Invalid PCN: {pcn}. Must be between 1 and 99999.'
+                    }
+            except (ValueError, TypeError):
+                return {
+                    'success': False,
+                    'error': f'Invalid PCN format: {pcn}. Must be numeric.'
+                }
+
+        if item and (not isinstance(item, str) or len(item) > 50):
+            return {
+                'success': False,
+                'error': 'Invalid item identifier. Must be 1-50 characters.'
+            }
+
+        if not pcn and not item:
+            return {
+                'success': False,
+                'error': 'Either PCN or Item number is required'
+            }
+
         conn = None
+        cursor = None
         try:
             conn = self.get_connection()
+            # CRITICAL: Set SERIALIZABLE isolation to prevent race conditions
+            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE)
             cursor = conn.cursor()
 
             try:
-                # Validate quantity
-                if quantity is None or quantity <= 0:
-                    return {
-                        'success': False,
-                        'error': f'Invalid quantity: {quantity}. Quantity must be greater than 0.'
-                    }
-
-                # Determine search criteria
-                if pcn:
-                    where_clause = "pcn = %s"
-                    search_param = pcn
+                # Determine search criteria and build query (SECURE: conditional execution)
+                if pcn and item:
+                    search_param = (str(pcn), item)
+                    select_query = """
+                        SELECT pcn, item, mpn, dc, mfg_qty, onhandqty
+                        FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE pcn::text = %s AND item::text ILIKE %s
+                        FOR UPDATE
+                        LIMIT 1
+                    """
+                elif pcn:
+                    search_param = (str(pcn),)
+                    select_query = """
+                        SELECT pcn, item, mpn, dc, mfg_qty, onhandqty
+                        FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE pcn::text = %s
+                        FOR UPDATE
+                        LIMIT 1
+                    """
                 elif item:
-                    where_clause = "item = %s"
-                    search_param = item
+                    search_param = (item,)
+                    select_query = """
+                        SELECT pcn, item, mpn, dc, mfg_qty, onhandqty
+                        FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE item = %s
+                        FOR UPDATE
+                        LIMIT 1
+                    """
                 else:
                     return {
                         'success': False,
                         'error': 'Either PCN or Item number is required'
                     }
 
-                # Check if item exists (no MFG quantity restriction - allows count corrections)
-                cursor.execute(f"""
-                    SELECT pcn, item, mpn, dc, mfg_qty, onhandqty
-                    FROM pcb_inventory."tblWhse_Inventory"
-                    WHERE {where_clause}
-                    LIMIT 1
-                """, (search_param,))
+                # CRITICAL: Lock row with FOR UPDATE and check MFG quantity
+                cursor.execute(select_query, search_param)
 
                 result = cursor.fetchone()
 
                 if not result:
+                    conn.rollback()  # Release lock
                     return {
                         'success': False,
                         'error': f'No parts found for {"PCN " + str(pcn) if pcn else "Item " + item}'
@@ -777,25 +1175,55 @@ class DatabaseManager:
 
                 pcn_num, item_num, mpn, dc, mfg_qty, current_onhand = result
 
-                # Handle NULL quantities
+                # Handle NULL quantities and convert mfg_qty from text to int
                 if current_onhand is None:
                     current_onhand = 0
-                if mfg_qty is None:
-                    mfg_qty = 0
+                if mfg_qty is None or mfg_qty == '':
+                    mfg_qty_int = 0
+                else:
+                    try:
+                        mfg_qty_int = int(mfg_qty)
+                    except (ValueError, TypeError):
+                        mfg_qty_int = 0
 
-                # Allow restocking even if quantity exceeds MFG qty (for count corrections)
-                # No validation check - user can adjust quantities based on physical counts
+                # Log if restocking more than tracked MFG quantity (user may have physical count)
+                if mfg_qty_int < quantity:
+                    logger.info(f'Restock qty ({quantity}) exceeds tracked MFG qty ({mfg_qty_int}) for PCN {pcn}. User override.')
 
-                # Update warehouse inventory - move from MFG to Count Area
+                # Update warehouse inventory - move from specified source to destination
                 # Use COALESCE to handle NULL onhandqty
-                cursor.execute("""
-                    UPDATE pcb_inventory."tblWhse_Inventory"
-                    SET mfg_qty = GREATEST(0, mfg_qty - %s),
-                        onhandqty = COALESCE(onhandqty, 0) + %s,
-                        loc_from = 'MFG Floor',
-                        loc_to = 'Count Area'
-                    WHERE {0}
-                """.format(where_clause), (quantity, quantity, search_param))
+                # Cast mfg_qty to integer for arithmetic, then back to text
+                # SECURE: Use conditional query execution
+                if pcn and item:
+                    update_query = """
+                        UPDATE pcb_inventory."tblWhse_Inventory"
+                        SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
+                            onhandqty = COALESCE(onhandqty, 0) + %s,
+                            loc_from = %s,
+                            loc_to = %s
+                        WHERE pcn::text = %s AND item::text ILIKE %s
+                    """
+                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, str(pcn), item))
+                elif pcn:
+                    update_query = """
+                        UPDATE pcb_inventory."tblWhse_Inventory"
+                        SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
+                            onhandqty = COALESCE(onhandqty, 0) + %s,
+                            loc_from = %s,
+                            loc_to = %s
+                        WHERE pcn::text = %s
+                    """
+                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, str(pcn)))
+                else:
+                    update_query = """
+                        UPDATE pcb_inventory."tblWhse_Inventory"
+                        SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
+                            onhandqty = COALESCE(onhandqty, 0) + %s,
+                            loc_from = %s,
+                            loc_to = %s
+                        WHERE item = %s
+                    """
+                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, item))
 
                 updated_rows = cursor.rowcount
 
@@ -807,14 +1235,19 @@ class DatabaseManager:
                     }
 
                 # Record the restock transaction
+                # Get MSD from warehouse inventory
+                cursor.execute("SELECT msd FROM pcb_inventory.\"tblWhse_Inventory\" WHERE pcn::text = %s LIMIT 1", (str(pcn_num),))
+                msd_result = cursor.fetchone()
+                msd = msd_result[0] if msd_result else None
+
                 cursor.execute("""
                     INSERT INTO pcb_inventory."tblTransaction"
-                    (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, userid)
-                    VALUES ('RESTOCK', %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, 'MFG Floor', 'Count Area', %s)
-                """, (item_num, pcn_num, mpn, dc, quantity, username))
+                    (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, userid)
+                    VALUES ('RESTOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s)
+                """, (item_num, pcn_num, mpn, dc, msd, quantity, location_from, location_to, username))
 
                 conn.commit()
-                logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from MFG Floor to Count Area")
+                logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from {location_from} to {location_to}")
 
                 # Clear cache after inventory change
                 cache.delete_memoized(self.get_current_inventory)
@@ -822,25 +1255,52 @@ class DatabaseManager:
 
                 return {
                     'success': True,
-                    'message': f'Successfully restocked {quantity} units to Count Area',
+                    'message': f'Successfully restocked {quantity} units to {location_to}',
                     'quantity': quantity,
                     'pcn': pcn_num,
                     'item': item_num,
                     'mpn': mpn,
-                    'new_mfg_qty': mfg_qty - quantity,
+                    'location_to': location_to,
+                    'new_mfg_qty': mfg_qty_int - quantity,
                     'new_onhand_qty': current_onhand + quantity
                 }
 
+            except psycopg2.extensions.TransactionRollbackError as e:
+                # Serialization failure - concurrent transaction conflict
+                if conn:
+                    conn.rollback()
+                logger.warning(f"Restock operation serialization conflict: {e}")
+                return {
+                    'success': False,
+                    'error': 'This item is being accessed by another user. Please try again.'
+                }
+            except psycopg2.IntegrityError as e:
+                if conn:
+                    conn.rollback()
+                logger.error(f"Restock operation integrity error: {e}")
+                return {
+                    'success': False,
+                    'error': 'Data integrity error. Please verify your inputs.'
+                }
             except Exception as e:
                 if conn:
                     conn.rollback()
                 logger.error(f"Failed to restock: {e}")
                 raise
             finally:
-                cursor.close()
-                self.return_connection(conn)
+                if cursor:
+                    try:
+                        cursor.close()
+                    except Exception as e:
+                        logger.error(f"Error closing cursor: {e}")
+                if conn:
+                    try:
+                        self.return_connection(conn)
+                    except Exception as e:
+                        logger.error(f"Error returning connection: {e}")
 
         except Exception as e:
+            logger.error(f"Restock operation failed: {e}", exc_info=True)
             error_msg = get_safe_error_message(e, "restock operation")
             return {'success': False, 'error': error_msg}
 
@@ -997,7 +1457,7 @@ class DatabaseManager:
                         mpn as pcb_type,
                         tranqty::integer as quantity_change,
                         COALESCE(
-                            (SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" w WHERE w.pcn = t.pcn LIMIT 1),
+                            (SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" w WHERE w.pcn::text = t.pcn::text LIMIT 1),
                             tranqty::integer
                         ) as new_quantity,
                         tran_time as timestamp,
@@ -1025,6 +1485,7 @@ class DatabaseManager:
         """Search warehouse inventory with optional filters.
         If PCN is provided, returns that specific PCN's data.
         Otherwise, returns TOTAL quantity per item (aggregated across all PCNs) for accurate pick validation.
+        If job search returns no results, also tries matching by PCN number.
         """
         conn = None
         try:
@@ -1045,7 +1506,7 @@ class DatabaseManager:
                             mpn as part_number,
                             pcn
                         FROM pcb_inventory."tblWhse_Inventory"
-                        WHERE pcn = %s AND onhandqty > 0
+                        WHERE pcn::text = %s
                     """
                     params.append(pcn)
 
@@ -1079,7 +1540,27 @@ class DatabaseManager:
                     query += " ORDER BY item"
 
                 cur.execute(query, params)
-                return [dict(row) for row in cur.fetchall()]
+                results = [dict(row) for row in cur.fetchall()]
+
+                # If no results found and job looks like a PCN (numeric), try searching by PCN
+                if not results and job and not pcn and job.strip().isdigit():
+                    cur.execute("""
+                        SELECT
+                            item as job,
+                            'Bare' as pcb_type,
+                            onhandqty as qty,
+                            loc_to as location,
+                            dc as date_code,
+                            msd as msd_level,
+                            mpn as part_number,
+                            pcn
+                        FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE pcn::text = %s
+                        ORDER BY migrated_at, pcn
+                    """, (job.strip(),))
+                    results = [dict(row) for row in cur.fetchall()]
+
+                return results
         except Exception as e:
             logger.error(f"Search failed: {e}")
             return []
@@ -1202,37 +1683,35 @@ class DatabaseManager:
                 self.return_connection(conn)
 
     def get_pcn_history(self, limit: int = 100, filters: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Get PCN transaction history with warehouse inventory data."""
+        """Get PCN transaction history with warehouse inventory data - shows ALL transactions."""
         conn = None
         try:
             conn = self.get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Query from tblTransaction with warehouse inventory data
-                # Get unique PCNs (no duplicates) - show only the most recent transaction per PCN
-                # Use subquery to get unique PCNs first, then sort by newest
+                # Show ALL transactions (removed DISTINCT ON to show complete history)
                 query = """
-                    SELECT * FROM (
-                        SELECT DISTINCT ON (t.pcn)
-                            t.record_no,
-                            t.trantype as status,
-                            t.item as job,
-                            t.pcn,
-                            t.id as transaction_id,
-                            COALESCE(w.mpn, t.mpn) as mpn,
-                            COALESCE(w.dc::text, t.dc::text) as dc,
-                            COALESCE(w.msd, '0') as msd,
-                            COALESCE(w.onhandqty, t.tranqty::integer, 0) as quantity,
-                            COALESCE(w.mfg_qty::integer, 0) as mfg_qty,
-                            t.tran_time as generated_at,
-                            t.loc_from,
-                            COALESCE(w.loc_to, t.loc_to) as location,
-                            t.wo as work_order,
-                            COALESCE(w.po, t.po) as po,
-                            t.userid as user_id
-                        FROM pcb_inventory."tblTransaction" t
-                        LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-                            ON t.pcn = w.pcn
-                        WHERE t.pcn IS NOT NULL
+                    SELECT
+                        t.record_no,
+                        t.trantype as status,
+                        t.item as job,
+                        t.pcn,
+                        t.id as transaction_id,
+                        COALESCE(w.mpn, t.mpn) as mpn,
+                        COALESCE(w.dc::text, t.dc::text) as dc,
+                        COALESCE(t.msd, w.msd, '0') as msd,
+                        t.tranqty::integer as quantity,
+                        COALESCE(w.mfg_qty::integer, 0) as mfg_qty,
+                        t.tran_time as generated_at,
+                        t.loc_from,
+                        COALESCE(w.loc_to, t.loc_to) as location,
+                        t.wo,
+                        COALESCE(w.po, t.po) as po,
+                        t.userid as user_id
+                    FROM pcb_inventory."tblTransaction" t
+                    LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                        ON t.pcn = w.pcn
+                    WHERE t.pcn IS NOT NULL
                 """
                 params = []
 
@@ -1247,8 +1726,7 @@ class DatabaseManager:
                         query += " AND t.trantype = %s"
                         params.append(filters['status'])
 
-                query += " ORDER BY t.pcn, t.id DESC"
-                query += " ) sub ORDER BY transaction_id DESC LIMIT %s"
+                query += " ORDER BY t.id DESC LIMIT %s"
                 params.append(limit)
 
                 cur.execute(query, params)
@@ -1276,13 +1754,13 @@ class DatabaseManager:
                             t.id as transaction_id,
                             COALESCE(w.mpn, t.mpn) as mpn,
                             COALESCE(w.dc::text, t.dc::text) as dc,
-                            COALESCE(w.msd, '0') as msd,
-                            COALESCE(w.onhandqty, t.tranqty::integer, 0) as quantity,
+                            COALESCE(t.msd, w.msd, '0') as msd,
+                            t.tranqty::integer as quantity,
                             COALESCE(w.mfg_qty::integer, 0) as mfg_qty,
                             t.tran_time as generated_at,
                             t.loc_from,
                             COALESCE(w.loc_to, t.loc_to) as location,
-                            t.wo as work_order,
+                            t.wo,
                             COALESCE(w.po, t.po) as po,
                             t.userid as user_id
                         FROM pcb_inventory."tblTransaction" t
@@ -1301,7 +1779,7 @@ class DatabaseManager:
                     params.append(f"%{job}%")
 
                 query += " ORDER BY t.pcn, t.id DESC"
-                query += " ) sub ORDER BY transaction_id DESC"
+                query += " ) sub ORDER BY CAST(pcn AS INTEGER) DESC, transaction_id DESC"
 
                 cur.execute(query, params)
                 return [dict(row) for row in cur.fetchall()]
@@ -1318,29 +1796,50 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                query = "SELECT * FROM pcb_inventory.po_history WHERE 1=1"
+                query = """
+                    SELECT id, po as po_number, item, pcn, mpn, dc as date_code,
+                           CASE
+                               WHEN tranqty ~ '^[0-9]+$' THEN CAST(tranqty AS INTEGER)
+                               ELSE NULL
+                           END as quantity,
+                           trantype as transaction_type, tran_time as transaction_date,
+                           loc_from as location_from, loc_to as location_to, userid as user_id
+                    FROM pcb_inventory."tblTransaction"
+                    WHERE po IS NOT NULL AND po <> ''
+                """
                 params = []
 
                 if filters:
                     if filters.get('po_number'):
-                        query += " AND po_number LIKE %s"
+                        query += " AND po LIKE %s"
                         params.append(f"%{filters['po_number']}%")
                     if filters.get('item'):
                         query += " AND item LIKE %s"
                         params.append(f"%{filters['item']}%")
                     if filters.get('date_from'):
-                        query += " AND transaction_date >= %s"
+                        query += " AND tran_time >= %s"
                         params.append(filters['date_from'])
                     if filters.get('date_to'):
-                        query += " AND transaction_date <= %s"
+                        query += " AND tran_time <= %s"
                         params.append(filters['date_to'])
 
-                query += " ORDER BY transaction_date DESC LIMIT %s OFFSET %s"
+                query += " ORDER BY id DESC LIMIT %s OFFSET %s"
                 params.append(limit)
                 params.append(offset)
 
                 cur.execute(query, params)
-                return [dict(row) for row in cur.fetchall()]
+                results = [dict(row) for row in cur.fetchall()]
+
+                # Convert quantity strings to integers
+                for result in results:
+                    if result.get('quantity') is not None:
+                        try:
+                            if isinstance(result['quantity'], str):
+                                result['quantity'] = int(result['quantity']) if result['quantity'].strip() else 0
+                        except (ValueError, AttributeError):
+                            result['quantity'] = 0
+
+                return results
         except Exception as e:
             logger.error(f"Failed to get PO history: {e}")
             return []
@@ -1351,21 +1850,24 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             with conn.cursor() as cur:
-                query = "SELECT COUNT(*) FROM pcb_inventory.po_history WHERE 1=1"
+                query = """
+                    SELECT COUNT(*) FROM pcb_inventory."tblTransaction"
+                    WHERE po IS NOT NULL AND po <> ''
+                """
                 params = []
 
                 if filters:
                     if filters.get('po_number'):
-                        query += " AND po_number LIKE %s"
+                        query += " AND po LIKE %s"
                         params.append(f"%{filters['po_number']}%")
                     if filters.get('item'):
                         query += " AND item LIKE %s"
                         params.append(f"%{filters['item']}%")
                     if filters.get('date_from'):
-                        query += " AND transaction_date >= %s"
+                        query += " AND tran_time >= %s"
                         params.append(filters['date_from'])
                     if filters.get('date_to'):
-                        query += " AND transaction_date <= %s"
+                        query += " AND tran_time <= %s"
                         params.append(filters['date_to'])
 
                 cur.execute(query, params)
@@ -1383,21 +1885,42 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                query = "SELECT * FROM pcb_inventory.po_history WHERE 1=1"
+                query = """
+                    SELECT id, po as po_number, item, pcn, mpn, dc as date_code,
+                           CASE
+                               WHEN tranqty ~ '^[0-9]+$' THEN CAST(tranqty AS INTEGER)
+                               ELSE NULL
+                           END as quantity,
+                           trantype as transaction_type, tran_time as transaction_date,
+                           loc_from as location_from, loc_to as location_to, userid as user_id
+                    FROM pcb_inventory."tblTransaction"
+                    WHERE po IS NOT NULL AND po <> ''
+                """
                 params = []
 
                 if po_number:
-                    query += " AND po_number LIKE %s"
+                    query += " AND po LIKE %s"
                     params.append(f"%{po_number}%")
 
                 if item:
                     query += " AND item LIKE %s"
                     params.append(f"%{item}%")
 
-                query += " ORDER BY transaction_date DESC"
+                query += " ORDER BY id DESC"
 
                 cur.execute(query, params)
-                return [dict(row) for row in cur.fetchall()]
+                results = [dict(row) for row in cur.fetchall()]
+
+                # Convert quantity strings to integers
+                for result in results:
+                    if result.get('quantity') is not None:
+                        try:
+                            if isinstance(result['quantity'], str):
+                                result['quantity'] = int(result['quantity']) if result['quantity'].strip() else 0
+                        except (ValueError, AttributeError):
+                            result['quantity'] = 0
+
+                return results
         except Exception as e:
             logger.error(f"PO search failed: {e}")
             return []
@@ -1487,11 +2010,24 @@ def require_auth(f):
     """Decorator to require user authentication - NO GUEST ACCESS."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        logger.info(f"=== REQUIRE_AUTH CALLED for {request.path} method={request.method} ===")
+        logger.info(f"Session has user_id: {'user_id' in session}, username: {'username' in session}")
+
         # Check if user is logged in
         if 'user_id' not in session or 'username' not in session:
+            logger.warning(f"Auth failed for {request.path} - no session")
+            # For API requests, return JSON error instead of redirect
+            if request.path.startswith('/api/'):
+                return jsonify({
+                    'success': False,
+                    'error': 'Authentication required. Please log in.'
+                }), 401
+
+            # For page requests, redirect to login
             flash('Please log in to access this page.', 'warning')
             return redirect(url_for('login', next=request.url))
 
+        logger.info(f"Auth passed, calling function {f.__name__}")
         # Check for ACI Dashboard SSO token in headers (optional)
         auth_token = request.headers.get('X-ACI-Auth-Token') or session.get('aci_auth_token')
         if auth_token:
@@ -1538,10 +2074,13 @@ def health_check():
     try:
         # Test database connection
         inventory = db_manager.get_current_inventory()
+        pool_stats = db_manager.get_pool_stats()
+
         return jsonify({
             'status': 'healthy',
             'database': 'connected',
             'inventory_items': len(inventory),
+            'connection_pool': pool_stats,
             'timestamp': datetime.now().isoformat()
         })
     except Exception as e:
@@ -1551,7 +2090,45 @@ def health_check():
             'timestamp': datetime.now().isoformat()
         }), 500
 
+@app.route('/health/database')
+def database_health_check():
+    """Detailed database health check endpoint."""
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        # Test query execution
+        cursor.execute("SELECT COUNT(*) FROM pcb_inventory.\"tblWhse_Inventory\"")
+        inventory_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM pcb_inventory.\"tblTransaction\"")
+        transaction_count = cursor.fetchone()[0]
+
+        cursor.close()
+        db_manager.return_connection(conn)
+
+        pool_stats = db_manager.get_pool_stats()
+
+        return jsonify({
+            'status': 'healthy',
+            'database': {
+                'connected': True,
+                'inventory_records': inventory_count,
+                'transaction_records': transaction_count
+            },
+            'connection_pool': pool_stats,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("10 per minute", methods=["POST"])  # Only rate-limit actual login attempts
 def login():
     """Secure login page with bulletproof authentication."""
     # If already logged in, redirect to dashboard
@@ -1581,30 +2158,77 @@ def login():
 
             user = cursor.fetchone()
 
-            # Debug logging
+            # Secure logging - NO PASSWORDS
             logger.info(f"Login attempt - username: '{username}', user found: {user is not None}")
-            if user:
-                logger.info(f"User details - userlogin: '{user['userlogin']}', password_from_db: '{user['password']}', password_entered: '{password}'")
-                logger.info(f"Password match: {user['password'] == password}")
 
-            if user and user['password'] == password:
+            # Check password with bcrypt (secure hashing)
+            if user:
+                try:
+                    # Check if password is already hashed (starts with $2b$)
+                    if user['password'].startswith('$2b$'):
+                        # Password is hashed, use bcrypt.checkpw()
+                        password_match = bcrypt.checkpw(password.encode('utf-8'), user['password'].encode('utf-8'))
+                    else:
+                        # Legacy plain text password - compare directly but log warning
+                        logger.warning(f"User {username} has plain text password - should be migrated to bcrypt")
+                        password_match = (user['password'] == password)
+                except Exception as e:
+                    logger.error(f"Password verification error: {e}")
+                    password_match = False
+            else:
+                password_match = False
+
+            if user and password_match:
                 # Successful login
                 session.clear()  # Clear any old session data
                 session['user_id'] = user['id']
                 session['username'] = user['userlogin']
                 session['full_name'] = user['username']
-                session['role'] = user['usersecurity']
-                session['itar_authorized'] = True if user['usersecurity'] == 'Admin' else False
+                # Set role from DB, but override to Admin for authorized users
+                db_role = user['usersecurity']
+                if user['userlogin'].lower() in ADMIN_AUTHORIZED_USERS and db_role != 'Admin':
+                    session['role'] = 'Admin'
+                    logger.info(f"User {username} promoted to Admin (in ADMIN_AUTHORIZED_USERS, DB role: '{db_role}')")
+                else:
+                    session['role'] = db_role
+                    logger.info(f"User {username} role from DB: '{db_role}' (type: {type(db_role).__name__})")
+                session['itar_authorized'] = True if session['role'] == 'Admin' else False
                 session.permanent = remember  # Remember me functionality
+
+                # Record login notification for all users except super admin (kanav)
+                if user['userlogin'].lower() != 'kanav':
+                    try:
+                        ip_address = request.remote_addr or request.headers.get('X-Forwarded-For', 'Unknown')
+                        cursor.execute("""
+                            INSERT INTO pcb_inventory."tblLoginNotifications"
+                            (user_id, username, full_name, login_time, ip_address, seen)
+                            VALUES (%s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', %s, FALSE)
+                        """, (user['id'], user['userlogin'], user['username'], ip_address))
+                        logger.info(f"Login notification recorded for user: {username}")
+                    except Exception as notif_error:
+                        logger.error(f"Failed to record login notification: {notif_error}")
+
                 conn.commit()
 
                 logger.info(f"Successful login: {username}")
-                flash(f'Welcome back, {user["full_name"] or username}!', 'success')
+                flash(f'Welcome back, {user["username"] or username}!', 'success')
 
-                # Redirect to next page or dashboard
+                # Redirect to next page or dashboard (with whitelist validation)
                 next_page = request.args.get('next')
-                if next_page and next_page.startswith('/'):
+                # Whitelist of allowed redirect paths
+                allowed_redirects = [
+                    '/', '/index', '/dashboard',
+                    '/stock', '/pick', '/restock',
+                    '/generate_pcn', '/pcn_history',
+                    '/bom_loader', '/warehouse_inventory'
+                ]
+                if next_page and next_page in allowed_redirects:
                     return redirect(next_page)
+                elif next_page and next_page.startswith('/') and '/' in next_page[1:]:
+                    # Allow paths like /warehouse_inventory/view
+                    base_path = '/' + next_page.lstrip('/').split('/')[0]
+                    if base_path in allowed_redirects:
+                        return redirect(next_page)
                 return redirect(url_for('index'))
             else:
                 # Failed login
@@ -1714,22 +2338,9 @@ def index():
 def stock():
     """Stock PCB page."""
     form = StockForm()
-    
-    # Populate form choices based on user access
-    user_role = session.get('role', 'USER')
-    itar_auth = session.get('itar_authorized', False)
-    
-    if not user_manager.can_access_itar(user_role, itar_auth):
-        # Remove ITAR option for non-authorized users
-        form.itar_classification.choices = [choice for choice in ITAR_CLASSIFICATIONS if choice[0] != 'ITAR']
-    
+
     if form.validate_on_submit():
         logger.info(f"Stock form validation passed - Form data: job={form.job.data}, part_number={form.part_number.data}, quantity={form.quantity.data}, location_from={form.location_from.data}, location_to={form.location_to.data}")
-
-        # Check if user is trying to stock ITAR item without permission
-        if form.itar_classification.data == 'ITAR' and not user_manager.can_access_itar(user_role, itar_auth):
-            flash('Access denied: ITAR authorization required', 'error')
-            return render_template('stock.html', form=form)
 
         try:
             # Convert PCN to integer if provided
@@ -1750,9 +2361,9 @@ def stock():
                 quantity=form.quantity.data,
                 location_from=form.location_from.data,
                 location_to=form.location_to.data,
-                itar_classification=form.itar_classification.data if form.itar_classification.data else 'NONE',
-                user_role=user_role,
-                itar_auth=itar_auth,
+                itar_classification='NONE',  # ITAR removed from form
+                user_role=session.get('role', 'USER'),
+                itar_auth=session.get('itar_authorized', False),
                 username=session.get('username', 'system'),
                 work_order=form.po.data if hasattr(form, 'po') and form.po.data else None,
                 dc=form.dc.data if hasattr(form, 'dc') and form.dc.data else None,
@@ -1822,7 +2433,7 @@ def pick():
                     flash(f"Insufficient quantity! Available: {result.get('available_qty', 0)}, "
                           f"Requested: {result.get('requested_qty', 0)}", 'error')
                 elif 'Job not found' in error_msg:
-                    flash(f"Job {result['job']} with PCB type {result['pcb_type']} not found in inventory", 'error')
+                    flash(f"Item {result['job']} not found in warehouse inventory", 'error')
                 else:
                     flash(f"Pick operation failed: {error_msg}", 'error')
                 
@@ -1841,11 +2452,15 @@ def pick():
 @app.route('/restock', methods=['GET', 'POST'])
 @require_auth
 def restock():
-    """Restock parts from MFG floor back to Count Area."""
+    """Restock parts from Count Area to specified location."""
     form = RestockForm()
 
+    # Set default source location on GET request (destination is left blank)
+    if not form.location_from.data:
+        form.location_from.data = 'Count Area'
+
     if form.validate_on_submit():
-        logger.info(f"Restock form validation passed - PCN={form.pcn.data}, Item={form.item.data}, Quantity={form.quantity.data}")
+        logger.info(f"Restock form validation passed - PCN={form.pcn.data}, Item={form.item.data}, Quantity={form.quantity.data}, Location={form.location_to.data}")
 
         try:
             username = session.get('username', 'system')
@@ -1854,12 +2469,15 @@ def restock():
                 pcn=form.pcn.data if form.pcn.data else None,
                 item=form.item.data if form.item.data else None,
                 quantity=form.quantity.data,
+                location_from=form.location_from.data or 'Count Area',
+                location_to=form.location_to.data,
                 username=username
             )
             logger.info(f"restock_pcb returned: {result}")
 
             if result.get('success'):
-                flash(f"Successfully restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to Count Area. "
+                location_to = result.get('location_to', '')
+                flash(f"Successfully restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to {location_to}. "
                       f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}", 'success')
                 # Pass PCN to show print label button
                 return redirect(url_for('restock', restocked_pcn=result['pcn']))
@@ -1901,7 +2519,7 @@ def part_number_change():
             cursor.execute('''
                 SELECT pcn, item, mpn, onhandqty, loc_to
                 FROM pcb_inventory."tblWhse_Inventory"
-                WHERE pcn = %s
+                WHERE pcn::text = %s
             ''', (pcn,))
 
             item = cursor.fetchone()
@@ -1921,7 +2539,7 @@ def part_number_change():
             cursor.execute('''
                 UPDATE pcb_inventory."tblWhse_Inventory"
                 SET item = %s
-                WHERE pcn = %s
+                WHERE pcn::text = %s
             ''', (new_part_number, pcn))
 
             # Check if update succeeded
@@ -1935,7 +2553,7 @@ def part_number_change():
             cursor.execute('''
                 INSERT INTO pcb_inventory."tblTransaction"
                 (trantype, item, pcn, mpn, tranqty, tran_time, loc_to, userid, migrated_at)
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, CURRENT_TIMESTAMP)
+                VALUES (%s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, CURRENT_TIMESTAMP)
             ''', ('PN_CHANGE', new_part_number, pcn, item['mpn'], 0, item['loc_to'], username))
 
             conn.commit()
@@ -1947,7 +2565,7 @@ def part_number_change():
             cursor.execute('''
                 SELECT pcn, item, mpn, onhandqty, loc_to
                 FROM pcb_inventory."tblWhse_Inventory"
-                WHERE pcn = %s
+                WHERE pcn::text = %s
             ''', (pcn,))
             updated_item = cursor.fetchone()
 
@@ -2056,13 +2674,16 @@ def get_part_details():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Determine search criteria
-        if pcn:
-            where_clause = "pcn = %s"
-            search_param = int(pcn)
+        # Determine search criteria - use both PCN and item when available
+        if pcn and item:
+            where_clause = "pcn::text = %s AND item::text ILIKE %s"
+            search_params = (str(pcn), item)
+        elif pcn:
+            where_clause = "pcn::text = %s"
+            search_params = (str(pcn),)
         else:
             where_clause = "item = %s"
-            search_param = item
+            search_params = (item,)
 
         # Fetch part details from warehouse inventory
         cursor.execute(f"""
@@ -2071,7 +2692,7 @@ def get_part_details():
                 item,
                 mpn,
                 dc,
-                COALESCE(mfg_qty, 0) as mfg_qty,
+                COALESCE(mfg_qty::integer, 0) as mfg_qty,
                 COALESCE(onhandqty, 0) as onhandqty,
                 loc_from,
                 loc_to,
@@ -2079,26 +2700,29 @@ def get_part_details():
                 po
             FROM pcb_inventory."tblWhse_Inventory"
             WHERE {where_clause}
+            ORDER BY id DESC
             LIMIT 1
-        """, (search_param,))
+        """, search_params)
 
         result = cursor.fetchone()
 
         if result:
+            mfg_qty_int = int(result['mfg_qty']) if result['mfg_qty'] else 0
+
             return jsonify({
                 'success': True,
                 'data': {
-                    'pcn': result['pcn'],
-                    'item': result['item'],
-                    'mpn': result['mpn'],
-                    'dc': result['dc'],
-                    'mfg_qty': result['mfg_qty'],
-                    'onhandqty': result['onhandqty'],
-                    'location_from': result['loc_from'] if result['loc_from'] != 'Stock' else '-',
-                    'location_to': result['loc_to'],
-                    'msd': result['msd'],
-                    'po': result['po'],
-                    'has_mfg_qty': result['mfg_qty'] > 0
+                    'pcn': str(result['pcn']),
+                    'item': str(result['item']),
+                    'mpn': str(result['mpn']) if result['mpn'] else '',
+                    'dc': str(result['dc']) if result['dc'] else '',
+                    'mfg_qty': mfg_qty_int,
+                    'onhandqty': int(result['onhandqty']) if result['onhandqty'] else 0,
+                    'location_from': str(result['loc_from']) if result['loc_from'] and result['loc_from'] != 'Stock' else '-',
+                    'location_to': str(result['loc_to']) if result['loc_to'] else '-',
+                    'msd': str(result['msd']) if result['msd'] else '',
+                    'po': str(result['po']) if result['po'] else '',
+                    'has_mfg_qty': mfg_qty_int > 0
                 }
             })
         else:
@@ -2275,7 +2899,7 @@ def warehouse_inventory():
 
         # Build query with filters
         query = """
-            SELECT id, item, pcn, mpn, dc, onhandqty, loc_to,
+            SELECT id, item, pcn, mpn, dc, onhandqty, loc_from, loc_to,
                    mfg_qty, qty_old, msd, po, cost, migrated_at
             FROM pcb_inventory."tblWhse_Inventory"
             WHERE 1=1
@@ -2288,7 +2912,7 @@ def warehouse_inventory():
 
         if search_pcn:
             query += " AND pcn::text LIKE %s"
-            params.append(f"%{search_pcn}%")
+            params.append(f"{search_pcn}%")
 
         if search_mpn:
             query += " AND LOWER(mpn::text) LIKE %s"
@@ -2484,7 +3108,6 @@ def get_recent_warehouse_inventory():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/warehouse-inventory/update', methods=['POST'])
-@csrf.exempt
 @require_auth
 def update_warehouse_item():
     """API endpoint to update warehouse inventory item."""
@@ -2495,7 +3118,7 @@ def update_warehouse_item():
             return jsonify({'success': False, 'message': 'No data provided'}), 400
 
         # Validate required fields
-        required_fields = ['item', 'pcn', 'mpn']
+        required_fields = ['item', 'pcn']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'success': False, 'message': f'{field} is required'}), 400
@@ -2542,7 +3165,8 @@ def update_warehouse_item():
                     msd = %s,
                     po = %s,
                     cost = %s
-                WHERE item::text = %s AND pcn::text = %s AND mpn::text = %s
+                WHERE item::text = %s AND pcn::text = %s
+                  AND (mpn::text = %s OR (mpn IS NULL AND %s IS NULL))
             """, (
                 data.get('dc') or None,
                 onhand_qty,
@@ -2554,7 +3178,8 @@ def update_warehouse_item():
                 to_float_or_none(data.get('cost')),
                 data.get('item'),
                 data.get('pcn'),
-                data.get('mpn')
+                data.get('mpn') or None,
+                data.get('mpn') or None
             ))
 
             if cursor.rowcount == 0:
@@ -2647,6 +3272,427 @@ def reports():
         logger.error(f"Error loading reports: {e}")
         flash(f"Error loading reports: {e}", 'error')
         return render_template('reports.html', summary=[], audit_log=[])
+
+# ============================================================================
+# SHORTAGE REPORT ROUTES
+# ============================================================================
+
+@app.route('/shortage_report')
+@require_auth
+def shortage_report():
+    """Shortage Report page - list saved reports and generate new ones."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get list of saved reports
+        cursor.execute("""
+            SELECT id, job, report_name, total_lines, shortage_lines,
+                   total_cost, shortage_cost, created_by, created_at, notes, order_qty
+            FROM pcb_inventory."tblShortageReport"
+            ORDER BY created_at DESC
+            LIMIT 50
+        """)
+        saved_reports = cursor.fetchall()
+
+        # Get list of jobs that have BOMs loaded
+        cursor.execute("""
+            SELECT DISTINCT job FROM pcb_inventory."tblBOM"
+            WHERE job IS NOT NULL AND job != ''
+            ORDER BY job
+        """)
+        available_jobs = [row['job'] for row in cursor.fetchall()]
+
+        return render_template('shortage_report.html',
+                             saved_reports=saved_reports,
+                             available_jobs=available_jobs,
+                             column_definitions=SHORTAGE_EXPORT_COLUMNS)
+    except Exception as e:
+        logger.error(f"Error loading shortage report page: {e}")
+        flash(f"Error loading page: {e}", 'error')
+        return render_template('shortage_report.html', saved_reports=[], available_jobs=[],
+                             column_definitions=SHORTAGE_EXPORT_COLUMNS)
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/shortage_report/generate', methods=['POST'])
+@require_auth
+def generate_shortage_report():
+    """Generate a new shortage report for a job."""
+    job = request.form.get('job', '').strip()
+    report_name = request.form.get('report_name', '').strip()
+    notes = request.form.get('notes', '').strip()
+    order_qty_input = request.form.get('order_qty', '1').strip()
+
+    if not job:
+        flash('Please enter a job number.', 'danger')
+        return redirect(url_for('shortage_report'))
+
+    try:
+        order_qty = int(order_qty_input)
+        if order_qty < 1:
+            raise ValueError
+    except (ValueError, TypeError):
+        flash('Order Qty must be a positive whole number.', 'danger')
+        return redirect(url_for('shortage_report'))
+
+    if not report_name:
+        report_name = f"Shortage Report - {job} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Check if job has BOM data
+        cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job,))
+        if cursor.fetchone()['count'] == 0:
+            flash(f'No BOM data found for job {job}. Please load BOM first.', 'warning')
+            return redirect(url_for('shortage_report'))
+
+        # Get total BOM line count
+        cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job,))
+        total_bom_lines = cursor.fetchone()['count']
+
+        # Get the latest revision for this job
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job,))
+        rev_row = cursor.fetchone()
+        job_rev = rev_row['job_rev'] if rev_row else None
+
+        # Generate report data by comparing BOM vs Inventory
+        # INNER JOIN: only include BOM items that have inventory matches
+        # Excludes items on MFG Floor and only uses latest revision
+        cursor.execute("""
+            SELECT
+                b.line as line_no,
+                b.aci_pn,
+                w.pcn,
+                b.mpn,
+                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
+                w.item as item,
+                COALESCE(w.loc_to, '') as location,
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                b.man as manufacturer,
+                b."DESC" as description
+            FROM pcb_inventory."tblBOM" b
+            INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+            WHERE b.job = %s
+                AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+            ORDER BY
+                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
+                b.line
+        """, (job, job, job))
+        matched_items = cursor.fetchall()
+
+        if not matched_items:
+            flash(f'No inventory matches found for job {job} BOM items.', 'warning')
+            return redirect(url_for('shortage_report'))
+
+        # Calculate REQ for each item and count shortages
+        report_items = []
+        shortage_count = 0
+        for item in matched_items:
+            qty = int(item['qty'] or 0)
+            req = qty * order_qty
+            on_hand = int(item['qty_on_hand'] or 0)
+            item['req'] = req
+            item['order_qty'] = order_qty
+            if on_hand < req:
+                shortage_count += 1
+            report_items.append(item)
+
+        # Calculate costs
+        total_cost = sum(
+            float(item['qty'] or 0) * float(item['unit_cost'] or 0)
+            for item in report_items
+        )
+        shortage_cost = sum(
+            float(item['req'] or 0) * float(item['unit_cost'] or 0)
+            for item in report_items if item['qty_on_hand'] < item['req']
+        )
+
+        # Create the report header
+        username = session.get('username', 'Unknown')
+        cursor.execute("""
+            INSERT INTO pcb_inventory."tblShortageReport"
+            (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (job, report_name, total_bom_lines, shortage_count, total_cost, shortage_cost, username, notes, order_qty, job_rev))
+        report_id = cursor.fetchone()['id']
+
+        # Insert all matched line items (items found in inventory)
+        for item in report_items:
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblShortageReportItems"
+                (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
+                 item, location, unit_cost, line_cost, manufacturer, description, req)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
+                item['qty'], item['qty_on_hand'], order_qty,
+                item['item'], item['location'], float(item['unit_cost'] or 0),
+                float(item['qty'] or 0) * float(item['unit_cost'] or 0),
+                item['manufacturer'], item['description'], item['req']
+            ))
+
+        conn.commit()
+        flash(f'Shortage report generated! {len(report_items)} items matched inventory, {shortage_count} have shortages.', 'success')
+        return redirect(url_for('view_shortage_report', report_id=report_id))
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error generating shortage report: {e}")
+        flash(f"Error generating report: {e}", 'danger')
+        return redirect(url_for('shortage_report'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/shortage_report/view/<int:report_id>')
+@require_auth
+def view_shortage_report(report_id):
+    """View a saved shortage report."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get report header
+        cursor.execute("""
+            SELECT id, job, report_name, total_lines, shortage_lines,
+                   total_cost, shortage_cost, created_by, created_at, notes, order_qty, job_rev
+            FROM pcb_inventory."tblShortageReport"
+            WHERE id = %s
+        """, (report_id,))
+        report = cursor.fetchone()
+
+        if not report:
+            flash('Report not found.', 'danger')
+            return redirect(url_for('shortage_report'))
+
+        # Get report line items (exclude MFG Floor items)
+        cursor.execute("""
+            SELECT line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
+                   item, location, unit_cost, line_cost, manufacturer, description, req
+            FROM pcb_inventory."tblShortageReportItems"
+            WHERE report_id = %s AND COALESCE(location, '') != 'MFG Floor'
+            ORDER BY
+                CASE WHEN line_no ~ '^[0-9]+$' THEN CAST(line_no AS INTEGER) ELSE 999999 END,
+                line_no
+        """, (report_id,))
+        items = cursor.fetchall()
+
+        return render_template('shortage_report_view.html', report=report, items=items,
+                                       column_definitions=SHORTAGE_EXPORT_COLUMNS)
+
+    except Exception as e:
+        logger.error(f"Error viewing shortage report: {e}")
+        flash(f"Error loading report: {e}", 'danger')
+        return redirect(url_for('shortage_report'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/shortage_report/export/<int:report_id>', methods=['GET', 'POST'])
+@require_auth
+def export_shortage_report(report_id):
+    """Export shortage report to Excel with optional column customization."""
+    conn = None
+    try:
+        # Parse column config from POST body, or use defaults
+        if request.method == 'POST' and request.is_json:
+            config = request.get_json()
+            selected_columns = config.get('columns', [])
+            highlighted_columns = set(config.get('highlighted', []))
+            export_filter = config.get('filter', 'all')
+        else:
+            selected_columns = [c['key'] for c in SHORTAGE_EXPORT_COLUMNS if c['default']]
+            highlighted_columns = set()
+            export_filter = 'all'
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get report header
+        cursor.execute("""
+            SELECT job, report_name, total_lines, shortage_lines,
+                   total_cost, shortage_cost, created_by, created_at, order_qty, job_rev
+            FROM pcb_inventory."tblShortageReport"
+            WHERE id = %s
+        """, (report_id,))
+        report = cursor.fetchone()
+
+        if not report:
+            return jsonify({'success': False, 'error': 'Report not found.'}), 404
+
+        # Get report line items (exclude MFG Floor)
+        cursor.execute("""
+            SELECT line_no, aci_pn, pcn, mpn, qty_required as qty, order_qty,
+                   req, item, qty_on_hand, location,
+                   unit_cost, line_cost, manufacturer, description
+            FROM pcb_inventory."tblShortageReportItems"
+            WHERE report_id = %s AND COALESCE(location, '') != 'MFG Floor'
+            ORDER BY
+                CASE WHEN line_no ~ '^[0-9]+$' THEN CAST(line_no AS INTEGER) ELSE 999999 END,
+                line_no
+        """, (report_id,))
+        items = cursor.fetchall()
+
+        # Apply filter: shortages only
+        if export_filter == 'shortages_only':
+            items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
+
+        # Build active column list from selection
+        col_registry = {c['key']: c for c in SHORTAGE_EXPORT_COLUMNS}
+        active_cols = [col_registry[k] for k in selected_columns if k in col_registry]
+        if not active_cols:
+            active_cols = [col_registry[k] for k in [c['key'] for c in SHORTAGE_EXPORT_COLUMNS if c['default']]]
+        num_cols = len(active_cols)
+        last_col = get_column_letter(num_cols)
+
+        # Create Excel workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Shortage Report"
+
+        # Styles
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1E40AF", end_color="1E40AF", fill_type="solid")
+        shortage_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        highlight_fill = PatternFill(start_color="FFFDE7", end_color="FFFDE7", fill_type="solid")
+        border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+
+        # Title section
+        ws.merge_cells(f'A1:{last_col}1')
+        ws['A1'] = f"Shortage Report - Job: {report['job']}"
+        ws['A1'].font = Font(bold=True, size=16)
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A2:{last_col}2')
+        ws['A2'] = f"Generated: {report['created_at'].strftime('%Y-%m-%d %H:%M') if report['created_at'] else 'N/A'} by {report['created_by']} | Rev: {report.get('job_rev', 'N/A')} | Order Qty: {report.get('order_qty', 'N/A')}"
+        ws['A2'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A3:{last_col}3')
+        ws['A3'] = f"Shortage Items: {report['shortage_lines']} of {report['total_lines']} BOM lines"
+        ws['A3'].alignment = Alignment(horizontal='center')
+
+        # Headers (row 5)
+        for col_idx, col_def in enumerate(active_cols, 1):
+            cell = ws.cell(row=5, column=col_idx, value=col_def['label'])
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center')
+
+        # Data rows
+        for row_idx, item in enumerate(items, 6):
+            is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
+            for col_idx, col_def in enumerate(active_cols, 1):
+                value = get_export_cell_value(item, col_def['key'])
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = border
+                if is_shortage:
+                    cell.fill = shortage_fill
+                elif col_def['key'] in highlighted_columns:
+                    cell.fill = highlight_fill
+
+        # Column widths
+        for col_idx, col_def in enumerate(active_cols, 1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = col_def['width']
+
+        # Save to BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        # Create response
+        filename = f"Shortage_Report_{report['job']}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting shortage report: {e}")
+        if request.method == 'POST':
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash(f"Error exporting report: {e}", 'danger')
+        return redirect(url_for('view_shortage_report', report_id=report_id))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/shortage_report/delete/<int:report_id>', methods=['POST'])
+@require_auth
+def delete_shortage_report(report_id):
+    """Delete a saved shortage report."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        # Delete report (cascade will delete items)
+        cursor.execute('DELETE FROM pcb_inventory."tblShortageReport" WHERE id = %s', (report_id,))
+        conn.commit()
+
+        flash('Report deleted successfully.', 'success')
+        return redirect(url_for('shortage_report'))
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error deleting shortage report: {e}")
+        flash(f"Error deleting report: {e}", 'danger')
+        return redirect(url_for('shortage_report'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/api/bom/jobs')
+@require_auth
+def get_bom_jobs():
+    """API endpoint to get list of jobs with BOMs."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT DISTINCT job FROM pcb_inventory."tblBOM"
+            WHERE job IS NOT NULL AND job != ''
+            ORDER BY job
+        """)
+        jobs = [row['job'] for row in cursor.fetchall()]
+
+        return jsonify({'success': True, 'jobs': jobs})
+
+    except Exception as e:
+        logger.error(f"Error getting BOM jobs: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+# ============================================================================
+# END SHORTAGE REPORT ROUTES
+# ============================================================================
 
 @app.route('/sources')
 @require_auth
@@ -2868,6 +3914,7 @@ def sso_login():
 
         if username:
             session['username'] = username
+            session['full_name'] = data.get('full_name', username.split('@')[0].capitalize())
             session['role'] = role
             session['itar_authorized'] = itar_authorized
             session['aci_auth_token'] = auth_token
@@ -3285,17 +4332,22 @@ def po_history():
     try:
         conn = db_manager.get_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Build query
+            # Build query from tblTransaction (actual table that stores PO data)
             query = """
-                SELECT id, po_number, item, pcn, mpn, date_code, quantity,
-                       transaction_type, transaction_date, location_from, location_to, user_id
-                FROM pcb_inventory.po_history
-                WHERE 1=1
+                SELECT id, po as po_number, item, pcn, mpn, dc as date_code,
+                       CASE
+                           WHEN tranqty ~ '^[0-9]+$' THEN CAST(tranqty AS INTEGER)
+                           ELSE NULL
+                       END as quantity,
+                       trantype as transaction_type, tran_time as transaction_date,
+                       loc_from as location_from, loc_to as location_to, userid as user_id
+                FROM pcb_inventory."tblTransaction"
+                WHERE po IS NOT NULL AND po <> ''
             """
             params = []
 
             if search_po:
-                query += " AND po_number ILIKE %s"
+                query += " AND po ILIKE %s"
                 params.append(f'%{search_po}%')
 
             if search_item:
@@ -3308,14 +4360,14 @@ def po_history():
 
             if search_pcn:
                 query += " AND pcn = %s"
-                params.append(int(search_pcn))
+                params.append(search_pcn)
 
             if search_date_from:
-                query += " AND transaction_date >= %s"
+                query += " AND tran_time >= %s"
                 params.append(search_date_from)
 
             if search_date_to:
-                query += " AND transaction_date <= %s"
+                query += " AND tran_time <= %s"
                 params.append(f'{search_date_to} 23:59:59')
 
             # Get total count
@@ -3324,12 +4376,22 @@ def po_history():
             total_count = cur.fetchone()['count']
 
             # Add sorting and pagination
-            query += " ORDER BY transaction_date DESC NULLS LAST LIMIT %s OFFSET %s"
+            query += " ORDER BY id DESC LIMIT %s OFFSET %s"
             params.extend([per_page, (page - 1) * per_page])
 
             # Execute query
             cur.execute(query, params)
             receipts = [dict(row) for row in cur.fetchall()]
+
+            # Convert quantity strings to integers for proper summing in template
+            for receipt in receipts:
+                if receipt.get('quantity') is not None:
+                    try:
+                        # If it's already an int, leave it; if it's a string, convert it
+                        if isinstance(receipt['quantity'], str):
+                            receipt['quantity'] = int(receipt['quantity']) if receipt['quantity'].strip() else 0
+                    except (ValueError, AttributeError):
+                        receipt['quantity'] = 0
 
             # Calculate pagination
             total_pages = (total_count + per_page - 1) // per_page
@@ -3400,19 +4462,19 @@ def pcn_history():
                                ELSE NULL
                            END as sort_time
                     FROM pcb_inventory."tblTransaction"
-                    WHERE pcn = %s
+                    WHERE pcn::text = %s
                     ORDER BY sort_time DESC NULLS LAST, id DESC
                 """
-                cur.execute(query, (int(search_pcn),))
+                cur.execute(query, (search_pcn,))
                 transactions = [dict(row) for row in cur.fetchall()]
 
                 # Get PCN info from warehouse inventory
                 cur.execute("""
                     SELECT item, mpn, dc, onhandqty, mfg_qty, loc_to, msd, po
                     FROM pcb_inventory."tblWhse_Inventory"
-                    WHERE pcn = %s
+                    WHERE pcn::text = %s
                     LIMIT 1
-                """, (int(search_pcn),))
+                """, (search_pcn,))
                 result = cur.fetchone()
                 if result:
                     pcn_info = dict(result)
@@ -3517,7 +4579,7 @@ def stock_alerts():
                 pass
 
 @app.route('/api/pcn/generate', methods=['POST'])
-@csrf.exempt
+@require_auth
 def api_generate_pcn():
     """API endpoint to generate new PCN"""
     try:
@@ -3531,74 +4593,53 @@ def api_generate_pcn():
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            # Generate new PCN number
-            cursor.execute("SELECT pcb_inventory.generate_pcn_number() as pcn_number")
+            # Validate quantity input
+            quantity = data.get('quantity', 0)
+            if quantity:
+                try:
+                    quantity = int(quantity)
+                    if quantity < 0 or quantity > 10000:
+                        return jsonify({'error': 'Quantity must be between 0 and 10000'}), 400
+                except (ValueError, TypeError):
+                    return jsonify({'error': 'Quantity must be a number'}), 400
+
+            # Generate new PCN using MAX+1 (ORIGINAL LOGIC RESTORED)
+            cursor.execute("""
+                SELECT COALESCE(MAX(pcn::integer), 0) + 1 as next_pcn
+                FROM pcb_inventory."tblTransaction"
+                WHERE pcn ~ '^[0-9]+$'
+            """)
             result = cursor.fetchone()
-            pcn_number = result['pcn_number']
+            pcn_number = str(result['next_pcn'])
 
-            # Create barcode data string (pipe-delimited)
-            # Format: PCN|Job|MPN|PartNumber|QTY|PO|Location|PCBType|DateCode|MSD
-            barcode_data = f"{pcn_number}|{data.get('item', '')}|{data.get('mpn', '')}|{data.get('part_number', '')}|{data.get('quantity', '')}|{data.get('po_number', '')}|{data.get('location', '')}|{data.get('pcb_type', '')}|{data.get('date_code', '')}|{data.get('msd', '')}"
+            logger.info(f"Generated new PCN: {pcn_number} (using MAX+1)")
 
-            # Insert PCN record
+            # Insert into tblTransaction
             cursor.execute("""
-                INSERT INTO pcb_inventory.pcn_records
-                (pcn_number, item, po_number, part_number, mpn, quantity, date_code, msd, barcode_data, created_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING pcn_id, pcn_number, item, po_number, part_number, mpn, quantity, date_code, msd, created_at
+                INSERT INTO pcb_inventory."tblTransaction"
+                (record_no, trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s)
+                RETURNING id, pcn, item, mpn, dc, msd, tranqty, created_at
             """, (
-                pcn_number,
-                data.get('item'),
-                data.get('po_number'),
-                data.get('part_number'),
-                data.get('mpn'),
-                data.get('quantity'),
-                data.get('date_code'),
-                data.get('msd'),
-                barcode_data,
-                session.get('username', 'system')
+                None,  # record_no
+                'PCN Generation',  # trantype
+                data.get('item'),  # item (job number)
+                pcn_number,  # pcn
+                data.get('mpn'),  # mpn
+                data.get('date_code'),  # dc
+                data.get('msd'),  # msd
+                data.get('quantity', '0'),  # tranqty
+                '-',  # loc_from
+                data.get('location', 'Inventory'),  # loc_to
+                data.get('wo'),  # wo (work order)
+                data.get('po_number'),  # po
+                session.get('username', 'system')  # userid
             ))
 
-            pcn_record = cursor.fetchone()
+            transaction_record = cursor.fetchone()
+            logger.info(f"Created PCN {pcn_number} in tblTransaction (ID: {transaction_record['id']})")
 
-            # Insert into pcn_history table for tracking
-            cursor.execute("""
-                INSERT INTO pcb_inventory.pcn_history
-                (pcn, job, qty, date_code, msd, work_order, generated_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (
-                pcn_number,
-                data.get('item'),
-                data.get('quantity'),
-                data.get('date_code'),
-                data.get('msd'),
-                data.get('po_number'),  # Using PO number as work_order
-                session.get('username', 'system')
-            ))
-            logger.info(f"Added PCN {pcn_number} to pcn_history table")
-
-            # If PO number is provided, also add it to PO history
-            if data.get('po_number'):
-                cursor.execute("""
-                    INSERT INTO pcb_inventory.po_history
-                    (po_number, item, pcn, mpn, date_code, quantity, transaction_type,
-                     transaction_date, location_from, location_to, user_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
-                """, (
-                    data.get('po_number'),
-                    data.get('item'),
-                    pcn_number,
-                    data.get('mpn'),
-                    data.get('date_code'),
-                    data.get('quantity'),
-                    'PCN Generation',
-                    '-',
-                    'Inventory',
-                    session.get('username', 'system')
-                ))
-                logger.info(f"Added PO {data.get('po_number')} to PO history (PCN: {pcn_number})")
-
-            # Also insert into warehouse inventory - simple INSERT, no ON CONFLICT
+            # Also insert into warehouse inventory
             cursor.execute("""
                 INSERT INTO pcb_inventory."tblWhse_Inventory"
                 (item, pcn, mpn, dc, onhandqty, loc_from, loc_to, msd, po)
@@ -3608,41 +4649,13 @@ def api_generate_pcn():
                 pcn_number,
                 data.get('mpn') or '',
                 data.get('date_code'),
-                data.get('quantity', 0),
-                '-',
+                data.get('quantity', 0),  # Set initial quantity from user input
+                data.get('location_from', '-'),
                 data.get('location', 'Receiving Area'),
                 data.get('msd'),
                 data.get('po_number')
             ))
-            logger.info(f"Added/Updated PCN {pcn_number} in warehouse inventory")
-
-            # Also insert into tblTransaction for PCN history tracking
-            # Convert date_code to integer if it's numeric, otherwise set to NULL
-            dc_value = None
-            if data.get('date_code'):
-                dc_str = str(data.get('date_code')).strip()
-                if dc_str.isdigit():
-                    dc_value = int(dc_str)
-                # If not numeric, leave as NULL since tblTransaction.dc is INTEGER
-
-            cursor.execute("""
-                INSERT INTO pcb_inventory."tblTransaction"
-                (trantype, item, pcn, mpn, dc, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
-                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s, %s, %s)
-            """, (
-                'GEN',  # Transaction type for PCN generation
-                data.get('item'),
-                pcn_number,
-                data.get('mpn'),
-                dc_value,  # Use converted integer value or NULL
-                data.get('quantity', 0),
-                '-',  # location from
-                data.get('location', 'Receiving Area'),  # location to - defaults to Receiving Area
-                data.get('work_order'),  # work order
-                data.get('po_number'),  # PO
-                session.get('username', 'system')  # user
-            ))
-            logger.info(f"Added PCN {pcn_number} to tblTransaction for history tracking")
+            logger.info(f"Added PCN {pcn_number} to warehouse inventory")
 
             conn.commit()
 
@@ -3650,17 +4663,16 @@ def api_generate_pcn():
 
             return jsonify({
                 'success': True,
-                'pcn_number': pcn_record['pcn_number'],
-                'pcn_id': pcn_record['pcn_id'],
-                'item': pcn_record['item'],
-                'po_number': pcn_record['po_number'],
-                'part_number': pcn_record['part_number'],
-                'mpn': pcn_record['mpn'],
-                'quantity': pcn_record['quantity'],
-                'date_code': pcn_record['date_code'],
-                'msd': pcn_record['msd'],
-                'barcode_data': barcode_data,
-                'created_at': pcn_record['created_at'].isoformat() if pcn_record['created_at'] else None
+                'pcn_number': transaction_record['pcn'],
+                'pcn_id': transaction_record['id'],
+                'item': transaction_record['item'],
+                'po_number': data.get('po_number'),
+                'part_number': data.get('part_number'),
+                'mpn': transaction_record['mpn'],
+                'quantity': transaction_record['tranqty'],
+                'date_code': transaction_record['dc'],
+                'msd': data.get('msd'),
+                'created_at': transaction_record['created_at'].isoformat() if transaction_record['created_at'] else None
             })
 
         except Exception as e:
@@ -3696,42 +4708,55 @@ def api_get_pcn_details(pcn_number):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            # First try pcn_records table
-            cursor.execute("""
-                SELECT pcn_number, item, po_number, part_number, mpn,
-                       quantity, date_code, msd, created_at, created_by
-                FROM pcb_inventory.pcn_records
-                WHERE pcn_number = %s
-            """, (pcn_number,))
+            # Check if item_number filter was provided (for resolving duplicate PCNs)
+            item_filter = request.args.get('item')
 
-            record = cursor.fetchone()
+            # Query from tblWhse_Inventory (main warehouse table)
+            if item_filter:
+                cursor.execute("""
+                    SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn::text = %s AND item::text = %s
+                    LIMIT 1
+                """, (pcn_number, item_filter))
+            else:
+                cursor.execute("""
+                    SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn::text = %s
+                    ORDER BY id DESC
+                """, (pcn_number,))
 
-            if record:
-                return jsonify({
-                    'success': True,
-                    'pcn_number': record['pcn_number'],
-                    'part_number': record['part_number'] or record['item'],
-                    'job': record['item'],
-                    'po_number': record['po_number'],
-                    'mpn': record['mpn'],
-                    'quantity': record['quantity'],
-                    'date_code': record['date_code'],
-                    'msd': record['msd'],
-                    'created_at': record['created_at'].isoformat() if record['created_at'] else None,
-                    'created_by': record['created_by']
-                })
+            whse_records = cursor.fetchall()
 
-            # If not in pcn_records, try tblWhse_Inventory (main warehouse table)
-            cursor.execute("""
-                SELECT pcn, item, mpn, onhandqty, dc, msd, loc_to, po
-                FROM pcb_inventory."tblWhse_Inventory"
-                WHERE pcn::text = %s
-                LIMIT 1
-            """, (pcn_number,))
+            if whse_records:
+                # If multiple records found for the same PCN, return them all
+                # so the frontend can ask the user to choose
+                if len(whse_records) > 1:
+                    matches = []
+                    for rec in whse_records:
+                        matches.append({
+                            'pcn_number': str(rec['pcn']),
+                            'part_number': rec['item'],
+                            'job': rec['item'],
+                            'mpn': rec['mpn'],
+                            'quantity': rec['onhandqty'],
+                            'date_code': rec['dc'],
+                            'msd': rec['msd'],
+                            'location': rec['loc_to'],
+                            'location_from': rec['loc_from'],
+                            'po_number': rec['po']
+                        })
+                    return jsonify({
+                        'success': True,
+                        'multiple': True,
+                        'count': len(matches),
+                        'matches': matches,
+                        'message': f'Multiple items found for PCN {pcn_number}. Please select the correct one.'
+                    })
 
-            whse_record = cursor.fetchone()
-
-            if whse_record:
+                # Single record - return as before
+                whse_record = whse_records[0]
                 return jsonify({
                     'success': True,
                     'pcn_number': str(whse_record['pcn']),
@@ -3742,47 +4767,37 @@ def api_get_pcn_details(pcn_number):
                     'date_code': whse_record['dc'],
                     'msd': whse_record['msd'],
                     'location': whse_record['loc_to'],
+                    'location_from': whse_record['loc_from'],
                     'po_number': whse_record['po']
                 })
 
-            # If not in tblWhse_Inventory, try pcn_history
+            # If not in tblWhse_Inventory, try tblTransaction
             cursor.execute("""
-                SELECT pcn, job, qty, date_code, msd AS msd_level,
-                       work_order, location, pcb_type, generated_at, generated_by
-                FROM pcb_inventory.pcn_history
-                WHERE pcn = %s
-                ORDER BY generated_at DESC
+                SELECT pcn, item, mpn, tranqty, dc, msd, loc_from, loc_to, wo, po, userid, created_at
+                FROM pcb_inventory."tblTransaction"
+                WHERE pcn::text = %s
+                ORDER BY created_at DESC
                 LIMIT 1
             """, (pcn_number,))
 
-            history_record = cursor.fetchone()
+            transaction_record = cursor.fetchone()
 
-            if history_record:
-                # Also try to get MPN from warehouse inventory for this job
-                mpn_value = None
-                cursor.execute("""
-                    SELECT mpn FROM pcb_inventory."tblWhse_Inventory"
-                    WHERE item::text = %s AND mpn IS NOT NULL AND mpn != ''
-                    LIMIT 1
-                """, (history_record['job'],))
-                mpn_row = cursor.fetchone()
-                if mpn_row:
-                    mpn_value = mpn_row['mpn']
-
+            if transaction_record:
                 return jsonify({
                     'success': True,
-                    'pcn_number': history_record['pcn'],
-                    'part_number': history_record['job'],
-                    'job': history_record['job'],
-                    'mpn': mpn_value,
-                    'quantity': history_record['qty'],
-                    'date_code': history_record['date_code'],
-                    'msd': history_record['msd_level'],
-                    'pcb_type': history_record['pcb_type'],
-                    'work_order': history_record['work_order'],
-                    'location': history_record['location'],
-                    'created_at': history_record['generated_at'].isoformat() if history_record['generated_at'] else None,
-                    'created_by': history_record['generated_by']
+                    'pcn_number': str(transaction_record['pcn']),
+                    'part_number': transaction_record['item'],
+                    'job': transaction_record['item'],
+                    'mpn': transaction_record['mpn'],
+                    'quantity': transaction_record['tranqty'],
+                    'date_code': transaction_record['dc'],
+                    'msd': transaction_record['msd'],
+                    'location': transaction_record['loc_to'],
+                    'location_from': transaction_record['loc_from'],
+                    'work_order': transaction_record['wo'],
+                    'po_number': transaction_record['po'],
+                    'created_at': transaction_record['created_at'].isoformat() if transaction_record['created_at'] else None,
+                    'created_by': transaction_record['userid']
                 })
 
             return jsonify({'success': False, 'error': 'PCN not found'}), 404
@@ -3815,11 +4830,14 @@ def api_list_pcn():
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
+            # Query from tblWhse_Inventory for recent PCN records
             cursor.execute("""
-                SELECT pcn_id, pcn_number, item, po_number, part_number, mpn,
-                       quantity, date_code, msd, created_at, created_by
-                FROM pcb_inventory.pcn_records
-                ORDER BY pcn_id DESC
+                SELECT id as pcn_id, pcn as pcn_number, item, po as po_number,
+                       item as part_number, mpn, onhandqty as quantity,
+                       dc as date_code, msd, created_at, NULL as created_by
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE pcn IS NOT NULL AND pcn <> ''
+                ORDER BY created_at DESC
                 LIMIT 100
             """)
 
@@ -3829,7 +4847,7 @@ def api_list_pcn():
                 'success': True,
                 'records': [{
                     'pcn_id': r['pcn_id'],
-                    'pcn_number': r['pcn_number'],
+                    'pcn_number': str(r['pcn_number']),
                     'item': r['item'],
                     'po_number': r['po_number'],
                     'part_number': r['part_number'],
@@ -3861,9 +4879,11 @@ def api_list_pcn():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/pcn/delete/<pcn_number>', methods=['DELETE'])
-@csrf.exempt
+@require_auth
 def api_delete_pcn(pcn_number):
     """API endpoint to delete a PCN record"""
+    logger.info(f"=== INSIDE api_delete_pcn FUNCTION - PCN: {pcn_number} ===")
+
     try:
         conn = None
         cursor = None
@@ -3871,78 +4891,38 @@ def api_delete_pcn(pcn_number):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            # Check if PCN exists in pcn_records table first
+            # Check if PCN exists in tblTransaction
             cursor.execute("""
-                SELECT pcn_number, item
-                FROM pcb_inventory.pcn_records
-                WHERE pcn_number = %s
+                SELECT pcn, item
+                FROM pcb_inventory."tblTransaction"
+                WHERE pcn::text = %s
+                LIMIT 1
             """, (pcn_number,))
 
-            pcn_record = cursor.fetchone()
+            transaction_record = cursor.fetchone()
 
-            # If not in pcn_records, check pcn_history
-            if not pcn_record:
-                cursor.execute("""
-                    SELECT pcn, job
-                    FROM pcb_inventory.pcn_history
-                    WHERE pcn = %s
-                """, (pcn_number,))
+            if not transaction_record:
+                return jsonify({'success': False, 'error': 'PCN not found'}), 404
 
-                history_record = cursor.fetchone()
+            item_name = transaction_record['item']
 
-                # If not in pcn_history, check tblTransaction
-                if not history_record:
-                    cursor.execute("""
-                        SELECT pcn, item
-                        FROM pcb_inventory."tblTransaction"
-                        WHERE pcn = %s
-                        LIMIT 1
-                    """, (pcn_number,))
-
-                    transaction_record = cursor.fetchone()
-
-                    if not transaction_record:
-                        return jsonify({'success': False, 'error': 'PCN not found'}), 404
-
-                    # PCN exists in tblTransaction
-                    item_name = transaction_record['item']
-                else:
-                    # PCN exists only in history
-                    item_name = history_record['job']
-            else:
-                item_name = pcn_record['item']
-
-            # Delete from all tables where PCN exists
-
-            # 1. Delete from pcn_history table
-            cursor.execute("""
-                DELETE FROM pcb_inventory.pcn_history
-                WHERE pcn = %s
-            """, (pcn_number,))
-
-            # 2. Delete from po_history if exists
-            cursor.execute("""
-                DELETE FROM pcb_inventory.po_history
-                WHERE pcn = %s
-            """, (pcn_number,))
-
-            # 3. Delete from pcn_records table if it exists there
-            cursor.execute("""
-                DELETE FROM pcb_inventory.pcn_records
-                WHERE pcn_number = %s
-            """, (pcn_number,))
-
-            # 4. Delete from tblWhse_Inventory (warehouse inventory)
+            # Delete from tblWhse_Inventory (warehouse inventory)
             cursor.execute("""
                 DELETE FROM pcb_inventory."tblWhse_Inventory"
-                WHERE pcn = %s
+                WHERE pcn::text = %s
             """, (pcn_number,))
 
-            # 5. Delete from tblTransaction (PCN history tracking)
+            deleted_warehouse = cursor.rowcount
+            logger.info(f"Deleted {deleted_warehouse} records from tblWhse_Inventory for PCN {pcn_number}")
+
+            # Delete from tblTransaction
             cursor.execute("""
                 DELETE FROM pcb_inventory."tblTransaction"
-                WHERE pcn = %s
+                WHERE pcn::text = %s
             """, (pcn_number,))
+
+            deleted_transaction = cursor.rowcount
+            logger.info(f"Deleted {deleted_transaction} records from tblTransaction for PCN {pcn_number}")
 
             conn.commit()
 
@@ -4095,9 +5075,14 @@ def api_po_history():
         # Format dates for JSON serialization
         for record in history:
             if record.get('transaction_date'):
-                record['transaction_date'] = record['transaction_date'].isoformat()
+                # Handle both datetime objects and string dates
+                if hasattr(record['transaction_date'], 'isoformat'):
+                    record['transaction_date'] = record['transaction_date'].isoformat()
+                # else: leave as string
             if record.get('created_at'):
-                record['created_at'] = record['created_at'].isoformat()
+                if hasattr(record['created_at'], 'isoformat'):
+                    record['created_at'] = record['created_at'].isoformat()
+                # else: leave as string
 
         return jsonify({
             'success': True,
@@ -4126,9 +5111,14 @@ def api_po_search():
         # Format dates for JSON serialization
         for record in results:
             if record.get('transaction_date'):
-                record['transaction_date'] = record['transaction_date'].isoformat()
+                # Handle both datetime objects and string dates
+                if hasattr(record['transaction_date'], 'isoformat'):
+                    record['transaction_date'] = record['transaction_date'].isoformat()
+                # else: leave as string
             if record.get('created_at'):
-                record['created_at'] = record['created_at'].isoformat()
+                if hasattr(record['created_at'], 'isoformat'):
+                    record['created_at'] = record['created_at'].isoformat()
+                # else: leave as string
 
         return jsonify({'success': True, 'data': results, 'total': len(results)})
     except Exception as e:
@@ -4159,39 +5149,11 @@ def print_label(pcn_number):
                        loc_to as location,
                        NULL as pcb_type
                 FROM pcb_inventory."tblWhse_Inventory"
-                WHERE pcn = %s
-            """, (int(pcn_number),))
+                WHERE pcn::text = %s
+                ORDER BY created_at DESC LIMIT 1
+            """, (pcn_number,))
 
             pcn_data = cursor.fetchone()
-
-            # If not found in warehouse inventory, try pcn_records (legacy)
-            if not pcn_data:
-                cursor.execute("""
-                    SELECT pcn_number, item, po_number, part_number, mpn,
-                           quantity, date_code, msd, barcode_data,
-                           NULL as location, NULL as pcb_type
-                    FROM pcb_inventory.pcn_records
-                    WHERE pcn_number = %s
-                """, (pcn_number,))
-                pcn_data = cursor.fetchone()
-
-            # If still not found, try pcn_history
-            if not pcn_data:
-                cursor.execute("""
-                    SELECT pcn::varchar as pcn_number,
-                           job as item,
-                           work_order as po_number,
-                           NULL as part_number,
-                           NULL as mpn,
-                           qty as quantity,
-                           date_code,
-                           msd,
-                           location,
-                           pcb_type
-                    FROM pcb_inventory.pcn_history
-                    WHERE pcn::varchar = %s
-                """, (pcn_number,))
-                pcn_data = cursor.fetchone()
 
             if not pcn_data:
                 return "PCN not found", 404
@@ -4230,30 +5192,22 @@ def generate_zpl_label(pcn_number):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            # Get PCN data (same as print_label)
+            # Get PCN data from tblWhse_Inventory
             cursor.execute("""
-                SELECT pcn_number, item, po_number, part_number, mpn,
-                       quantity, date_code, msd
-                FROM pcb_inventory.pcn_records
-                WHERE pcn_number = %s
+                SELECT pcn::varchar as pcn_number,
+                       item,
+                       po as po_number,
+                       item as part_number,
+                       mpn,
+                       onhandqty as quantity,
+                       dc as date_code,
+                       msd
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE pcn::text = %s
+                ORDER BY created_at DESC LIMIT 1
             """, (pcn_number,))
 
             pcn_data = cursor.fetchone()
-
-            if not pcn_data:
-                cursor.execute("""
-                    SELECT pcn::varchar as pcn_number,
-                           job as item,
-                           work_order as po_number,
-                           NULL as part_number,
-                           NULL as mpn,
-                           qty as quantity,
-                           date_code,
-                           msd
-                    FROM pcb_inventory.pcn_history
-                    WHERE pcn::varchar = %s
-                """, (pcn_number,))
-                pcn_data = cursor.fetchone()
 
             if not pcn_data:
                 return "PCN not found", 404
@@ -4262,28 +5216,24 @@ def generate_zpl_label(pcn_number):
             data = dict(pcn_data)
 
             # Generate ZPL code for 3x1 inch label (Zebra ZP450)
-            # Label dimensions: 3 inches wide (288 dots @ 203dpi), 1 inch tall (96 dots @ 203dpi)
+            # Label dimensions: 3 inches wide (609 dots @ 203dpi), 1 inch tall (203 dots @ 203dpi)
+            # Padded 20 dots from edges for readability
             zpl = f"""^XA
-^FO0,0^GB576,0,2^FS
-^FO0,0^GB0,192,2^FS
-^FO576,0^GB0,192,2^FS
-^FO0,192^GB576,0,2^FS
+^FO20,8^A0N,28,28^FDPCN: {data['pcn_number']}^FS
 
-^FO10,10^A0N,28,28^FDPCN: {data['pcn_number']}^FS
+^FO180,5^BY3,3,55^BCN,55,N,N,N^FD{data['pcn_number']}^FS
 
-^FO200,8^BY2,2,40^BCN,40,N,N,N^FD{data['pcn_number']}^FS
+^FO490,8^A0N,16,16^FDQTY^FS
+^FO490,28^A0N,32,32^FD{data.get('quantity', 0)}^FS
 
-^FO480,10^A0N,16,16^FDQTY^FS
-^FO480,30^A0N,32,32^FD{data.get('quantity', 0)}^FS
+^FO20,70^GB569,0,2^FS
 
-^FO0,80^GB576,0,1^FS
+^FO25,78^A0N,20,20^FDJob: {data.get('item', 'N/A')}^FS
+^FO25,102^A0N,20,20^FDMPN: {data.get('mpn', 'N/A')}^FS
+^FO25,126^A0N,20,20^FDPO: {data.get('po_number', 'N/A')}^FS
 
-^FO10,85^A0N,16,16^FDJob: {data.get('item', 'N/A')}^FS
-^FO10,105^A0N,16,16^FDMPN: {data.get('mpn', 'N/A')}^FS
-^FO10,125^A0N,16,16^FDPO: {data.get('po_number', 'N/A')}^FS
-
-^FO350,85^A0N,16,16^FDDC: {data.get('date_code', 'N/A')}^FS
-^FO350,105^A0N,16,16^FDMSD: {data.get('msd', 'N/A')}^FS
+^FO370,78^A0N,20,20^FDDC: {data.get('date_code', 'N/A')}^FS
+^FO370,102^A0N,20,20^FDMSD: {data.get('msd', 'N/A')}^FS
 
 ^XZ"""
 
@@ -4487,7 +5437,19 @@ def api_pcn_assignment_history():
         conn = db_manager.get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        cur.execute("SELECT * FROM pcb_inventory.get_pcn_assignments()")
+        # Query PCN assignments directly from tblTransaction
+        cur.execute("""
+            SELECT
+                pcn,
+                item,
+                mpn,
+                trantype as assignment_type,
+                created_at as assigned_at,
+                userid as assigned_by
+            FROM pcb_inventory."tblTransaction"
+            WHERE trantype = 'PCN Generation'
+            ORDER BY created_at DESC
+        """)
         assignments = cur.fetchall()
 
         # Format dates for JSON serialization
@@ -4505,11 +5467,1403 @@ def api_pcn_assignment_history():
         if conn:
             db_manager.return_connection(conn)
 
+# ============================================================================
+# BOM LOADER - Clean Implementation
+# ============================================================================
+
+@app.route('/bom-loader')
+@require_auth
+def bom_loader():
+    """BOM Loader page"""
+    response = make_response(render_template('bom_loader.html'))
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/api/bom/parse', methods=['POST'])
+@require_auth
+def api_bom_parse():
+    """Parse Excel BOM file and return preview data"""
+    conn = None
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No file selected'}), 400
+
+        if not file.filename.lower().endswith(('.xlsx', '.xls')):
+            return jsonify({'success': False, 'error': 'Only Excel files are supported'}), 400
+
+        # Parse Excel file
+        import openpyxl
+        import io
+
+        # Read file content and validate
+        file_content = file.read()
+
+        # Validate file is not empty
+        if len(file_content) == 0:
+            return jsonify({'success': False, 'error': 'File is empty'}), 400
+
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(file_content), data_only=True)
+        except Exception as e:
+            logger.error(f"Failed to parse Excel file: {e}")
+            return jsonify({'success': False, 'error': 'Invalid or corrupted Excel file. Please check the file and try again.'}), 400
+
+        # Check for "Assy BOM" sheet
+        if "Assy BOM" not in wb.sheetnames:
+            return jsonify({'success': False, 'error': 'File must contain "Assy BOM" sheet'}), 400
+
+        ws = wb["Assy BOM"]
+
+        # Validate sheet has enough rows
+        if ws.max_row < 12:  # Need at least header rows + some data
+            return jsonify({'success': False, 'error': 'BOM sheet appears empty or incomplete. Need at least 12 rows.'}), 400
+
+        # Extract metadata from header rows (rows 1-10)
+        metadata = {}
+
+        # Scan rows 1-10 for ALL header information
+        for row_num in range(1, 11):
+            for cell in ws[row_num]:
+                if not cell.value:
+                    continue
+
+                cell_text = str(cell.value).upper().strip()
+                next_cell_value = ws.cell(row=row_num, column=cell.column + 1).value
+
+                # Job Number
+                if 'JOB' in cell_text and 'REV' not in cell_text and 'CUST' not in cell_text:
+                    if next_cell_value:
+                        metadata['job'] = next_cell_value
+
+                # Customer Name
+                if ('CUST' in cell_text or 'CUSTOMER' in cell_text) and 'JOB' not in cell_text and 'P/N' not in cell_text and 'REV' not in cell_text:
+                    if next_cell_value:
+                        metadata['customer'] = next_cell_value
+
+                # Job Revision
+                if 'JOB REV' in cell_text:
+                    if next_cell_value:
+                        metadata['job_rev'] = next_cell_value
+
+                # Customer P/N
+                if 'CUST P/N' in cell_text or 'CUSTOMER P/N' in cell_text:
+                    if next_cell_value:
+                        metadata['cust_pn'] = next_cell_value
+
+                # Last Rev Date
+                if 'LAST REV' in cell_text:
+                    if next_cell_value:
+                        metadata['last_rev'] = next_cell_value
+
+                # Customer Revision
+                if 'CUST REV' in cell_text:
+                    if next_cell_value:
+                        metadata['cust_rev'] = next_cell_value
+
+                # Order Qty / WO Quantity
+                if ('BUILD QTY' in cell_text or 'BUILD QUANTITY' in cell_text or
+                    'WO QTY' in cell_text or 'WORK ORDER QTY' in cell_text):
+                    if next_cell_value:
+                        metadata['build_qty'] = next_cell_value
+
+                # Work Order Number
+                if ('WO' in cell_text or 'WORK ORDER' in cell_text) and 'QTY' not in cell_text:
+                    if next_cell_value:
+                        metadata['wo_number'] = next_cell_value
+
+                # Notes
+                if 'NOTE' in cell_text:
+                    if next_cell_value:
+                        metadata['notes'] = next_cell_value
+
+        # Log all captured metadata
+        logger.info(f"BOM Header metadata extracted: {metadata}")
+
+        # Find column headers (LINE column)
+        header_row = None
+        for row_num in range(8, 15):
+            for cell in ws[row_num]:
+                if cell.value and str(cell.value).strip().upper() == 'LINE':
+                    header_row = row_num
+                    break
+            if header_row:
+                break
+
+        if not header_row:
+            return jsonify({'success': False, 'error': 'Could not find column headers'}), 400
+
+        # Map column headers
+        col_map = {}
+        for cell in ws[header_row]:
+            if not cell.value:
+                continue
+            header = str(cell.value).strip().upper()
+            col_idx = cell.column - 1
+
+            if 'LINE' in header:
+                col_map['line'] = col_idx
+            elif 'DESC' in header:
+                col_map['desc'] = col_idx
+            elif 'MAN' in header:
+                col_map['man'] = col_idx
+            elif 'MPN' in header:
+                col_map['mpn'] = col_idx
+            elif 'ACI' in header:
+                col_map['aci_pn'] = col_idx
+            elif 'QTY' in header or 'QUANTITY' in header:
+                col_map['qty'] = col_idx
+            elif 'POU' in header:
+                col_map['pou'] = col_idx
+            elif 'LOC' in header:
+                col_map['loc'] = col_idx
+            elif 'COST' in header or 'PRICE' in header:
+                col_map['cost'] = col_idx
+
+        # Parse BOM items
+        bom_items = []
+        for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+            if not any(row):
+                continue
+
+            line_val = row[col_map.get('line', 0)] if 'line' in col_map else None
+            if not line_val:
+                continue
+
+            try:
+                line_num = int(line_val)
+            except (ValueError, TypeError):
+                logger.debug(f"Skipping row with invalid line number: {line_val}")
+                continue
+
+            mpn = row[col_map.get('mpn', 3)] if 'mpn' in col_map else None
+            if not mpn:
+                continue
+
+            # Handle qty with proper validation
+            qty_val = row[col_map.get('qty', 5)] if 'qty' in col_map else None
+            try:
+                qty = int(qty_val) if qty_val and str(qty_val).strip() else 0
+            except (ValueError, TypeError):
+                qty = 0
+
+            # Handle cost with proper validation
+            cost_val = row[col_map.get('cost', 8)] if 'cost' in col_map else None
+            try:
+                cost = float(cost_val) if cost_val and str(cost_val).strip() else 0.0
+            except (ValueError, TypeError):
+                cost = 0.0
+
+            bom_items.append({
+                'line': line_num,
+                'desc': str(row[col_map.get('desc', 1)] or '').strip() if 'desc' in col_map else '',
+                'man': str(row[col_map.get('man', 2)] or '').strip() if 'man' in col_map else '',
+                'mpn': str(mpn).strip(),
+                'aci_pn': str(row[col_map.get('aci_pn', 4)] or '').strip() if 'aci_pn' in col_map else '',
+                'qty': qty,
+                'pou': str(row[col_map.get('pou', 6)] or '').strip() if 'pou' in col_map else '',
+                'loc': str(row[col_map.get('loc', 7)] or '').strip() if 'loc' in col_map else '',
+                'cost': cost
+            })
+
+        logger.info(f"Parsed BOM: Job={metadata.get('job')}, Items={len(bom_items)}")
+
+        return jsonify({
+            'success': True,
+            'metadata': metadata,
+            'bom_items': bom_items,
+            'total_items': len(bom_items)
+        })
+
+    except Exception as e:
+        logger.error(f"Error parsing BOM: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/bom/load', methods=['POST'])
+@require_auth
+def api_bom_load():
+    """Load parsed BOM data to database"""
+    conn = None
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+
+        metadata = data.get('metadata', {})
+        bom_items = data.get('bom_items', [])
+
+        job = str(metadata.get('job', ''))
+        if not job:
+            return jsonify({'success': False, 'error': 'Job number is required'}), 400
+
+        if not bom_items:
+            return jsonify({'success': False, 'error': 'No BOM items to load'}), 400
+
+        conn = db_manager.get_connection()
+        cur = conn.cursor()
+
+        try:
+            # Delete existing BOM records for this job
+            cur.execute('DELETE FROM pcb_inventory."tblBOM" WHERE job::text = %s', (job,))
+            deleted_count = cur.rowcount
+            logger.info(f"Deleted {deleted_count} existing BOM records for job {job}")
+
+            # Use savepoint for atomic operation
+            cur.execute("SAVEPOINT before_bom_insert")
+
+            # Insert new BOM items (with validation)
+            inserted_count = 0
+            for item in bom_items:
+                # Validate item data
+                if not item.get('mpn'):
+                    logger.warning(f"Skipping BOM line {item.get('line')}: Missing MPN")
+                    continue
+
+                qty = item.get('qty', 0)
+                if qty < 0:
+                    logger.warning(f"Line {item.get('line')}: Negative quantity {qty}, using 0")
+                    qty = 0
+
+                cost = item.get('cost', 0.0)
+                if cost < 0:
+                    logger.warning(f"Line {item.get('line')}: Negative cost {cost}, using 0")
+                    cost = 0.0
+                try:
+                    cur.execute("""
+                        INSERT INTO pcb_inventory."tblBOM"
+                        (job, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
+                         job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YYYY HH24:MI:SS'))
+                    """, (
+                        job,
+                        item.get('line'),
+                        item.get('desc'),
+                        item.get('man'),
+                        item.get('mpn'),
+                        item.get('aci_pn'),
+                        qty,  # Use validated quantity
+                        item.get('pou'),
+                        item.get('loc'),
+                        cost,  # Use validated cost
+                        metadata.get('job_rev'),
+                        metadata.get('last_rev'),
+                        metadata.get('customer'),
+                        metadata.get('cust_pn'),
+                        metadata.get('cust_rev')
+                    ))
+                    inserted_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to insert BOM line {item.get('line')}: {e}")
+                    cur.execute("ROLLBACK TO SAVEPOINT before_bom_insert")
+                    raise Exception(f"Failed to insert line {item.get('line')}: {e}")
+
+            # Upsert tblJob record
+            username = session.get('username', 'Unknown')
+            build_qty_val = metadata.get('build_qty')
+            try:
+                build_qty_int = int(build_qty_val) if build_qty_val else 1
+            except (ValueError, TypeError):
+                build_qty_int = 1
+
+            cur.execute("""
+                INSERT INTO pcb_inventory."tblJob"
+                (job_number, customer, cust_pn, build_qty, job_rev, cust_rev, last_rev,
+                 wo_number, notes, status, created_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'New', %s)
+                ON CONFLICT (job_number) DO UPDATE SET
+                    customer = EXCLUDED.customer,
+                    cust_pn = EXCLUDED.cust_pn,
+                    build_qty = EXCLUDED.build_qty,
+                    job_rev = EXCLUDED.job_rev,
+                    cust_rev = EXCLUDED.cust_rev,
+                    last_rev = EXCLUDED.last_rev,
+                    wo_number = EXCLUDED.wo_number,
+                    notes = EXCLUDED.notes,
+                    updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+                RETURNING id
+            """, (
+                job,
+                metadata.get('customer', ''),
+                metadata.get('cust_pn', ''),
+                build_qty_int,
+                metadata.get('job_rev', ''),
+                metadata.get('cust_rev', ''),
+                metadata.get('last_rev', ''),
+                metadata.get('wo_number', ''),
+                metadata.get('notes', ''),
+                username
+            ))
+            job_id = cur.fetchone()[0]
+            logger.info(f"Upserted tblJob record for {job} (id={job_id})")
+
+            conn.commit()
+            logger.info(f"Loaded {inserted_count} BOM items for Job {job}")
+
+            return jsonify({
+                'success': True,
+                'message': 'BOM loaded successfully',
+                'job': job,
+                'job_id': job_id,
+                'inserted_count': inserted_count,
+                'deleted_count': deleted_count
+            })
+
+        finally:
+            if cur:
+                try:
+                    cur.close()
+                except Exception as e:
+                    logger.error(f"Error closing cursor: {e}")
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error loading BOM: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
 @app.route('/history')
 @require_auth
 def inventory_history_page():
     """Inventory history page showing all changes"""
     return render_template('history.html')
+
+# Admin Login Notifications
+@app.route('/admin/notifications')
+@require_auth
+def admin_notifications():
+    """Admin page to view login notifications - only accessible by Admin role or authorized users."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get all login notifications, most recent first
+        cursor.execute("""
+            SELECT id, user_id, username, full_name, login_time, ip_address, seen, seen_at
+            FROM pcb_inventory."tblLoginNotifications"
+            ORDER BY login_time DESC
+            LIMIT 100
+        """)
+        notifications = cursor.fetchall()
+
+        # Count unseen notifications
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pcb_inventory."tblLoginNotifications" WHERE seen = FALSE
+        """)
+        unseen_count = cursor.fetchone()['count']
+
+        return render_template('admin_notifications.html',
+                             notifications=notifications,
+                             unseen_count=unseen_count)
+
+    except Exception as e:
+        logger.error(f"Error loading admin notifications: {e}")
+        flash('Error loading notifications.', 'danger')
+        return redirect(url_for('index'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/admin/notifications/mark-seen', methods=['POST'])
+@require_auth
+def mark_notifications_seen():
+    """Mark all notifications as seen."""
+    if not is_admin_user():
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE pcb_inventory."tblLoginNotifications"
+            SET seen = TRUE, seen_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+            WHERE seen = FALSE
+        """)
+        conn.commit()
+
+        return jsonify({'success': True, 'message': 'All notifications marked as seen'})
+
+    except Exception as e:
+        logger.error(f"Error marking notifications as seen: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/admin/notifications/clear', methods=['POST'])
+@require_auth
+def clear_notifications():
+    """Clear all old notifications (keep last 7 days)."""
+    if not is_admin_user():
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            DELETE FROM pcb_inventory."tblLoginNotifications"
+            WHERE login_time < NOW() - INTERVAL '7 days'
+        """)
+        deleted_count = cursor.rowcount
+        conn.commit()
+
+        return jsonify({'success': True, 'message': f'Cleared {deleted_count} old notifications'})
+
+    except Exception as e:
+        logger.error(f"Error clearing notifications: {e}")
+        if conn:
+            conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+@app.route('/api/admin/notification-count')
+@require_auth
+def get_notification_count():
+    """Get count of unseen login notifications for admin."""
+    if not is_admin_user():
+        return jsonify({'count': 0})
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pcb_inventory."tblLoginNotifications" WHERE seen = FALSE
+        """)
+        result = cursor.fetchone()
+
+        return jsonify({'count': result['count']})
+
+    except Exception as e:
+        logger.error(f"Error getting notification count: {e}")
+        return jsonify({'count': 0})
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+# ==================== Jobs Management ====================
+
+@app.route('/jobs')
+@require_auth
+def jobs_list():
+    """Jobs list page with search."""
+    search_query = request.args.get('q', '').strip()
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        if search_query:
+            cursor.execute("""
+                SELECT id, job_number, description, customer, cust_pn, build_qty,
+                       job_rev, status, created_by, created_at
+                FROM pcb_inventory."tblJob"
+                WHERE job_number ILIKE %s OR customer ILIKE %s OR description ILIKE %s
+                ORDER BY created_at DESC
+            """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%'))
+        else:
+            cursor.execute("""
+                SELECT id, job_number, description, customer, cust_pn, build_qty,
+                       job_rev, status, created_by, created_at
+                FROM pcb_inventory."tblJob"
+                ORDER BY created_at DESC
+            """)
+        jobs = cursor.fetchall()
+
+        return render_template('jobs.html', jobs=jobs, search_query=search_query)
+
+    except Exception as e:
+        logger.error(f"Error loading jobs list: {e}")
+        flash(f"Error loading jobs: {e}", 'danger')
+        return render_template('jobs.html', jobs=[], search_query=search_query)
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>')
+@require_auth
+def job_detail(job_number):
+    """Job detail page with live inventory lookup."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get job record
+        cursor.execute("""
+            SELECT * FROM pcb_inventory."tblJob"
+            WHERE job_number = %s
+        """, (job_number,))
+        job = cursor.fetchone()
+
+        if not job:
+            flash(f'Job {job_number} not found.', 'danger')
+            return redirect(url_for('jobs_list'))
+
+        build_qty = int(job['build_qty'] or 1)
+        order_qty = int(job['order_qty'] or 1)
+
+        # Get latest revision for this job
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job_number,))
+        rev_row = cursor.fetchone()
+        job_rev = rev_row['job_rev'] if rev_row else None
+
+        # Get BOM lines with live inventory lookup
+        # Exclude MFG Floor items and filter to latest rev
+        cursor.execute("""
+            SELECT
+                b.line as line_no,
+                b.aci_pn,
+                b."DESC" as description,
+                b.mpn,
+                b.man as manufacturer,
+                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(w.onhandqty), 0) as on_hand,
+                w.pcn,
+                w.item,
+                COALESCE(w.loc_to, '') as location,
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+            FROM pcb_inventory."tblBOM" b
+            LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+            WHERE b.job = %s
+                AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            GROUP BY b.line, b.aci_pn, b."DESC", b.mpn, b.man, b.qty, b.cost, w.pcn, w.item, w.loc_to
+            ORDER BY
+                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
+                b.line
+        """, (job_number, job_number, job_number))
+        raw_lines = cursor.fetchall()
+
+        # Calculate REQ and shortage for each line
+        # REQ = QTY per board × Order QTY (the actual production quantity)
+        job_lines = []
+        shortage_count = 0
+        for line in raw_lines:
+            qty = int(line['qty'] or 0)
+            req = qty * order_qty
+            on_hand = int(line['on_hand'] or 0)
+            shortage = on_hand - req
+            location = line['location'] if on_hand > 0 else ''
+
+            job_lines.append({
+                'line_no': line['line_no'],
+                'aci_pn': line['aci_pn'],
+                'description': line['description'],
+                'mpn': line['mpn'],
+                'manufacturer': line['manufacturer'],
+                'qty': qty,
+                'req': req,
+                'on_hand': on_hand,
+                'pcn': line['pcn'],
+                'item': line['item'],
+                'location': location,
+                'unit_cost': float(line['unit_cost'] or 0),
+                'shortage': shortage
+            })
+            if shortage < 0:
+                shortage_count += 1
+
+        # Compute status from inventory data
+        total_bom_lines = len(set(l['line_no'] for l in raw_lines))
+        lines_with_location = len(set(l['line_no'] for l in job_lines if l['location']))
+
+        if lines_with_location == 0:
+            computed_status = 'New'
+        elif lines_with_location < total_bom_lines:
+            computed_status = 'In Prep'
+        else:
+            computed_status = 'In Mfg'
+
+        # Update status if changed
+        if computed_status != job['status']:
+            cursor.execute("""
+                UPDATE pcb_inventory."tblJob"
+                SET status = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+                WHERE job_number = %s
+            """, (computed_status, job_number))
+            conn.commit()
+            job['status'] = computed_status
+
+        # Fetch related shortage reports for this job
+        cursor.execute("""
+            SELECT id, report_name, order_qty, total_lines, shortage_lines,
+                   created_by, created_at
+            FROM pcb_inventory."tblShortageReport"
+            WHERE job = %s
+            ORDER BY created_at DESC
+        """, (job_number,))
+        related_reports = cursor.fetchall()
+
+        return render_template('job_detail.html',
+                             job=job,
+                             lines=job_lines,
+                             shortage_count=shortage_count,
+                             total_lines=total_bom_lines,
+                             related_reports=related_reports,
+                             job_rev=job_rev,
+                             column_definitions=SHORTAGE_EXPORT_COLUMNS)
+
+    except Exception as e:
+        logger.error(f"Error loading job detail: {e}")
+        flash(f"Error loading job: {e}", 'danger')
+        return redirect(url_for('jobs_list'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/update-build-qty', methods=['POST'])
+@require_auth
+def job_update_build_qty(job_number):
+    """Update build quantity for a job."""
+    conn = None
+    try:
+        data = request.get_json()
+        build_qty = int(data.get('build_qty', 1))
+        if build_qty < 1:
+            build_qty = 1
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE pcb_inventory."tblJob"
+            SET build_qty = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+            WHERE job_number = %s
+        """, (build_qty, job_number))
+        conn.commit()
+
+        return jsonify({'success': True, 'build_qty': build_qty})
+    except Exception as e:
+        logger.error(f"Error updating build qty: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/update-order-qty', methods=['POST'])
+@require_auth
+def job_update_order_qty(job_number):
+    """Update order quantity for a job."""
+    conn = None
+    try:
+        data = request.get_json()
+        order_qty = int(data.get('order_qty', 1))
+        if order_qty < 1:
+            order_qty = 1
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE pcb_inventory."tblJob"
+            SET order_qty = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+            WHERE job_number = %s
+        """, (order_qty, job_number))
+        conn.commit()
+
+        return jsonify({'success': True, 'order_qty': order_qty})
+    except Exception as e:
+        logger.error(f"Error updating order qty: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/generate-shortage', methods=['POST'])
+@require_auth
+def job_generate_shortage(job_number):
+    """Generate a shortage report from the job page."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get job record
+        cursor.execute("""
+            SELECT * FROM pcb_inventory."tblJob" WHERE job_number = %s
+        """, (job_number,))
+        job = cursor.fetchone()
+
+        if not job:
+            flash(f'Job {job_number} not found.', 'danger')
+            return redirect(url_for('jobs_list'))
+
+        order_qty = int(job['order_qty'] or 1)
+
+        # Default report name
+        report_name = f"Shortage Report - {job_number} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        # Get latest revision for this job
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job_number,))
+        rev_row = cursor.fetchone()
+        job_rev = rev_row['job_rev'] if rev_row else None
+
+        # Get total BOM line count (latest rev only)
+        if job_rev:
+            cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s AND job_rev = %s", (job_number, job_rev))
+        else:
+            cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job_number,))
+        total_bom_lines = cursor.fetchone()['count']
+
+        if total_bom_lines == 0:
+            flash(f'No BOM data found for job {job_number}. Please load BOM first.', 'warning')
+            return redirect(url_for('job_detail', job_number=job_number))
+
+        # INNER JOIN: only BOM items with inventory matches
+        # Exclude MFG Floor items and filter to latest rev
+        cursor.execute("""
+            SELECT
+                b.line as line_no,
+                b.aci_pn,
+                w.pcn,
+                b.mpn,
+                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
+                w.item as item,
+                COALESCE(w.loc_to, '') as location,
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                b.man as manufacturer,
+                b."DESC" as description
+            FROM pcb_inventory."tblBOM" b
+            INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+            WHERE b.job = %s
+                AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+            ORDER BY
+                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
+                b.line
+        """, (job_number, job_number, job_number))
+        matched_items = cursor.fetchall()
+
+        if not matched_items:
+            flash(f'No inventory matches found for job {job_number} BOM items.', 'warning')
+            return redirect(url_for('job_detail', job_number=job_number))
+
+        # Calculate REQ and count shortages
+        report_items = []
+        shortage_count = 0
+        for item in matched_items:
+            qty = int(item['qty'] or 0)
+            req = qty * order_qty
+            on_hand = int(item['qty_on_hand'] or 0)
+            item['req'] = req
+            item['order_qty'] = order_qty
+            if on_hand < req:
+                shortage_count += 1
+            report_items.append(item)
+
+        total_cost = sum(float(item['qty'] or 0) * float(item['unit_cost'] or 0) for item in report_items)
+        shortage_cost = sum(float(item['req'] or 0) * float(item['unit_cost'] or 0) for item in report_items if item['qty_on_hand'] < item['req'])
+
+        username = session.get('username', 'Unknown')
+        cursor.execute("""
+            INSERT INTO pcb_inventory."tblShortageReport"
+            (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (job_number, report_name, total_bom_lines, shortage_count, total_cost, shortage_cost, username, '', order_qty, job_rev))
+        report_id = cursor.fetchone()['id']
+
+        for item in report_items:
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblShortageReportItems"
+                (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
+                 item, location, unit_cost, line_cost, manufacturer, description, req)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
+                item['qty'], item['qty_on_hand'], order_qty,
+                item['item'], item['location'], float(item['unit_cost'] or 0),
+                float(item['qty'] or 0) * float(item['unit_cost'] or 0),
+                item['manufacturer'], item['description'], item['req']
+            ))
+
+        conn.commit()
+        flash(f'Shortage report generated! {len(report_items)} items matched, {shortage_count} shortages.', 'success')
+        return redirect(url_for('job_detail', job_number=job_number))
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error generating shortage report from job: {e}")
+        flash(f"Error generating report: {e}", 'danger')
+        return redirect(url_for('job_detail', job_number=job_number))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/export', methods=['GET', 'POST'])
+@require_auth
+def job_export(job_number):
+    """Export job report to Excel with optional column customization."""
+    conn = None
+    try:
+        # Parse column config from POST body, or use defaults
+        if request.method == 'POST' and request.is_json:
+            config = request.get_json()
+            selected_columns = config.get('columns', [])
+            highlighted_columns = set(config.get('highlighted', []))
+            export_filter = config.get('filter', 'all')
+        else:
+            selected_columns = [c['key'] for c in SHORTAGE_EXPORT_COLUMNS if c['default']]
+            highlighted_columns = set()
+            export_filter = 'all'
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get job record
+        cursor.execute("""
+            SELECT * FROM pcb_inventory."tblJob" WHERE job_number = %s
+        """, (job_number,))
+        job = cursor.fetchone()
+
+        if not job:
+            return jsonify({'success': False, 'error': f'Job {job_number} not found.'}), 404
+
+        build_qty = int(job['build_qty'] or 1)
+        order_qty = int(job['order_qty'] or 1)
+
+        # Get latest revision
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job_number,))
+        rev_row = cursor.fetchone()
+        job_rev = rev_row['job_rev'] if rev_row else None
+
+        # Get BOM lines with live inventory lookup
+        cursor.execute("""
+            SELECT
+                b.line as line_no,
+                b.aci_pn,
+                b.mpn,
+                b.man as manufacturer,
+                b."DESC" as description,
+                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(w.onhandqty), 0) as on_hand,
+                w.pcn,
+                w.item,
+                COALESCE(w.loc_to, '') as location,
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+            FROM pcb_inventory."tblBOM" b
+            INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+            WHERE b.job = %s
+                AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+            ORDER BY
+                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
+                b.line
+        """, (job_number, job_number, job_number))
+        raw_items = cursor.fetchall()
+
+        # Enrich items with calculated fields
+        items = []
+        for item in raw_items:
+            qty = int(item['qty'] or 0)
+            on_hand = int(item['on_hand'] or 0)
+            req = qty * order_qty
+            item['qty_on_hand'] = on_hand
+            item['order_qty'] = order_qty
+            item['req'] = req
+            item['line_cost'] = float(qty) * float(item['unit_cost'] or 0)
+            items.append(item)
+
+        # Apply filter: shortages only
+        if export_filter == 'shortages_only':
+            items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
+
+        # Build active column list from selection
+        col_registry = {c['key']: c for c in SHORTAGE_EXPORT_COLUMNS}
+        active_cols = [col_registry[k] for k in selected_columns if k in col_registry]
+        if not active_cols:
+            active_cols = [col_registry[k] for k in [c['key'] for c in SHORTAGE_EXPORT_COLUMNS if c['default']]]
+        num_cols = len(active_cols)
+        last_col = get_column_letter(num_cols)
+
+        # Build Excel workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Job Report"
+
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1E40AF", end_color="1E40AF", fill_type="solid")
+        shortage_fill = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+        highlight_fill = PatternFill(start_color="FFFDE7", end_color="FFFDE7", fill_type="solid")
+        border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+
+        # Title
+        ws.merge_cells(f'A1:{last_col}1')
+        ws['A1'] = f"Job Report - {job_number}"
+        ws['A1'].font = Font(bold=True, size=16)
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A2:{last_col}2')
+        ws['A2'] = f"Customer: {job.get('customer', 'N/A')} | Rev: {job_rev or 'N/A'} | Order Qty: {order_qty}"
+        ws['A2'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A3:{last_col}3')
+        ws['A3'] = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')} | Items: {len(items)}"
+        ws['A3'].alignment = Alignment(horizontal='center')
+
+        # Headers
+        for col_idx, col_def in enumerate(active_cols, 1):
+            cell = ws.cell(row=5, column=col_idx, value=col_def['label'])
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center')
+
+        # Data rows
+        for row_idx, item in enumerate(items, 6):
+            is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
+            for col_idx, col_def in enumerate(active_cols, 1):
+                value = get_export_cell_value(item, col_def['key'], order_qty)
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = border
+                if is_shortage:
+                    cell.fill = shortage_fill
+                elif col_def['key'] in highlighted_columns:
+                    cell.fill = highlight_fill
+
+        # Column widths
+        for col_idx, col_def in enumerate(active_cols, 1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = col_def['width']
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"Job_{job_number}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting job: {e}")
+        if request.method == 'POST':
+            return jsonify({'success': False, 'error': str(e)}), 500
+        flash(f"Error exporting job: {e}", 'danger')
+        return redirect(url_for('job_detail', job_number=job_number))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/delete', methods=['POST'])
+@require_auth
+def job_delete(job_number):
+    """Delete a job record."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('DELETE FROM pcb_inventory."tblJob" WHERE job_number = %s', (job_number,))
+        if cursor.rowcount == 0:
+            flash(f'Job {job_number} not found.', 'danger')
+        else:
+            conn.commit()
+            flash(f'Job {job_number} deleted successfully.', 'success')
+
+        return redirect(url_for('jobs_list'))
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error deleting job: {e}")
+        flash(f"Error deleting job: {e}", 'danger')
+        return redirect(url_for('jobs_list'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/jobs/<job_number>/create-revision', methods=['POST'])
+@require_auth
+def job_create_revision(job_number):
+    """Create a new revision by archiving old BOM lines and rebuilding the job under a new rev."""
+    conn = None
+    try:
+        data = request.get_json()
+        new_rev = data.get('new_rev', '').strip()
+        if not new_rev:
+            return jsonify({'success': False, 'error': 'Revision identifier is required.'}), 400
+
+        username = session.get('username', 'unknown')
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get the current revision
+        cursor.execute("""
+            SELECT job_rev FROM pcb_inventory."tblBOM"
+            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+            ORDER BY created_at DESC LIMIT 1
+        """, (job_number,))
+        rev_row = cursor.fetchone()
+        current_rev = rev_row['job_rev'] if rev_row else None
+
+        # Check if new rev already exists in archive (prevent reuse of archived rev names)
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pcb_inventory."tblBOM_Archive"
+            WHERE job = %s AND job_rev = %s
+        """, (job_number, new_rev))
+        if cursor.fetchone()['count'] > 0:
+            return jsonify({'success': False, 'error': f'Revision {new_rev} was previously used for this job.'}), 400
+
+        # Get current BOM lines to verify they exist
+        if current_rev:
+            cursor.execute("""
+                SELECT id, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
+                       job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at
+                FROM pcb_inventory."tblBOM"
+                WHERE job = %s AND job_rev = %s
+            """, (job_number, current_rev))
+        else:
+            cursor.execute("""
+                SELECT id, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
+                       job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at
+                FROM pcb_inventory."tblBOM"
+                WHERE job = %s
+            """, (job_number,))
+
+        source_lines = cursor.fetchall()
+        if not source_lines:
+            return jsonify({'success': False, 'error': 'No BOM lines found for this job.'}), 400
+
+        # Step 1: Archive the old BOM lines
+        for line in source_lines:
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblBOM_Archive"
+                (original_id, job, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
+                 job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at, archived_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                line['id'], job_number, line['line'], line['DESC'], line['man'], line['mpn'],
+                line['aci_pn'], line['qty'], line['pou'], line['loc'], line['cost'],
+                line['job_rev'], line['last_rev'], line['cust'], line['cust_pn'], line['cust_rev'],
+                line['date_loaded'], line['created_at'], username
+            ))
+
+        # Step 2: Update existing BOM lines in place with new revision (no duplication)
+        if current_rev:
+            cursor.execute("""
+                UPDATE pcb_inventory."tblBOM"
+                SET job_rev = %s, last_rev = %s,
+                    date_loaded = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YYYY HH24:MI:SS')
+                WHERE job = %s AND job_rev = %s
+            """, (new_rev, current_rev, job_number, current_rev))
+        else:
+            cursor.execute("""
+                UPDATE pcb_inventory."tblBOM"
+                SET job_rev = %s, last_rev = %s,
+                    date_loaded = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YYYY HH24:MI:SS')
+                WHERE job = %s
+            """, (new_rev, current_rev or '', job_number))
+
+        # Step 3: Update tblJob with new revision info
+        cursor.execute("""
+            UPDATE pcb_inventory."tblJob"
+            SET job_rev = %s, last_rev = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
+            WHERE job_number = %s
+        """, (new_rev, current_rev or '', job_number))
+
+        conn.commit()
+        return jsonify({'success': True, 'message': f'Revision {new_rev} created. Old revision {current_rev or "N/A"} archived. {len(source_lines)} lines updated.'})
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error creating revision: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/api/bom/job-check/<job_number>')
+@require_auth
+def api_job_check(job_number):
+    """Check if a job already exists in tblJob."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT id, job_number, status, build_qty, customer
+            FROM pcb_inventory."tblJob" WHERE job_number = %s
+        """, (job_number,))
+        job = cursor.fetchone()
+
+        if job:
+            return jsonify({'exists': True, 'job': dict(job)})
+        return jsonify({'exists': False})
+
+    except Exception as e:
+        logger.error(f"Error checking job: {e}")
+        return jsonify({'exists': False, 'error': str(e)})
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+# ==================== Admin User Management CRUD ====================
+
+@app.route('/admin/users')
+@require_auth
+def admin_users():
+    """Admin page to manage users - CRUD operations."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute("""
+                SELECT id, userid, username, userlogin, usersecurity
+                FROM pcb_inventory."tblUser"
+                ORDER BY id
+            """)
+            users = cursor.fetchall()
+        return render_template('user_management.html', users=users)
+    except Exception as e:
+        logger.error(f"Error loading users: {e}")
+        flash('Error loading users.', 'danger')
+        return redirect(url_for('index'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/admin/users/create', methods=['POST'])
+@require_auth
+def admin_create_user():
+    """Create a new user."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    userlogin = request.form.get('userlogin', '').strip().lower()
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    usersecurity = request.form.get('usersecurity', 'user').strip()
+
+    # Validation
+    if not userlogin:
+        flash('Login username is required.', 'danger')
+        return redirect(url_for('admin_users'))
+    if not username:
+        username = userlogin
+    if not password or len(password) < 6:
+        flash('Password must be at least 6 characters.', 'danger')
+        return redirect(url_for('admin_users'))
+    if usersecurity not in ('Admin', 'user'):
+        usersecurity = 'user'
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Check for duplicate userlogin
+            cursor.execute("""
+                SELECT id FROM pcb_inventory."tblUser" WHERE userlogin = %s
+            """, (userlogin,))
+            if cursor.fetchone():
+                flash(f'Username "{userlogin}" already exists.', 'danger')
+                return redirect(url_for('admin_users'))
+
+            # Hash password
+            password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblUser" (username, userlogin, password, usersecurity)
+                VALUES (%s, %s, %s, %s)
+            """, (username, userlogin, password_hash, usersecurity))
+            conn.commit()
+
+        flash(f'User "{userlogin}" created successfully.', 'success')
+        logger.info(f"Admin {session.get('username')} created user: {userlogin}")
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        flash('Error creating user.', 'danger')
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/edit/<int:user_id>', methods=['POST'])
+@require_auth
+def admin_edit_user(user_id):
+    """Edit an existing user."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    username = request.form.get('username', '').strip()
+    usersecurity = request.form.get('usersecurity', 'user').strip()
+    new_password = request.form.get('password', '').strip()
+
+    if not username:
+        flash('Full name is required.', 'danger')
+        return redirect(url_for('admin_users'))
+    if usersecurity not in ('Admin', 'user'):
+        usersecurity = 'user'
+
+    # Prevent admin from demoting themselves
+    if user_id == session.get('user_id') and usersecurity != 'Admin':
+        flash('You cannot change your own role away from Admin.', 'danger')
+        return redirect(url_for('admin_users'))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            if new_password:
+                if len(new_password) < 6:
+                    flash('Password must be at least 6 characters.', 'danger')
+                    return redirect(url_for('admin_users'))
+                password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                cursor.execute("""
+                    UPDATE pcb_inventory."tblUser"
+                    SET username = %s, usersecurity = %s, password = %s
+                    WHERE id = %s
+                """, (username, usersecurity, password_hash, user_id))
+            else:
+                cursor.execute("""
+                    UPDATE pcb_inventory."tblUser"
+                    SET username = %s, usersecurity = %s
+                    WHERE id = %s
+                """, (username, usersecurity, user_id))
+            conn.commit()
+
+        flash('User updated successfully.', 'success')
+        logger.info(f"Admin {session.get('username')} edited user ID: {user_id}")
+    except Exception as e:
+        logger.error(f"Error editing user: {e}")
+        flash('Error updating user.', 'danger')
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/delete/<int:user_id>', methods=['POST'])
+@require_auth
+def admin_delete_user(user_id):
+    """Delete a user."""
+    if not is_admin_user():
+        flash('Access denied. Admin privileges required.', 'danger')
+        return redirect(url_for('index'))
+
+    # Prevent admin from deleting themselves
+    if user_id == session.get('user_id'):
+        flash('You cannot delete your own account.', 'danger')
+        return redirect(url_for('admin_users'))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            # Get username for logging
+            cursor.execute("""
+                SELECT userlogin FROM pcb_inventory."tblUser" WHERE id = %s
+            """, (user_id,))
+            user = cursor.fetchone()
+
+            if not user:
+                flash('User not found.', 'danger')
+                return redirect(url_for('admin_users'))
+
+            cursor.execute("""
+                DELETE FROM pcb_inventory."tblUser" WHERE id = %s
+            """, (user_id,))
+            conn.commit()
+
+        flash(f'User "{user["userlogin"]}" deleted successfully.', 'success')
+        logger.info(f"Admin {session.get('username')} deleted user: {user['userlogin']}")
+    except Exception as e:
+        logger.error(f"Error deleting user: {e}")
+        flash('Error deleting user.', 'danger')
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+    return redirect(url_for('admin_users'))
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    """Handle CSRF errors - return JSON for API endpoints, HTML for pages"""
+    logger.error(f"CSRF validation failed: {e.description}")
+
+    # Check if it's an API request
+    if request.path.startswith('/api/'):
+        return jsonify({
+            'success': False,
+            'error': 'CSRF token validation failed. Please refresh the page and try again.'
+        }), 400
+
+    # For non-API requests, return simple HTML error message
+    return f"<h1>400 Bad Request</h1><p>{e.description}</p><p>Please refresh the page and try again.</p>", 400
 
 @app.errorhandler(404)
 def not_found_error(error):

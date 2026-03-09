@@ -138,7 +138,7 @@
                                     </div>
                                 {% endif %}
                                 <small class="text-muted">
-                                    <i class="bi bi-info-circle"></i> Must not exceed MFG Qty available
+                                    <i class="bi bi-info-circle"></i> Enter the quantity to restock
                                 </small>
                             </div>
                         </div>
@@ -242,11 +242,11 @@
                         <div class="col-6"><strong>MFG Qty:</strong></div>
                         <div class="col-6 text-end"><span class="badge bg-warning" id="detail-mfg">0</span></div>
                     </div>
-                    <div class="alert alert-warning mt-3 mb-0" id="no-mfg-warning" style="display: none;">
-                        <i class="bi bi-exclamation-triangle"></i> <strong>Warning:</strong> No MFG quantity available to restock!
+                    <div class="alert alert-info mt-3 mb-0" id="no-mfg-warning" style="display: none;">
+                        <i class="bi bi-info-circle"></i> No tracked MFG quantity. You can still restock based on physical count.
                     </div>
                     <div class="alert alert-success mt-3 mb-0" id="mfg-available" style="display: none;">
-                        <i class="bi bi-check-circle"></i> <strong>Available to restock:</strong> <span id="available-qty">0</span> units
+                        <i class="bi bi-check-circle"></i> <strong>Tracked MFG Qty:</strong> <span id="available-qty">0</span> units
                     </div>
                 </div>
             </div>

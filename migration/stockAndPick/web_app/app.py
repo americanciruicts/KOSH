@@ -15,7 +15,7 @@ from expiration_manager import ExpirationManager, ExpirationStatus
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from wtforms import StringField, IntegerField, SelectField, SubmitField, HiddenField
-from wtforms.validators import DataRequired, NumberRange, Length, ValidationError, Optional
+from wtforms.validators import DataRequired, InputRequired, NumberRange, Length, ValidationError, Optional
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor
@@ -322,7 +322,35 @@ def format_number_filter(value):
         return value
 
 # Database configuration from environment variables
-DB_CONFIG = {
+# Primary: Neon cloud database (if NEON_DATABASE_URL is set)
+# Fallback: Local PostgreSQL
+NEON_DATABASE_URL = os.getenv('NEON_DATABASE_URL', '')
+
+if NEON_DATABASE_URL:
+    # Parse Neon URL for connection config
+    from urllib.parse import urlparse
+    _parsed = urlparse(NEON_DATABASE_URL)
+    DB_CONFIG = {
+        'host': _parsed.hostname,
+        'port': int(_parsed.port or 5432),
+        'database': _parsed.path.lstrip('/'),
+        'user': _parsed.username,
+        'password': _parsed.password,
+        'sslmode': 'require'
+    }
+    logger.info(f"Using Neon database: {_parsed.hostname}")
+else:
+    DB_CONFIG = {
+        'host': os.getenv('POSTGRES_HOST', 'aci-database'),
+        'port': int(os.getenv('POSTGRES_PORT', 5432)),
+        'database': os.getenv('POSTGRES_DB', 'pcb_inventory'),
+        'user': os.getenv('POSTGRES_USER', 'stockpick_user'),
+        'password': os.getenv('POSTGRES_PASSWORD', 'stockpick_pass')
+    }
+    logger.info("Using local database")
+
+# Fallback local DB config (used if primary fails)
+LOCAL_DB_CONFIG = {
     'host': os.getenv('POSTGRES_HOST', 'aci-database'),
     'port': int(os.getenv('POSTGRES_PORT', 5432)),
     'database': os.getenv('POSTGRES_DB', 'pcb_inventory'),
@@ -402,7 +430,7 @@ class StockForm(FlaskForm):
 
 class PickForm(FlaskForm):
     """Form for picking electronic parts."""
-    pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=1)])  # Optional - when specified, pick from that specific PCN only
+    pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=0)])  # Optional - when specified, pick from that specific PCN only
     job = StringField('Job Number (Item)', validators=[Length(max=50)])  # Optional - will use part_number if not provided
     mpn = StringField('MPN (Manufacturing Part Number)', validators=[Length(max=50)])
     part_number = StringField('Part Number', validators=[DataRequired(), Length(min=1, max=50)])  # Now required - serves as job identifier
@@ -411,7 +439,7 @@ class PickForm(FlaskForm):
     pcb_type = StringField('Component Type', validators=[Length(max=50)], default='Bare')
     dc = StringField('Date Code (DC)', validators=[Length(max=50)])
     msd = StringField('Moisture Sensitive Device (MSD)', validators=[Length(max=50)])
-    quantity = IntegerField('Quantity', validators=[DataRequired(), NumberRange(min=1)])
+    quantity = IntegerField('Quantity', validators=[InputRequired(), NumberRange(min=0)])
     submit = SubmitField('Pick Parts')
 
 class RestockForm(FlaskForm):
@@ -438,22 +466,39 @@ class RestockForm(FlaskForm):
 # User authentication now handled by ACI Dashboard
 
 class DatabaseManager:
-    """Handle database operations using containerized PostgreSQL with connection pooling."""
-    
+    """Handle database operations using PostgreSQL with connection pooling and failover."""
+
     def __init__(self):
         self.db_config = DB_CONFIG
+        self.using_fallback = False
         # Initialize connection pool with optimized settings
         try:
             self.pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=5,     # Keep 5 connections ready
-                maxconn=25,    # Increased max connections to handle more concurrent requests
+                minconn=2,     # Reduced for Neon compatibility
+                maxconn=15,    # Reduced for Neon pooler limits
                 **self.db_config
             )
-            logger.info("Database connection pool initialized")
+            logger.info(f"Database connection pool initialized (primary)")
         except Exception as e:
-            logger.error(f"Failed to create connection pool: {e}")
-            raise
-    
+            logger.error(f"Failed to create primary connection pool: {e}")
+            # Try fallback to local DB if primary was Neon
+            if NEON_DATABASE_URL and LOCAL_DB_CONFIG != self.db_config:
+                logger.warning("Falling back to local database...")
+                try:
+                    self.db_config = LOCAL_DB_CONFIG
+                    self.pool = psycopg2.pool.ThreadedConnectionPool(
+                        minconn=5,
+                        maxconn=25,
+                        **self.db_config
+                    )
+                    self.using_fallback = True
+                    logger.info("Database connection pool initialized (fallback/local)")
+                except Exception as e2:
+                    logger.error(f"Failed to create fallback connection pool: {e2}")
+                    raise
+            else:
+                raise
+
     def get_connection(self):
         """Get a database connection from the pool."""
         try:
@@ -461,7 +506,7 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to get connection from pool: {e}")
             raise
-    
+
     def return_connection(self, conn):
         """Return a connection to the pool."""
         try:
@@ -575,7 +620,7 @@ class DatabaseManager:
 
         try:
             pcn_int = int(pcn)
-            if pcn_int < 1 or pcn_int > 99999:
+            if pcn_int < 0 or pcn_int > 99999:
                 return {
                     'success': False,
                     'error': f'Invalid PCN: {pcn}. Must be between 1 and 99999.'
@@ -713,10 +758,10 @@ class DatabaseManager:
         Otherwise, picks using FIFO across all PCNs for the item.
         """
         # CRITICAL: Input validation to prevent invalid data
-        if not isinstance(quantity, int) or quantity < 1 or quantity > 10000:
+        if not isinstance(quantity, int) or quantity < 0 or quantity > 10000:
             return {
                 'success': False,
-                'error': f'Invalid quantity: {quantity}. Must be between 1 and 10,000.'
+                'error': f'Invalid quantity: {quantity}. Must be between 0 and 10,000.'
             }
 
         if not job or not isinstance(job, str) or len(job) > 50:
@@ -728,7 +773,7 @@ class DatabaseManager:
         if pcn is not None:
             try:
                 pcn_int = int(pcn)
-                if pcn_int < 1 or pcn_int > 99999:
+                if pcn_int < 0 or pcn_int > 99999:
                     return {
                         'success': False,
                         'error': f'Invalid PCN: {pcn}. Must be between 1 and 99999.'
@@ -867,7 +912,7 @@ class DatabaseManager:
                     conn.rollback()
                     return {
                         'success': False,
-                        'error': f'Job not found in inventory. Job {job} with component type {pcb_type} not found.',
+                        'error': f'Job not found in inventory. Item {job} not found in warehouse inventory.',
                         'job': job,
                         'pcb_type': pcb_type
                     }
@@ -877,6 +922,7 @@ class DatabaseManager:
                 # Otherwise, record for each PCN that was picked from using the FIFO logic
                 if pcn:
                     # Single PCN pick - insert one transaction record
+                    # Use actual loc_to from warehouse inventory as loc_from (where the part really is)
                     cursor.execute("""
                         INSERT INTO pcb_inventory."tblTransaction"
                         (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
@@ -889,7 +935,7 @@ class DatabaseManager:
                             msd,
                             %s,
                             TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
-                            'Receiving Area',
+                            COALESCE(loc_to, 'Warehouse'),
                             'MFG Floor',
                             %s,
                             %s
@@ -911,6 +957,8 @@ class DatabaseManager:
                                 item,
                                 mpn,
                                 dc,
+                                msd,
+                                loc_to,
                                 onhandqty,
                                 migrated_at,
                                 SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) as running_total
@@ -924,6 +972,8 @@ class DatabaseManager:
                                 item,
                                 mpn,
                                 dc,
+                                msd,
+                                loc_to,
                                 onhandqty,
                                 running_total,
                                 LAG(running_total, 1, 0) OVER (ORDER BY migrated_at, pcn) as prev_total
@@ -936,6 +986,8 @@ class DatabaseManager:
                                 item,
                                 mpn,
                                 dc,
+                                msd,
+                                loc_to,
                                 CASE
                                     WHEN prev_total < %s AND running_total >= %s
                                     THEN %s - prev_total
@@ -957,7 +1009,7 @@ class DatabaseManager:
                             msd,
                             qty_picked,
                             TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
-                            'Receiving Area',
+                            COALESCE(loc_to, 'Warehouse'),
                             'MFG Floor',
                             %s,
                             %s
@@ -1043,7 +1095,7 @@ class DatabaseManager:
         if pcn is not None:
             try:
                 pcn_int = int(pcn)
-                if pcn_int < 1 or pcn_int > 99999:
+                if pcn_int < 0 or pcn_int > 99999:
                     return {
                         'success': False,
                         'error': f'Invalid PCN: {pcn}. Must be between 1 and 99999.'
@@ -1076,8 +1128,17 @@ class DatabaseManager:
 
             try:
                 # Determine search criteria and build query (SECURE: conditional execution)
-                if pcn:
-                    search_param = str(pcn)
+                if pcn and item:
+                    search_param = (str(pcn), item)
+                    select_query = """
+                        SELECT pcn, item, mpn, dc, mfg_qty, onhandqty
+                        FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE pcn::text = %s AND item::text ILIKE %s
+                        FOR UPDATE
+                        LIMIT 1
+                    """
+                elif pcn:
+                    search_param = (str(pcn),)
                     select_query = """
                         SELECT pcn, item, mpn, dc, mfg_qty, onhandqty
                         FROM pcb_inventory."tblWhse_Inventory"
@@ -1086,7 +1147,7 @@ class DatabaseManager:
                         LIMIT 1
                     """
                 elif item:
-                    search_param = item
+                    search_param = (item,)
                     select_query = """
                         SELECT pcn, item, mpn, dc, mfg_qty, onhandqty
                         FROM pcb_inventory."tblWhse_Inventory"
@@ -1101,7 +1162,7 @@ class DatabaseManager:
                     }
 
                 # CRITICAL: Lock row with FOR UPDATE and check MFG quantity
-                cursor.execute(select_query, (search_param,))
+                cursor.execute(select_query, search_param)
 
                 result = cursor.fetchone()
 
@@ -1125,21 +1186,25 @@ class DatabaseManager:
                     except (ValueError, TypeError):
                         mfg_qty_int = 0
 
-                # CRITICAL: Validate sufficient MFG quantity before restocking
+                # Log if restocking more than tracked MFG quantity (user may have physical count)
                 if mfg_qty_int < quantity:
-                    conn.rollback()  # Release lock
-                    return {
-                        'success': False,
-                        'error': f'Cannot restock {quantity} units. Only {mfg_qty_int} units available on MFG floor.',
-                        'available_mfg_qty': mfg_qty_int,
-                        'requested_qty': quantity
-                    }
+                    logger.info(f'Restock qty ({quantity}) exceeds tracked MFG qty ({mfg_qty_int}) for PCN {pcn}. User override.')
 
                 # Update warehouse inventory - move from specified source to destination
                 # Use COALESCE to handle NULL onhandqty
                 # Cast mfg_qty to integer for arithmetic, then back to text
                 # SECURE: Use conditional query execution
-                if pcn:
+                if pcn and item:
+                    update_query = """
+                        UPDATE pcb_inventory."tblWhse_Inventory"
+                        SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
+                            onhandqty = COALESCE(onhandqty, 0) + %s,
+                            loc_from = %s,
+                            loc_to = %s
+                        WHERE pcn::text = %s AND item::text ILIKE %s
+                    """
+                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, str(pcn), item))
+                elif pcn:
                     update_query = """
                         UPDATE pcb_inventory."tblWhse_Inventory"
                         SET mfg_qty = GREATEST(0, COALESCE(mfg_qty::integer, 0) - %s)::text,
@@ -1148,6 +1213,7 @@ class DatabaseManager:
                             loc_to = %s
                         WHERE pcn::text = %s
                     """
+                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, str(pcn)))
                 else:
                     update_query = """
                         UPDATE pcb_inventory."tblWhse_Inventory"
@@ -1157,8 +1223,7 @@ class DatabaseManager:
                             loc_to = %s
                         WHERE item = %s
                     """
-
-                cursor.execute(update_query, (quantity, quantity, location_from, location_to, search_param))
+                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, item))
 
                 updated_rows = cursor.rowcount
 
@@ -1420,6 +1485,7 @@ class DatabaseManager:
         """Search warehouse inventory with optional filters.
         If PCN is provided, returns that specific PCN's data.
         Otherwise, returns TOTAL quantity per item (aggregated across all PCNs) for accurate pick validation.
+        If job search returns no results, also tries matching by PCN number.
         """
         conn = None
         try:
@@ -1440,7 +1506,7 @@ class DatabaseManager:
                             mpn as part_number,
                             pcn
                         FROM pcb_inventory."tblWhse_Inventory"
-                        WHERE pcn::text = %s AND onhandqty > 0
+                        WHERE pcn::text = %s
                     """
                     params.append(pcn)
 
@@ -1474,7 +1540,27 @@ class DatabaseManager:
                     query += " ORDER BY item"
 
                 cur.execute(query, params)
-                return [dict(row) for row in cur.fetchall()]
+                results = [dict(row) for row in cur.fetchall()]
+
+                # If no results found and job looks like a PCN (numeric), try searching by PCN
+                if not results and job and not pcn and job.strip().isdigit():
+                    cur.execute("""
+                        SELECT
+                            item as job,
+                            'Bare' as pcb_type,
+                            onhandqty as qty,
+                            loc_to as location,
+                            dc as date_code,
+                            msd as msd_level,
+                            mpn as part_number,
+                            pcn
+                        FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE pcn::text = %s
+                        ORDER BY migrated_at, pcn
+                    """, (job.strip(),))
+                    results = [dict(row) for row in cur.fetchall()]
+
+                return results
         except Exception as e:
             logger.error(f"Search failed: {e}")
             return []
@@ -2347,7 +2433,7 @@ def pick():
                     flash(f"Insufficient quantity! Available: {result.get('available_qty', 0)}, "
                           f"Requested: {result.get('requested_qty', 0)}", 'error')
                 elif 'Job not found' in error_msg:
-                    flash(f"Job {result['job']} with PCB type {result['pcb_type']} not found in inventory", 'error')
+                    flash(f"Item {result['job']} not found in warehouse inventory", 'error')
                 else:
                     flash(f"Pick operation failed: {error_msg}", 'error')
                 
@@ -2588,13 +2674,16 @@ def get_part_details():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Determine search criteria
-        if pcn:
+        # Determine search criteria - use both PCN and item when available
+        if pcn and item:
+            where_clause = "pcn::text = %s AND item::text ILIKE %s"
+            search_params = (str(pcn), item)
+        elif pcn:
             where_clause = "pcn::text = %s"
-            search_param = str(pcn)
+            search_params = (str(pcn),)
         else:
             where_clause = "item = %s"
-            search_param = item
+            search_params = (item,)
 
         # Fetch part details from warehouse inventory
         cursor.execute(f"""
@@ -2611,8 +2700,9 @@ def get_part_details():
                 po
             FROM pcb_inventory."tblWhse_Inventory"
             WHERE {where_clause}
+            ORDER BY id DESC
             LIMIT 1
-        """, (search_param,))
+        """, search_params)
 
         result = cursor.fetchone()
 
@@ -2822,7 +2912,7 @@ def warehouse_inventory():
 
         if search_pcn:
             query += " AND pcn::text LIKE %s"
-            params.append(f"%{search_pcn}%")
+            params.append(f"{search_pcn}%")
 
         if search_mpn:
             query += " AND LOWER(mpn::text) LIKE %s"
@@ -3028,7 +3118,7 @@ def update_warehouse_item():
             return jsonify({'success': False, 'message': 'No data provided'}), 400
 
         # Validate required fields
-        required_fields = ['item', 'pcn', 'mpn']
+        required_fields = ['item', 'pcn']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({'success': False, 'message': f'{field} is required'}), 400
@@ -3075,7 +3165,8 @@ def update_warehouse_item():
                     msd = %s,
                     po = %s,
                     cost = %s
-                WHERE item::text = %s AND pcn::text = %s AND mpn::text = %s
+                WHERE item::text = %s AND pcn::text = %s
+                  AND (mpn::text = %s OR (mpn IS NULL AND %s IS NULL))
             """, (
                 data.get('dc') or None,
                 onhand_qty,
@@ -3087,7 +3178,8 @@ def update_warehouse_item():
                 to_float_or_none(data.get('cost')),
                 data.get('item'),
                 data.get('pcn'),
-                data.get('mpn')
+                data.get('mpn') or None,
+                data.get('mpn') or None
             ))
 
             if cursor.rowcount == 0:
@@ -4616,17 +4708,55 @@ def api_get_pcn_details(pcn_number):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
+            # Check if item_number filter was provided (for resolving duplicate PCNs)
+            item_filter = request.args.get('item')
+
             # Query from tblWhse_Inventory (main warehouse table)
-            cursor.execute("""
-                SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po
-                FROM pcb_inventory."tblWhse_Inventory"
-                WHERE pcn::text = %s
-                LIMIT 1
-            """, (pcn_number,))
+            if item_filter:
+                cursor.execute("""
+                    SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn::text = %s AND item::text = %s
+                    LIMIT 1
+                """, (pcn_number, item_filter))
+            else:
+                cursor.execute("""
+                    SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn::text = %s
+                    ORDER BY id DESC
+                """, (pcn_number,))
 
-            whse_record = cursor.fetchone()
+            whse_records = cursor.fetchall()
 
-            if whse_record:
+            if whse_records:
+                # If multiple records found for the same PCN, return them all
+                # so the frontend can ask the user to choose
+                if len(whse_records) > 1:
+                    matches = []
+                    for rec in whse_records:
+                        matches.append({
+                            'pcn_number': str(rec['pcn']),
+                            'part_number': rec['item'],
+                            'job': rec['item'],
+                            'mpn': rec['mpn'],
+                            'quantity': rec['onhandqty'],
+                            'date_code': rec['dc'],
+                            'msd': rec['msd'],
+                            'location': rec['loc_to'],
+                            'location_from': rec['loc_from'],
+                            'po_number': rec['po']
+                        })
+                    return jsonify({
+                        'success': True,
+                        'multiple': True,
+                        'count': len(matches),
+                        'matches': matches,
+                        'message': f'Multiple items found for PCN {pcn_number}. Please select the correct one.'
+                    })
+
+                # Single record - return as before
+                whse_record = whse_records[0]
                 return jsonify({
                     'success': True,
                     'pcn_number': str(whse_record['pcn']),
@@ -5086,28 +5216,24 @@ def generate_zpl_label(pcn_number):
             data = dict(pcn_data)
 
             # Generate ZPL code for 3x1 inch label (Zebra ZP450)
-            # Label dimensions: 3 inches wide (288 dots @ 203dpi), 1 inch tall (96 dots @ 203dpi)
+            # Label dimensions: 3 inches wide (609 dots @ 203dpi), 1 inch tall (203 dots @ 203dpi)
+            # Padded 20 dots from edges for readability
             zpl = f"""^XA
-^FO0,0^GB576,0,2^FS
-^FO0,0^GB0,192,2^FS
-^FO576,0^GB0,192,2^FS
-^FO0,192^GB576,0,2^FS
+^FO20,8^A0N,28,28^FDPCN: {data['pcn_number']}^FS
 
-^FO10,10^A0N,28,28^FDPCN: {data['pcn_number']}^FS
+^FO180,5^BY3,3,55^BCN,55,N,N,N^FD{data['pcn_number']}^FS
 
-^FO200,8^BY2,2,40^BCN,40,N,N,N^FD{data['pcn_number']}^FS
+^FO490,8^A0N,16,16^FDQTY^FS
+^FO490,28^A0N,32,32^FD{data.get('quantity', 0)}^FS
 
-^FO480,10^A0N,16,16^FDQTY^FS
-^FO480,30^A0N,32,32^FD{data.get('quantity', 0)}^FS
+^FO20,70^GB569,0,2^FS
 
-^FO0,80^GB576,0,1^FS
+^FO25,78^A0N,20,20^FDJob: {data.get('item', 'N/A')}^FS
+^FO25,102^A0N,20,20^FDMPN: {data.get('mpn', 'N/A')}^FS
+^FO25,126^A0N,20,20^FDPO: {data.get('po_number', 'N/A')}^FS
 
-^FO10,85^A0N,16,16^FDJob: {data.get('item', 'N/A')}^FS
-^FO10,105^A0N,16,16^FDMPN: {data.get('mpn', 'N/A')}^FS
-^FO10,125^A0N,16,16^FDPO: {data.get('po_number', 'N/A')}^FS
-
-^FO350,85^A0N,16,16^FDDC: {data.get('date_code', 'N/A')}^FS
-^FO350,105^A0N,16,16^FDMSD: {data.get('msd', 'N/A')}^FS
+^FO370,78^A0N,20,20^FDDC: {data.get('date_code', 'N/A')}^FS
+^FO370,102^A0N,20,20^FDMSD: {data.get('msd', 'N/A')}^FS
 
 ^XZ"""
 

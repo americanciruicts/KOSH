@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div class="row align-items-center mb-3 p-2 rounded-3 shadow" style="background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);">
+    <div class="col-12">
+        <h1 class="h4 mb-0 fw-bold" style="color: white !important;">
+            <i class="bi bi-exclamation-triangle me-2"></i> Stock Alerts
+        </h1>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Stats Summary -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);">
+            <div class="card-body py-2">
+                <div class="row text-center">
+                    <div class="col-md-6">
+                        <h5 class="mb-0 fw-bold" style="color: white !important;">{{ total_records }}</h5>
+                        <small style="color: white !important; opacity: 0.9;">Items Below Threshold</small>
+                    </div>
+                    <div class="col-md-6 border-start border-white border-opacity-25">
+                        <h5 class="mb-0 fw-bold" style="color: white !important;">< {{ low_stock_threshold }}</h5>
+                        <small style="color: white !important; opacity: 0.9;">Threshold (units)</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Stock Alerts Table -->
+{% if low_stock_items %}
+<div class="card border-0 shadow rounded-3">
+    <div class="card-header text-white border-0 py-2" style="background: #dc2626;">
+        <h6 class="mb-0 fw-bold"><i class="bi bi-list-ul me-2"></i>Low Stock Items</h6>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0" style="font-size: 0.9rem;">
+                <thead style="background: linear-gradient(to bottom, #f1f5f9, #e2e8f0);">
+                    <tr>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">PCN</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Item</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">MPN</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">DC</th>
+                        <th class="py-2 px-3 text-center" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Qty</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Location</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">MSD</th>
+                        <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">PO</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in low_stock_items %}
+                    <tr style="{% if loop.index % 2 == 0 %}background: #f8fafc;{% endif %} border-left: 3px solid {% if item.onhandqty == 0 %}#dc2626{% elif item.onhandqty < 5 %}#f59e0b{% else %}#eab308{% endif %};">
+                        <td class="py-2 px-3">
+                            <a href="{{ url_for('pcn_history', pcn=item.pcn) }}" class="text-decoration-none fw-bold" style="color: #2563eb;">
+                                {{ item.pcn }}
+                            </a>
+                        </td>
+                        <td class="py-2 px-3"><strong style="color: #1e3a8a;">{{ item.item or '-' }}</strong></td>
+                        <td class="py-2 px-3"><code style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.85rem; font-weight: 600;">{{ item.mpn or '-' }}</code></td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ item.dc or '-' }}</td>
+                        <td class="py-2 px-3 text-center">
+                            <span class="badge shadow-sm {% if item.onhandqty == 0 %}bg-danger{% elif item.onhandqty < 5 %}bg-warning text-dark{% else %}bg-warning text-dark{% endif %}" style="font-size: 0.85rem; padding: 0.4rem 0.8rem;">
+                                {{ item.onhandqty }}
+                            </span>
+                        </td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ item.loc_to or '-' }}</td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ item.msd or '-' }}</td>
+                        <td class="py-2 px-3" style="color: #64748b;">{{ item.po or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    {% if pagination.total_pages > 1 %}
+    <div class="card-footer bg-light border-0">
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="text-muted" style="font-size: 0.9rem;">
+                Showing {{ (pagination.page - 1) * pagination.per_page + 1 }} to {{ [pagination.page * pagination.per_page, pagination.total]|min }} of {{ pagination.total }} items
+            </div>
+            <nav>
+                <ul class="pagination pagination-sm mb-0">
+                    {% if pagination.has_prev %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('stock_alerts', page=pagination.prev_num, per_page=pagination.per_page) }}">Previous</a>
+                    </li>
+                    {% endif %}
+
+                    {% for page_num in pagination.pages %}
+                    <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('stock_alerts', page=page_num, per_page=pagination.per_page) }}">{{ page_num }}</a>
+                    </li>
+                    {% endfor %}
+
+                    {% if pagination.has_next %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('stock_alerts', page=pagination.next_num, per_page=pagination.per_page) }}">Next</a>
+                    </li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<div class="card border-0 shadow-lg rounded-4" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-check-circle" style="font-size: 4rem; color: #16a34a;"></i>
+        <h4 class="mt-3" style="color: #15803d;">All Good!</h4>
+        <p class="text-muted mb-0">All items have sufficient stock above the threshold of {{ low_stock_threshold }} units</p>
+    </div>
+</div>
+{% endif %}
+
+<style>
+.table-responsive {
+    max-height: 70vh;
+    overflow-y: auto;
+    border-radius: 0 0 1rem 1rem;
+}
+
+.table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: linear-gradient(to bottom, #f1f5f9, #e2e8f0) !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.table tbody tr {
+    transition: all 0.2s ease;
+}
+
+.table tbody tr:hover {
+    background-color: #fee2e2 !important;
+    transform: translateX(4px);
+    box-shadow: 0 2px 12px rgba(220, 38, 38, 0.15);
+}
+
+/* Dark Mode Styles */
+[data-theme="dark"] .table thead th {
+    background: linear-gradient(to bottom, #1e293b, #334155) !important;
+    color: #94a3b8 !important;
+}
+
+[data-theme="dark"] .table tbody tr {
+    color: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .table tbody tr:nth-child(even) {
+    background: #1e293b !important;
+}
+
+[data-theme="dark"] .table tbody tr:hover {
+    background-color: #334155 !important;
+    box-shadow: 0 2px 12px rgba(220, 38, 38, 0.25);
+}
+
+[data-theme="dark"] .table tbody td {
+    color: #cbd5e1 !important;
+    border-color: #334155;
+}
+
+[data-theme="dark"] .table tbody strong {
+    color: #60a5fa !important;
+}
+
+[data-theme="dark"] code {
+    background: #1e293b !important;
+    color: #60a5fa !important;
+}
+
+[data-theme="dark"] .card {
+    background: #1e293b !important;
+}
+
+[data-theme="dark"] .card-header {
+    background: #7f1d1d !important;
+}
+
+[data-theme="dark"] .card-footer {
+    background: #1e293b !important;
+}
+</style>
+{% endblock %}

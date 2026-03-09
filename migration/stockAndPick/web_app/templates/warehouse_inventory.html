@@ -79,7 +79,7 @@
             <div class="col-md-2">
                 <label for="search_pcn" class="form-label small fw-semibold mb-2" style="color: #475569;">PCN</label>
                 <input type="text" class="form-control" id="search_pcn" name="search_pcn"
-                       value="{{ request.args.get('search_pcn', '') }}" placeholder="Search PCN..." style="border-radius: 6px;">
+                       value="{{ request.args.get('search_pcn', '') }}" placeholder="Enter PCN number" style="border-radius: 6px;">
             </div>
             <div class="col-md-2">
                 <label for="search_item" class="form-label small fw-semibold mb-2" style="color: #475569;">Item Number</label>
@@ -332,7 +332,8 @@
                         </div>
                         <div class="col-md-6">
                             <label for="edit_mfg_qty" class="form-label fw-semibold">MFG Quantity</label>
-                            <input type="number" class="form-control" id="edit_mfg_qty">
+                            <input type="number" class="form-control bg-light" id="edit_mfg_qty" readonly>
+                            <small class="text-muted">Cannot be changed</small>
                         </div>
                         <div class="col-md-6">
                             <label for="edit_msd" class="form-label fw-semibold">MSD (Moisture Sensitive)</label>
@@ -349,7 +350,7 @@
                     </div>
                     <div class="alert alert-warning mt-3 mb-0">
                         <i class="bi bi-exclamation-triangle me-2"></i>
-                        <strong>Note:</strong> PCN, Item Number, and MPN cannot be modified. You can edit all other fields.
+                        <strong>Note:</strong> PCN, Item Number, MPN, and MFG Quantity cannot be modified. MFG Quantity is managed through Stock/Pick/Restock operations.
                     </div>
                 </form>
             </div>
@@ -570,6 +571,8 @@ function editItem(jobNumber, pcn, mpn) {
 function saveEdit() {
     console.log('Save button clicked');
 
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
     const itemData = {
         item: document.getElementById('edit_item').value,
         pcn: document.getElementById('edit_pcn').value,
@@ -590,7 +593,8 @@ function saveEdit() {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'X-CSRFToken': csrfToken
         },
         credentials: 'same-origin',
         body: JSON.stringify(itemData)
@@ -598,18 +602,18 @@ function saveEdit() {
     .then(response => {
         console.log('Save response status:', response.status);
 
-        // Check if response is OK before parsing JSON
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
         // Check if response is actually JSON
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
             throw new Error('Server returned non-JSON response');
         }
 
-        return response.json();
+        return response.json().then(data => {
+            if (!response.ok) {
+                throw new Error(data.message || `HTTP ${response.status}: ${response.statusText}`);
+            }
+            return data;
+        });
     })
     .then(data => {
         console.log('Save response data:', data);

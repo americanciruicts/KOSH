@@ -189,17 +189,17 @@
                     <div class="row mb-4">
                         <div class="col-12">
                             <h6 class="text-primary border-bottom pb-2 mb-3">
-                                <i class="bi bi-arrow-left-right me-2"></i> Location Movement
+                                <i class="bi bi-shield-lock-fill me-2"></i> Storage & Security
                             </h6>
                         </div>
                         <div class="col-md-6">
                             <div class="mb-3">
                                 {{ form.location_from.label(class="form-label fw-semibold text-dark") }}
                                 <div class="input-group">
-                                    <span class="input-group-text bg-info text-white">
-                                        <i class="bi bi-box-arrow-in-right"></i>
+                                    <span class="input-group-text bg-primary text-white">
+                                        <i class="bi bi-geo-alt-fill"></i>
                                     </span>
-                                    {{ form.location_from(class="form-control form-control-lg border-2", placeholder="e.g., Receiving Area, Vendor, Supplier") }}
+                                    {{ form.location_from(class="form-control form-control-lg border-2", placeholder="e.g., Receiving Area") }}
                                 </div>
                                 {% if form.location_from.errors %}
                                     <div class="invalid-feedback d-block">
@@ -209,7 +209,7 @@
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-arrow-right"></i> Where parts are coming from
+                                    <i class="bi bi-geo-alt"></i> Source location
                                 </div>
                             </div>
                         </div>
@@ -217,10 +217,10 @@
                             <div class="mb-3">
                                 {{ form.location_to.label(class="form-label fw-semibold text-dark") }}
                                 <div class="input-group">
-                                    <span class="input-group-text bg-success text-white">
-                                        <i class="bi bi-box-arrow-right"></i>
+                                    <span class="input-group-text bg-primary text-white">
+                                        <i class="bi bi-geo-alt-fill"></i>
                                     </span>
-                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999, A1, Shelf-1, Rack-B2") }}
+                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999") }}
                                 </div>
                                 {% if form.location_to.errors %}
                                     <div class="invalid-feedback d-block">
@@ -230,30 +230,7 @@
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-arrow-right"></i> Destination storage location
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Export Notes Section (Hidden by default) -->
-                    <div class="row mb-4" id="exportNotesDiv" style="display: none;">
-                        <div class="col-12">
-                            <div class="alert alert-warning border-2 border-warning">
-                                <h6 class="text-warning mb-3">
-                                    <i class="bi bi-exclamation-triangle-fill me-2"></i> Export Control Notes Required
-                                </h6>
-                                {{ form.export_control_notes.label(class="form-label fw-semibold text-dark") }}
-                                {{ form.export_control_notes(class="form-control border-warning", placeholder="Enter export control notes or restrictions", rows="3") }}
-                                {% if form.export_control_notes.errors %}
-                                    <div class="invalid-feedback d-block">
-                                        {% for error in form.export_control_notes.errors %}
-                                            <div><i class="bi bi-exclamation-triangle"></i> {{ error }}</div>
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-                                <div class="form-text text-warning">
-                                    <i class="bi bi-info-circle"></i> Additional notes about export restrictions or compliance requirements
+                                    <i class="bi bi-geo-alt"></i> Destination location
                                 </div>
                             </div>
                         </div>
@@ -533,32 +510,20 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     });
-    
-    // Handle ITAR classification change
-    const itarClassification = document.getElementById('itarClassification');
-    const exportNotesDiv = document.getElementById('exportNotesDiv');
-    
-    if (itarClassification && exportNotesDiv) {
-        // Show/hide export notes based on classification
-        function toggleExportNotes() {
-            const classification = itarClassification.value;
-            if (classification === 'ITAR' || classification === 'EAR99' || classification === 'SENSITIVE') {
-                exportNotesDiv.style.display = 'block';
-            } else {
-                exportNotesDiv.style.display = 'none';
-            }
-        }
-        
-        // Initial state
-        toggleExportNotes();
-        
-        // Listen for changes
-        itarClassification.addEventListener('change', toggleExportNotes);
-    }
-    
-    // Add form validation
+
+    // CRITICAL: Prevent double-click/double-submission
     const form = document.querySelector('form');
+    const submitBtn = form.querySelector('[type="submit"]');
+    let isSubmitting = false;
+
     form.addEventListener('submit', function(e) {
+        // CRITICAL: Block duplicate submissions
+        if (isSubmitting) {
+            e.preventDefault();
+            console.warn('Form already submitting, ignoring duplicate submission');
+            return false;
+        }
+
         const partNumber = document.getElementById('partNumberInput').value.trim();
         const quantity = document.getElementById('quantity').value;
 
@@ -575,7 +540,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('quantity').focus();
             return false;
         }
-        
+
         // Add confirmation for large quantities
         if (quantity > 1000) {
             if (!confirm(`Are you sure you want to stock ${quantity} units? This is a large quantity.`)) {
@@ -583,6 +548,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
         }
+
+        // CRITICAL: Mark as submitting and disable button
+        isSubmitting = true;
+        submitBtn.disabled = true;
+        const originalText = submitBtn.innerHTML;
+        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+
+        // Safety: Re-enable after 10 seconds in case redirect fails
+        setTimeout(() => {
+            isSubmitting = false;
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+        }, 10000);
     });
     
     // Add keyboard shortcuts
@@ -935,7 +913,115 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
 
         const result = await response.json();
 
+        if (result.success && result.multiple) {
+            // Multiple items share this PCN - ask user to select the correct one
+            console.warn('Multiple items found for PCN:', pcnNumber, result.matches);
+            const selected = await showPCNSelectionDialog(pcnNumber, result.matches);
+            if (selected) {
+                // Re-fetch with the specific item to get exact data
+                const filtered = await fetch(`/api/pcn/details/${pcnNumber}?item=${encodeURIComponent(selected.job)}`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' }
+                });
+                const filteredResult = await filtered.json();
+                if (filteredResult.success && !filteredResult.multiple) {
+                    return fetchAndPopulatePCNDetailsFromData(pcnNumber, filteredResult);
+                }
+            }
+            return;
+        }
+
         if (result.success) {
+            return fetchAndPopulatePCNDetailsFromData(pcnNumber, result);
+        } else {
+            console.warn('PCN lookup failed:', result.error);
+        }
+
+    } catch (error) {
+        console.error('Error fetching PCN details:', error);
+    }
+}
+
+// Show selection dialog when multiple items share the same PCN
+function showPCNSelectionDialog(pcnNumber, matches) {
+    return new Promise((resolve) => {
+        let html = `<div class="modal fade" id="pcnSelectModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Multiple Items Found for PCN ${pcnNumber}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>This PCN is associated with multiple items. Please select the correct one:</p>
+                        <div class="list-group">`;
+
+        matches.forEach((m, i) => {
+            html += `<button type="button" class="list-group-item list-group-item-action pcn-select-btn" data-index="${i}">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Item: ${m.job || 'N/A'}</strong><br>
+                        <small class="text-muted">MPN: ${m.mpn || 'N/A'} | Qty: ${m.quantity || 0} | Loc: ${m.location || 'N/A'}</small>
+                    </div>
+                    <i class="bi bi-chevron-right"></i>
+                </div>
+            </button>`;
+        });
+
+        html += `</div></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        // Remove any existing modal
+        const existing = document.getElementById('pcnSelectModal');
+        if (existing) {
+            var oldModal = bootstrap.Modal.getInstance(existing);
+            if (oldModal) oldModal.dispose();
+            existing.remove();
+        }
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modalEl = document.getElementById('pcnSelectModal');
+        const modal = new bootstrap.Modal(modalEl);
+        let resolved = false;
+
+        modalEl.querySelectorAll('.pcn-select-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.index);
+                resolved = true;
+                const selected = matches[idx];
+                modal.hide();
+                setTimeout(() => {
+                    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+                    document.body.classList.remove('modal-open');
+                    document.body.style.removeProperty('overflow');
+                    document.body.style.removeProperty('padding-right');
+                    modalEl.remove();
+                    resolve(selected);
+                }, 300);
+            });
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('overflow');
+            document.body.style.removeProperty('padding-right');
+            modalEl.remove();
+            if (!resolved) resolve(null);
+        });
+
+        modal.show();
+    });
+}
+
+// Populate form fields from PCN details data
+function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
             console.log('PCN details fetched:', result);
 
             // Show a visual indicator that data is being auto-filled
@@ -1049,13 +1135,6 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
             `;
             document.body.appendChild(notification);
             setTimeout(() => notification.remove(), 4000);
-
-        } else {
-            console.warn('PCN lookup failed:', result.error);
-        }
-    } catch (error) {
-        console.error('Error fetching PCN details:', error);
-    }
 }
 </script>
 {% endblock %}

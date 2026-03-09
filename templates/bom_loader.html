@@ -1,222 +1,178 @@
 {% extends "base.html" %}
 
-{% block title %}BOM Loader - Stock and Pick{% endblock %}
+{% block title %}BOM Loader - KOSH{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-4">
-    <div class="row mb-4">
-        <div class="col">
-            <h2 class="mb-0">
-                <i class="bi bi-upload"></i> BOM Loader
-            </h2>
-            <p class="text-muted">Upload Excel or CSV files to add or update Bill of Materials</p>
+    <div class="row">
+        <div class="col-12">
+            <h2><i class="bi bi-file-earmark-arrow-up-fill"></i> BOM Loader</h2>
+            <p class="text-muted">Upload and load Bill of Materials from Excel files</p>
         </div>
     </div>
 
     <!-- Upload Section -->
-    <div class="row mb-4">
-        <div class="col-lg-8">
-            <div class="card shadow-sm">
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
                 <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-file-earmark-arrow-up"></i> Upload BOM File</h5>
+                    <h5 class="mb-0">Upload BOM File</h5>
                 </div>
                 <div class="card-body">
-                    <!-- Upload Instructions -->
-                    <div class="alert alert-info mb-3">
-                        <h6 class="alert-heading"><i class="bi bi-info-circle"></i> File Format Requirements</h6>
-                        <ul class="mb-0 small">
-                            <li><strong>Supported formats:</strong> Excel (.xlsx, .xls) or CSV (.csv)</li>
-                            <li><strong>Required columns:</strong> Job, Line, Description, MPN, Qty, Cost</li>
-                            <li><strong>Optional columns:</strong> Manufacturer, ACI_PN, Location, POU, Job_Rev, Customer, Cust_PN</li>
-                            <li><strong>First row:</strong> Must contain column headers (case-insensitive)</li>
-                        </ul>
-                    </div>
-
-                    <!-- Upload Form -->
-                    <form id="uploadForm" enctype="multipart/form-data">
+                    <form id="bomUploadForm">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
                         <div class="mb-3">
-                            <label for="bomFile" class="form-label">Select BOM File</label>
-                            <input type="file" class="form-control" id="bomFile" name="bomFile"
-                                   accept=".xlsx,.xls,.csv" required>
+                            <label for="bomFile" class="form-label">Select Excel File (.xlsx)</label>
+                            <input type="file" class="form-control" id="bomFile" name="file" accept=".xlsx,.xls" required>
+                            <div class="form-text">File must contain "Assy BOM" sheet</div>
                         </div>
 
-                        <div class="mb-3">
-                            <label class="form-label">Upload Mode</label>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="uploadMode"
-                                       id="modeReplace" value="replace" checked>
-                                <label class="form-check-label" for="modeReplace">
-                                    <strong>Replace:</strong> Delete existing BOM for job(s) and insert new data
-                                </label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="uploadMode"
-                                       id="modeAppend" value="append">
-                                <label class="form-check-label" for="modeAppend">
-                                    <strong>Append:</strong> Add new records without deleting existing ones
-                                </label>
-                            </div>
-                            <div class="form-check">
-                                <input class="form-check-input" type="radio" name="uploadMode"
-                                       id="modeUpdate" value="update">
-                                <label class="form-check-label" for="modeUpdate">
-                                    <strong>Update:</strong> Update existing records by Job+Line, insert if not exists
-                                </label>
-                            </div>
-                        </div>
-
-                        <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-primary btn-lg" id="uploadBtn">
-                                <i class="bi bi-cloud-upload"></i> Upload and Process
-                            </button>
-                        </div>
+                        <button type="submit" class="btn btn-primary" id="uploadBtn">
+                            <i class="bi bi-upload"></i> Upload and Parse
+                        </button>
                     </form>
+
+                    <!-- Status Messages -->
+                    <div id="statusMsg" class="alert mt-3" style="display: none;"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Upload Status -->
-        <div class="col-lg-4">
-            <div class="card shadow-sm">
+        <div class="col-md-6">
+            <div class="card">
                 <div class="card-header bg-secondary text-white">
-                    <h5 class="mb-0"><i class="bi bi-clock-history"></i> Upload Status</h5>
-                </div>
-                <div class="card-body" id="statusCard">
-                    <p class="text-muted text-center py-4">
-                        <i class="bi bi-upload" style="font-size: 3rem;"></i><br>
-                        No file uploaded yet
-                    </p>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Preview Section (Hidden by default) -->
-    <div class="row mb-4" id="previewSection" style="display: none;">
-        <div class="col">
-            <div class="card shadow-sm">
-                <div class="card-header bg-success text-white">
-                    <h5 class="mb-0"><i class="bi bi-eye"></i> Upload Results</h5>
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>How to Use</h5>
                 </div>
                 <div class="card-body">
-                    <!-- Summary Cards -->
-                    <div class="row mb-3" id="summaryCards">
-                        <div class="col-md-3">
-                            <div class="card bg-light">
-                                <div class="card-body text-center">
-                                    <h6 class="text-muted mb-1">Records Processed</h6>
-                                    <h3 class="mb-0" id="recordsProcessed">0</h3>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card bg-success text-white">
-                                <div class="card-body text-center">
-                                    <h6 class="mb-1">Successful</h6>
-                                    <h3 class="mb-0" id="recordsSuccess">0</h3>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card bg-danger text-white">
-                                <div class="card-body text-center">
-                                    <h6 class="mb-1">Errors</h6>
-                                    <h3 class="mb-0" id="recordsErrors">0</h3>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="card bg-info text-white">
-                                <div class="card-body text-center">
-                                    <h6 class="mb-1">Jobs Updated</h6>
-                                    <h3 class="mb-0" id="jobsUpdated">0</h3>
-                                </div>
-                            </div>
-                        </div>
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-1-circle-fill me-2"></i>Upload Your File</h6>
+                        <p class="text-muted small mb-2">Choose an Excel file (.xlsx) with a sheet named <strong>"Assy BOM"</strong></p>
                     </div>
-
-                    <!-- Error Details (if any) -->
-                    <div id="errorDetails" style="display: none;">
-                        <h6 class="text-danger"><i class="bi bi-exclamation-triangle"></i> Errors Encountered</h6>
-                        <div class="alert alert-danger">
-                            <ul id="errorList" class="mb-0"></ul>
-                        </div>
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-2-circle-fill me-2"></i>Review the Data</h6>
+                        <p class="text-muted small mb-2">Check the extracted job details, part numbers, and quantities in the preview table</p>
                     </div>
-
-                    <!-- Success Message -->
-                    <div id="successMessage" style="display: none;">
-                        <div class="alert alert-success">
-                            <i class="bi bi-check-circle"></i> <strong>Upload completed successfully!</strong>
-                            All BOM records have been processed and saved to the database.
-                        </div>
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-3-circle-fill me-2"></i>Save to Database</h6>
+                        <p class="text-muted small mb-0">Click "Load to Database" to import the BOM into KOSH</p>
+                    </div>
+                    <hr>
+                    <div class="alert alert-warning py-2 mb-0">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <small><strong>Note:</strong> Uploading a BOM will replace any existing records for the same job number.</small>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Example Format Section -->
-    <div class="row">
-        <div class="col">
-            <div class="card shadow-sm">
-                <div class="card-header">
-                    <h5 class="mb-0"><i class="bi bi-question-circle"></i> Example File Format</h5>
+    <!-- Job Exists Modal -->
+    <div class="modal fade" id="jobExistsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Job Already Exists</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Job <strong id="existingJobNumber"></strong> already exists in the system.</p>
+                    <div class="mb-2">
+                        <small class="text-muted">Status: <span id="existingJobStatus" class="badge bg-primary"></span></small><br>
+                        <small class="text-muted">Customer: <span id="existingJobCustomer"></span></small>
+                    </div>
+                    <p>Would you like to <strong>reload the BOM</strong> (replace existing data) or <strong>view the job</strong>?</p>
+                </div>
+                <div class="modal-footer">
+                    <a id="viewJobLink" href="#" class="btn btn-primary">
+                        <i class="bi bi-eye me-1"></i>View Job
+                    </a>
+                    <button type="button" class="btn btn-warning" data-bs-dismiss="modal">
+                        <i class="bi bi-arrow-repeat me-1"></i>Reload BOM
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- BOM Preview Section -->
+    <div class="row mt-4" id="previewSection" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">BOM Preview</h5>
+                    <button class="btn btn-sm btn-success" id="loadBtn">
+                        <i class="bi bi-database-add"></i> Load to Database
+                    </button>
                 </div>
                 <div class="card-body">
-                    <p class="text-muted mb-2">Your Excel or CSV file should have headers like this:</p>
+                    <!-- Metadata -->
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <strong>Job Number:</strong><br>
+                            <span id="metaJob" class="text-primary fs-5">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Customer:</strong><br>
+                            <span id="metaCustomer">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Customer P/N:</strong><br>
+                            <span id="metaCustPN">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Order Qty:</strong><br>
+                            <span id="metaBuildQty" class="text-success fw-bold">-</span>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <strong>Job Rev:</strong><br>
+                            <span id="metaJobRev">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Cust Rev:</strong><br>
+                            <span id="metaCustRev">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Last Rev Date:</strong><br>
+                            <span id="metaLastRev">-</span>
+                        </div>
+                        <div class="col-md-3">
+                            <strong>WO Number:</strong><br>
+                            <span id="metaWONumber">-</span>
+                        </div>
+                    </div>
+                    <div class="row mb-3" id="notesRow" style="display: none;">
+                        <div class="col-12">
+                            <strong>Notes:</strong><br>
+                            <span id="metaNotes" class="text-muted small">-</span>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- BOM Items Table -->
                     <div class="table-responsive">
                         <table class="table table-sm table-bordered">
-                            <thead class="table-light">
+                            <thead class="table-dark">
                                 <tr>
-                                    <th>Job</th>
                                     <th>Line</th>
                                     <th>Description</th>
                                     <th>Manufacturer</th>
                                     <th>MPN</th>
-                                    <th>ACI_PN</th>
+                                    <th>ACI P/N</th>
                                     <th>Qty</th>
-                                    <th>POU</th>
                                     <th>Location</th>
-                                    <th>Cost</th>
-                                    <th>Customer</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                <tr>
-                                    <td>7651</td>
-                                    <td>1</td>
-                                    <td>Cap. SMD 0603 100nF 50V X7R 10%</td>
-                                    <td>Yageo</td>
-                                    <td>CC0603KRX7R9BB104</td>
-                                    <td></td>
-                                    <td>10</td>
-                                    <td>EA</td>
-                                    <td>C1, C5, C19</td>
-                                    <td>0.007</td>
-                                    <td>ABC Corp</td>
-                                </tr>
-                                <tr>
-                                    <td>7651</td>
-                                    <td>2</td>
-                                    <td>Cap. SMD 1206 4.7uF 50V X7R 20%</td>
-                                    <td>TDK</td>
-                                    <td>C3216X7R1H475M160AE</td>
-                                    <td></td>
-                                    <td>1</td>
-                                    <td>EA</td>
-                                    <td>C2</td>
-                                    <td>0.318</td>
-                                    <td>ABC Corp</td>
-                                </tr>
+                            <tbody id="bomTableBody">
+                                <!-- Will be populated by JavaScript -->
                             </tbody>
                         </table>
                     </div>
-                    <p class="text-muted small mb-0">
-                        <strong>Note:</strong> Column names are case-insensitive. Common variations are accepted
-                        (e.g., "Desc", "Description", "Part Description" all work).
-                    </p>
+
+                    <p class="text-muted mt-2">Total Items: <span id="itemCount" class="fw-bold">0</span></p>
                 </div>
             </div>
         </div>
@@ -224,141 +180,283 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const uploadForm = document.getElementById('uploadForm');
-    const uploadBtn = document.getElementById('uploadBtn');
-    const statusCard = document.getElementById('statusCard');
-    const previewSection = document.getElementById('previewSection');
+// BOM Loader JavaScript - v4.0 - AUTO-RECOVERY VERSION - January 27, 2026
+console.log('✓ BOM Loader v4.0 - Automatic error recovery enabled');
+console.log('✓ No manual refresh needed - system auto-resets on errors');
+let parsedBomData = null;
 
-    uploadForm.addEventListener('submit', async function(e) {
+document.addEventListener('DOMContentLoaded', function() {
+    const bomUploadForm = document.getElementById('bomUploadForm');
+    const loadBtn = document.getElementById('loadBtn');
+
+    bomUploadForm.addEventListener('submit', async function(e) {
         e.preventDefault();
 
         const fileInput = document.getElementById('bomFile');
-        const file = fileInput.files[0];
+        const uploadBtn = document.getElementById('uploadBtn');
+        const previewSection = document.getElementById('previewSection');
 
-        if (!file) {
-            alert('Please select a file to upload');
+        console.log('Form submitted - starting BOM upload');
+
+        if (!fileInput.files[0]) {
+            showStatus('Please select a file', 'danger');
             return;
         }
 
-        // Get upload mode
-        const uploadMode = document.querySelector('input[name="uploadMode"]:checked').value;
-
-        // Show loading state
+        // Show loading
         uploadBtn.disabled = true;
-        uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
+        uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
 
-        statusCard.innerHTML = `
-            <div class="text-center py-4">
-                <div class="spinner-border text-primary mb-3" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                </div>
-                <p class="text-muted">Uploading and processing file...<br>
-                <small>This may take a minute for large files</small></p>
-            </div>
-        `;
+        if (previewSection) {
+            previewSection.style.display = 'none';
+        }
+
+        // Prepare form data
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+
+        // Get CSRF token
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
         try {
-            // Create FormData
-            const formData = new FormData();
-            formData.append('bomFile', file);
-            formData.append('uploadMode', uploadMode);
-            formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
-
-            // Upload file
-            const response = await fetch('/api/bom/upload', {
+            const response = await fetch('/api/bom/parse', {
                 method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrfToken
+                },
                 body: formData
             });
 
             const result = await response.json();
+            console.log('Parse response:', result);
 
-            if (result.success) {
-                // Show success status
-                statusCard.innerHTML = `
-                    <div class="text-center py-3">
-                        <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
-                        <h5 class="text-success mt-2">Upload Successful!</h5>
-                        <p class="text-muted mb-0">${result.recordsProcessed} records processed</p>
-                    </div>
-                `;
-
-                // Update summary cards
-                document.getElementById('recordsProcessed').textContent = result.recordsProcessed || 0;
-                document.getElementById('recordsSuccess').textContent = result.recordsSuccess || 0;
-                document.getElementById('recordsErrors').textContent = result.errors?.length || 0;
-                document.getElementById('jobsUpdated').textContent = result.jobsUpdated || 0;
-
-                // Show results section
-                previewSection.style.display = 'block';
-
-                // Show success message or errors
-                if (result.errors && result.errors.length > 0) {
-                    document.getElementById('errorDetails').style.display = 'block';
-                    document.getElementById('successMessage').style.display = 'none';
-
-                    const errorList = document.getElementById('errorList');
-                    errorList.innerHTML = '';
-                    result.errors.forEach(error => {
-                        const li = document.createElement('li');
-                        li.textContent = error;
-                        errorList.appendChild(li);
-                    });
-                } else {
-                    document.getElementById('errorDetails').style.display = 'none';
-                    document.getElementById('successMessage').style.display = 'block';
-                }
-
-                // Scroll to results
-                previewSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
-            } else {
-                // Show error
-                statusCard.innerHTML = `
-                    <div class="alert alert-danger mb-0">
-                        <i class="bi bi-exclamation-triangle"></i> <strong>Upload Failed</strong><br>
-                        ${result.error || 'Unknown error occurred'}
-                    </div>
-                `;
+            if (!response.ok) {
+                // Show the actual error message from the server
+                const errorMsg = result.error || `Server error: ${response.status}`;
+                console.error('Parse error from server:', errorMsg);
+                throw new Error(errorMsg);
             }
 
+            if (result.success) {
+                parsedBomData = result;
+                displayPreview(result);
+
+                // Check if job already exists
+                const jobNum = result.metadata.job;
+                if (jobNum) {
+                    try {
+                        const checkResp = await fetch(`/api/bom/job-check/${encodeURIComponent(jobNum)}`, {
+                            headers: { 'X-CSRFToken': csrfToken }
+                        });
+                        const checkResult = await checkResp.json();
+                        if (checkResult.exists) {
+                            document.getElementById('existingJobNumber').textContent = jobNum;
+                            document.getElementById('existingJobStatus').textContent = checkResult.job.status || 'New';
+                            document.getElementById('existingJobCustomer').textContent = checkResult.job.customer || '-';
+                            document.getElementById('viewJobLink').href = `/jobs/${encodeURIComponent(jobNum)}`;
+                            const modal = new bootstrap.Modal(document.getElementById('jobExistsModal'));
+                            modal.show();
+                        }
+                    } catch (e) {
+                        console.warn('Job check failed (non-critical):', e);
+                    }
+                }
+
+                showStatus(`Successfully parsed ${result.total_items} items from BOM`, 'success');
+            } else {
+                showStatus('Error: ' + result.error, 'danger');
+                resetForm();
+            }
         } catch (error) {
             console.error('Upload error:', error);
-            statusCard.innerHTML = `
-                <div class="alert alert-danger mb-0">
-                    <i class="bi bi-exclamation-triangle"></i> <strong>Upload Failed</strong><br>
-                    ${error.message}
-                </div>
-            `;
+            showStatus('Upload failed: ' + error.message + '. Please try again.', 'danger');
+            resetForm();
         } finally {
-            // Reset button
             uploadBtn.disabled = false;
-            uploadBtn.innerHTML = '<i class="bi bi-cloud-upload"></i> Upload and Process';
+            uploadBtn.innerHTML = '<i class="bi bi-upload"></i> Upload and Parse';
         }
     });
-});
+
+    loadBtn.addEventListener('click', async function() {
+        if (!parsedBomData) {
+            showStatus('No data to load. Please upload a BOM file first.', 'danger');
+            return;
+        }
+
+        if (!confirm(`Load BOM for Job ${parsedBomData.metadata.job}?\n\nThis will DELETE existing BOM records for this job.`)) {
+            return;
+        }
+
+        loadBtn.disabled = true;
+        loadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Loading...';
+
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+        try {
+            const response = await fetch('/api/bom/load', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify(parsedBomData)
+            });
+
+            console.log('Load response status:', response.status);
+            const result = await response.json();
+            console.log('Load response data:', result);
+
+            if (!response.ok) {
+                // Show the actual error message from the server
+                const errorMsg = result.error || `Server error: ${response.status}`;
+                throw new Error(errorMsg);
+            }
+
+            if (result.success) {
+                showStatus(`Success! Loaded ${result.inserted_count} items for Job ${result.job}.`, 'success');
+
+                // Redirect to job detail page after 1.5 seconds
+                setTimeout(() => {
+                    window.location.href = `/jobs/${encodeURIComponent(result.job)}`;
+                }, 1500);
+            } else {
+                showStatus('Load failed: ' + result.error + '. Please try again.', 'danger');
+                loadBtn.disabled = false;
+                loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
+            }
+        } catch (error) {
+            console.error('Load error:', error);
+            showStatus('Load failed: ' + error.message + '. Please try again.', 'danger');
+            loadBtn.disabled = false;
+            loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
+        }
+    });
+
+    function displayPreview(data) {
+        const { metadata, bom_items } = data;
+
+        // Update metadata
+        document.getElementById('metaJob').textContent = metadata.job || '-';
+        document.getElementById('metaJobRev').textContent = metadata.job_rev || '-';
+        document.getElementById('metaCustomer').textContent = metadata.customer || '-';
+        document.getElementById('metaCustPN').textContent = metadata.cust_pn || '-';
+        document.getElementById('metaBuildQty').textContent = metadata.build_qty || '-';
+        document.getElementById('metaCustRev').textContent = metadata.cust_rev || '-';
+        document.getElementById('metaLastRev').textContent = metadata.last_rev || '-';
+        document.getElementById('metaWONumber').textContent = metadata.wo_number || '-';
+
+        // Show notes if available
+        if (metadata.notes) {
+            document.getElementById('metaNotes').textContent = metadata.notes;
+            document.getElementById('notesRow').style.display = 'block';
+        } else {
+            document.getElementById('notesRow').style.display = 'none';
+        }
+
+        document.getElementById('itemCount').textContent = bom_items.length;
+
+        // Update table
+        const tbody = document.getElementById('bomTableBody');
+        tbody.innerHTML = '';
+
+        bom_items.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${item.line}</td>
+                <td>${item.desc || ''}</td>
+                <td>${item.man || ''}</td>
+                <td class="font-monospace">${item.mpn || ''}</td>
+                <td>${item.aci_pn || ''}</td>
+                <td class="text-end">${item.qty || 0}</td>
+                <td>${item.loc || ''}</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        // Show preview section
+        document.getElementById('previewSection').style.display = 'block';
+
+        // Scroll to preview
+        document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function resetForm() {
+        console.log('Resetting form state');
+
+        // Clear parsed data
+        parsedBomData = null;
+
+        // Reset file input
+        const fileInput = document.getElementById('bomFile');
+        if (fileInput) {
+            fileInput.value = '';
+        }
+
+        // Hide preview section
+        const previewSection = document.getElementById('previewSection');
+        if (previewSection) {
+            previewSection.style.display = 'none';
+        }
+
+        // Reset upload button
+        const uploadBtn = document.getElementById('uploadBtn');
+        if (uploadBtn) {
+            uploadBtn.disabled = false;
+            uploadBtn.innerHTML = '<i class="bi bi-upload"></i> Upload and Parse';
+        }
+
+        // Reset load button
+        if (loadBtn) {
+            loadBtn.disabled = false;
+            loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
+            loadBtn.style.display = 'inline-block';
+        }
+
+        console.log('Form reset complete - ready for new upload');
+    }
+
+    function showStatus(message, type) {
+        console.log('showStatus called:', message, 'Type:', type);
+
+        // Always show alert for important messages
+        if (type === 'success') {
+            alert('✓ ' + message);
+        } else if (type === 'danger') {
+            alert('✗ Error: ' + message);
+        }
+
+        const statusMsg = document.getElementById('statusMsg');
+
+        if (!statusMsg) {
+            console.error('statusMsg element not found in DOM!');
+            return;
+        }
+
+        statusMsg.className = `alert alert-${type} mt-3`;
+        statusMsg.textContent = message;
+        statusMsg.style.display = 'block';
+
+        // Try to scroll to it if it exists
+        try {
+            statusMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (e) {
+            console.warn('Could not scroll to status message:', e);
+        }
+
+        console.log('Status shown successfully');
+    }
+
+    // Add manual reset button to page
+    const uploadCard = document.querySelector('.card-body');
+    if (uploadCard) {
+        const resetBtn = document.createElement('button');
+        resetBtn.type = 'button';
+        resetBtn.className = 'btn btn-outline-secondary btn-sm mt-2';
+        resetBtn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Start Over';
+        resetBtn.onclick = resetForm;
+        uploadCard.appendChild(resetBtn);
+    }
+
+}); // End DOMContentLoaded
 </script>
-
-<style>
-.card {
-    transition: transform 0.2s;
-}
-
-.card:hover {
-    transform: translateY(-2px);
-}
-
-.form-check-label {
-    cursor: pointer;
-}
-
-#previewSection {
-    animation: fadeIn 0.5s;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(20px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-</style>
 {% endblock %}

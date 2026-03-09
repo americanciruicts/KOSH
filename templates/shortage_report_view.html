@@ -1,0 +1,377 @@
+{% extends "base.html" %}
+{% block title %}{{ report.report_name }} - Shortage Report{% endblock %}
+
+{% block extra_css %}
+<style>
+    @media print {
+        nav, .navbar, .modern-navbar, footer, .btn, button, .dark-mode-toggle,
+        .no-print, .dropdown {
+            display: none !important;
+        }
+
+        body {
+            padding-top: 0 !important;
+            margin: 0 !important;
+            background: white !important;
+        }
+
+        .container-fluid {
+            margin-top: 0 !important;
+            padding: 20px !important;
+        }
+
+        .card {
+            border: none !important;
+            box-shadow: none !important;
+        }
+
+        .table {
+            font-size: 11px !important;
+        }
+
+        .shortage-row {
+            background-color: #fee2e2 !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+    }
+
+    .shortage-row {
+        background-color: #fee2e2 !important;
+    }
+
+    [data-theme="dark"] .shortage-row {
+        background-color: rgba(239, 68, 68, 0.2) !important;
+    }
+
+    .stat-card {
+        text-align: center;
+        padding: 15px;
+    }
+
+    .stat-card .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+    }
+
+    .stat-card .stat-label {
+        font-size: 0.875rem;
+        color: var(--text-secondary);
+    }
+</style>
+{% endblock %}
+
+{% block page_header %}
+<div class="row mb-4" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fcd34d 100%); border-radius: 12px; padding: 25px; margin: 0;">
+    <div class="col-md-8">
+        <h1 class="mb-2">
+            <i class="bi bi-clipboard-data me-2"></i>
+            {{ report.report_name }}
+        </h1>
+        <p class="mb-0">
+            Job: <strong>{{ report.job }}</strong> |
+            Rev: <strong>{{ report.job_rev or 'N/A' }}</strong> |
+            Order Qty: <strong>{{ report.order_qty or 'N/A' }}</strong> |
+            Created: {{ report.created_at.strftime('%m/%d/%Y %I:%M %p') if report.created_at else 'N/A' }} by {{ report.created_by }}
+        </p>
+    </div>
+    <div class="col-md-4 text-end no-print">
+        <a href="{{ url_for('shortage_report') }}" class="btn btn-light me-2">
+            <i class="bi bi-arrow-left me-1"></i>Back
+        </a>
+        <button onclick="showExportModal()" class="btn btn-success me-2">
+            <i class="bi bi-file-earmark-excel me-1"></i>Export Excel
+        </button>
+        <button onclick="window.print()" class="btn btn-secondary">
+            <i class="bi bi-printer me-1"></i>Print
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Summary Statistics -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body stat-card">
+                <div class="stat-value text-primary">{{ report.order_qty or 'N/A' }}</div>
+                <div class="stat-label">Order Qty (Job Qty)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body stat-card">
+                <div class="stat-value text-danger">{{ report.shortage_lines }}</div>
+                <div class="stat-label">Shortage Items (On Hand &lt; REQ)</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body stat-card">
+                <div class="stat-value text-success">${{ "%.2f"|format(report.total_cost|float) }}</div>
+                <div class="stat-label">Total BOM Cost</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body stat-card">
+                <div class="stat-value text-warning">${{ "%.2f"|format(report.shortage_cost|float) }}</div>
+                <div class="stat-label">Shortage Cost</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if report.notes %}
+<div class="alert alert-info mb-4">
+    <i class="bi bi-sticky me-2"></i><strong>Notes:</strong> {{ report.notes }}
+</div>
+{% endif %}
+
+<!-- Shortage Report Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-table me-2"></i>Shortage Details ({{ items|length }} items)</h5>
+        <div class="no-print">
+            <span class="badge bg-danger me-2">Red = On Hand &lt; REQ (Shortage)</span>
+            <input type="text" class="form-control form-control-sm d-inline-block" style="width: 200px;"
+                   id="searchInput" placeholder="Search parts...">
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover table-striped mb-0" id="shortageTable">
+                <thead class="table-dark">
+                    <tr>
+                        <th>ACI PN</th>
+                        <th>PCN</th>
+                        <th>MPN</th>
+                        <th class="text-center">QTY</th>
+                        <th class="text-center">ORDER QTY</th>
+                        <th class="text-center">REQ</th>
+                        <th>ITEM</th>
+                        <th class="text-center">ON HAND QTY</th>
+                        <th>LOCATION</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr class="{% if (item.qty_on_hand or 0) < (item.req or (item.qty_required * (item.order_qty or 1))) %}shortage-row{% endif %}">
+                        <td><strong>{{ item.aci_pn or '-' }}</strong></td>
+                        <td>{{ item.pcn or '-' }}</td>
+                        <td>
+                            <small>{{ item.mpn or '-' }}</small>
+                            {% if item.manufacturer %}
+                            <br><span class="text-muted" style="font-size: 0.75rem;">{{ item.manufacturer }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">{{ item.qty_required }}</td>
+                        <td class="text-center">{{ item.order_qty }}</td>
+                        <td class="text-center"><strong>{{ item.req or (item.qty_required * (item.order_qty or 1)) }}</strong></td>
+                        <td>{{ item.item or item.aci_pn or '-' }}</td>
+                        <td class="text-center">
+                            {% if (item.qty_on_hand or 0) < (item.req or (item.qty_required * (item.order_qty or 1))) %}
+                            <span class="text-danger fw-bold">{{ item.qty_on_hand }}</span>
+                            {% else %}
+                            <span class="text-success">{{ item.qty_on_hand }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ item.location or '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <td colspan="5" class="text-end"><strong>Totals:</strong></td>
+                        <td class="text-center"><strong>{{ items|map(attribute='req')|sum }}</strong></td>
+                        <td></td>
+                        <td class="text-center"><strong>{{ items|map(attribute='qty_on_hand')|sum }}</strong></td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+<!-- Export Configuration Modal -->
+<div class="modal fade" id="exportConfigModal" tabindex="-1" aria-labelledby="exportConfigModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="exportConfigModalLabel">
+                    <i class="bi bi-gear me-2"></i>Configure Excel Export
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Select columns to include, set their order, and optionally highlight columns with color.
+                </p>
+                <div class="mb-3 p-2 border rounded bg-light">
+                    <label class="form-label fw-bold mb-2"><i class="bi bi-funnel me-1"></i>Items to Export</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exportFilter" id="filterAll" value="all" checked>
+                        <label class="form-check-label" for="filterAll">All items</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exportFilter" id="filterShortages" value="shortages_only">
+                        <label class="form-check-label" for="filterShortages">Shortages only <span class="text-danger">(On Hand &lt; REQ)</span></label>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end mb-2">
+                    <button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="selectAllColumns()">Select All</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="deselectAllColumns()">Deselect All</button>
+                </div>
+                <ul class="list-group" id="columnList"></ul>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="exportBtn" onclick="executeExport()">
+                    <i class="bi bi-file-earmark-excel me-1"></i>Export Excel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Search functionality
+    document.getElementById('searchInput').addEventListener('keyup', function() {
+        const searchText = this.value.toLowerCase();
+        const rows = document.querySelectorAll('#shortageTable tbody tr');
+
+        rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(searchText) ? '' : 'none';
+        });
+    });
+
+    // Export column configuration
+    const AVAILABLE_COLUMNS = {{ column_definitions | tojson }};
+    const EXPORT_URL = '{{ url_for("export_shortage_report", report_id=report.id) }}';
+
+    function initColumnList() {
+        const list = document.getElementById('columnList');
+        list.innerHTML = '';
+        AVAILABLE_COLUMNS.forEach(col => {
+            const li = document.createElement('li');
+            li.className = 'list-group-item d-flex align-items-center py-2';
+            li.dataset.key = col.key;
+            li.innerHTML = `
+                <input type="checkbox" class="form-check-input me-2 col-checkbox" ${col.default ? 'checked' : ''}>
+                <span class="flex-grow-1">${col.label}</span>
+                <button class="btn btn-sm btn-outline-warning me-1 highlight-btn" title="Highlight column in yellow" onclick="toggleHighlight(this)">
+                    <i class="bi bi-paint-bucket"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary me-1" title="Move up" onclick="moveColumn(this, -1)">
+                    <i class="bi bi-arrow-up"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" title="Move down" onclick="moveColumn(this, 1)">
+                    <i class="bi bi-arrow-down"></i>
+                </button>
+            `;
+            list.appendChild(li);
+        });
+    }
+
+    function toggleHighlight(btn) {
+        btn.classList.toggle('btn-outline-warning');
+        btn.classList.toggle('btn-warning');
+    }
+
+    function moveColumn(btn, direction) {
+        const li = btn.closest('li');
+        const list = li.parentElement;
+        if (direction === -1 && li.previousElementSibling) {
+            list.insertBefore(li, li.previousElementSibling);
+        } else if (direction === 1 && li.nextElementSibling) {
+            list.insertBefore(li.nextElementSibling, li);
+        }
+    }
+
+    function selectAllColumns() {
+        document.querySelectorAll('#columnList .col-checkbox').forEach(cb => cb.checked = true);
+    }
+
+    function deselectAllColumns() {
+        document.querySelectorAll('#columnList .col-checkbox').forEach(cb => cb.checked = false);
+    }
+
+    function executeExport() {
+        const items = document.querySelectorAll('#columnList li');
+        const columns = [];
+        const highlighted = [];
+
+        items.forEach(li => {
+            const checkbox = li.querySelector('.col-checkbox');
+            if (checkbox.checked) {
+                columns.push(li.dataset.key);
+                const hlBtn = li.querySelector('.highlight-btn');
+                if (hlBtn.classList.contains('btn-warning')) {
+                    highlighted.push(li.dataset.key);
+                }
+            }
+        });
+
+        if (columns.length === 0) {
+            alert('Please select at least one column.');
+            return;
+        }
+
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        const btn = document.getElementById('exportBtn');
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating...';
+        btn.disabled = true;
+
+        fetch(EXPORT_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                columns: columns,
+                highlighted: highlighted,
+                filter: document.querySelector('input[name="exportFilter"]:checked').value
+            })
+        })
+        .then(resp => {
+            if (!resp.ok) throw new Error('Export failed');
+            const cd = resp.headers.get('Content-Disposition');
+            let filename = 'Shortage_Report.xlsx';
+            if (cd) {
+                const match = cd.match(/filename="?([^"]+)"?/);
+                if (match) filename = match[1];
+            }
+            return resp.blob().then(blob => ({ blob, filename }));
+        })
+        .then(({ blob, filename }) => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(a.href);
+            bootstrap.Modal.getInstance(document.getElementById('exportConfigModal')).hide();
+        })
+        .catch(err => alert('Export failed: ' + err.message))
+        .finally(() => {
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+        });
+    }
+
+    function showExportModal() {
+        initColumnList();
+        new bootstrap.Modal(document.getElementById('exportConfigModal')).show();
+    }
+</script>
+{% endblock %}

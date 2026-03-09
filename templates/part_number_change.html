@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}Part Number Change - KOSH{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-md-8 offset-md-2">
+            <!-- Header -->
+            <div class="mb-4">
+                <h2 class="text-primary">
+                    <i class="bi bi-pencil-square me-2"></i>
+                    Part Number Change
+                </h2>
+                <p class="text-muted">Update the part number (job number) for a specific PCN</p>
+            </div>
+
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                            <i class="bi bi-{{ 'check-circle' if category == 'success' else 'exclamation-triangle' if category == 'warning' else 'x-circle' }} me-2"></i>
+                            {{ message }}
+                            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <!-- Part Number Change Form -->
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-input-cursor-text me-2"></i>
+                        Change Part Number
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('part_number_change') }}" id="partNumberChangeForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                        <!-- PCN Input -->
+                        <div class="mb-4">
+                            <label for="pcn" class="form-label fw-bold">
+                                <i class="bi bi-upc-scan me-1"></i>
+                                PCN Number
+                            </label>
+                            <input type="text"
+                                   class="form-control form-control-lg"
+                                   id="pcn"
+                                   name="pcn"
+                                   placeholder="Enter PCN number"
+                                   required
+                                   autofocus
+                                   value="{{ item.pcn if item else '' }}">
+                            <small class="form-text text-muted">Enter the PCN you want to update</small>
+                        </div>
+
+                        <!-- Current Information (if item loaded) -->
+                        {% if item %}
+                        <div class="alert alert-info mb-4">
+                            <h6 class="alert-heading">
+                                <i class="bi bi-info-circle me-2"></i>
+                                Current Information for PCN {{ item.pcn }}
+                            </h6>
+                            <hr>
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <strong>Current Part Number:</strong> {{ item.item }}
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>MPN:</strong> {{ item.mpn }}
+                                </div>
+                            </div>
+                            <div class="row mt-2">
+                                <div class="col-md-6">
+                                    <strong>Quantity:</strong> {{ item.onhandqty }}
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Location:</strong> {{ item.loc_to }}
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        <!-- New Part Number Input -->
+                        <div class="mb-4">
+                            <label for="new_part_number" class="form-label fw-bold">
+                                <i class="bi bi-tag me-1"></i>
+                                New Part Number (Job Number)
+                            </label>
+                            <input type="text"
+                                   class="form-control form-control-lg"
+                                   id="new_part_number"
+                                   name="new_part_number"
+                                   placeholder="Enter new part number"
+                                   required>
+                            <small class="form-text text-muted">Enter the new part number to assign to this PCN</small>
+                        </div>
+
+                        <!-- Submit Buttons -->
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
+                            <button type="button" class="btn btn-secondary" onclick="window.history.back()">
+                                <i class="bi bi-x-circle me-2"></i>
+                                Cancel
+                            </button>
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-check-circle me-2"></i>
+                                Update Part Number
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Information Card -->
+            <div class="card mt-4 border-info">
+                <div class="card-body">
+                    <h6 class="card-title">
+                        <i class="bi bi-lightbulb me-2 text-info"></i>
+                        Important Information
+                    </h6>
+                    <ul class="mb-0">
+                        <li>This function changes the <strong>part number (job number)</strong> associated with a PCN</li>
+                        <li>All changes are logged in the transaction history with type <code>PN_CHANGE</code></li>
+                        <li>The MPN, quantity, and location remain unchanged</li>
+                        <li>You can view the change history in the <a href="{{ url_for('pcn_history') }}">PCN History</a> page</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .form-control:focus {
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    }
+
+    .btn-primary {
+        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+        border: none;
+    }
+
+    .btn-primary:hover {
+        background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(30, 64, 175, 0.3);
+    }
+
+    .card {
+        border-radius: 12px;
+    }
+
+    .card-header {
+        border-radius: 12px 12px 0 0 !important;
+    }
+</style>
+
+<script>
+    // Auto-focus on new part number field if item is loaded
+    {% if item %}
+    document.addEventListener('DOMContentLoaded', function() {
+        document.getElementById('new_part_number').focus();
+    });
+    {% endif %}
+
+    // Form validation
+    document.getElementById('partNumberChangeForm').addEventListener('submit', function(e) {
+        const pcn = document.getElementById('pcn').value.trim();
+        const newPartNumber = document.getElementById('new_part_number').value.trim();
+
+        if (!pcn || !newPartNumber) {
+            e.preventDefault();
+            alert('Please fill in all required fields.');
+            return false;
+        }
+
+        // Confirm action
+        if (!confirm(`Are you sure you want to change the part number for PCN ${pcn} to "${newPartNumber}"?`)) {
+            e.preventDefault();
+            return false;
+        }
+    });
+</script>
+{% endblock %}

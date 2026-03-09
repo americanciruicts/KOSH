@@ -977,10 +977,31 @@ document.addEventListener('DOMContentLoaded', function() {
         deletePCNBtn.disabled = true;
 
         try {
+            const csrfTokenMeta = document.querySelector('meta[name="csrf-token"]');
+            if (!csrfTokenMeta) {
+                console.error('CSRF token meta tag not found!');
+                showError('Security token not found. Please refresh the page and try again.');
+                deletePCNBtn.innerHTML = originalText;
+                deletePCNBtn.disabled = false;
+                return;
+            }
+
+            const csrfToken = csrfTokenMeta.getAttribute('content');
+            console.log('CSRF Token:', csrfToken ? 'Present' : 'Missing');
+
+            if (!csrfToken) {
+                console.error('CSRF token is empty!');
+                showError('Security token is empty. Please refresh the page and try again.');
+                deletePCNBtn.innerHTML = originalText;
+                deletePCNBtn.disabled = false;
+                return;
+            }
+
             const response = await fetch(`/api/pcn/delete/${currentPCNData.pcn_number}`, {
                 method: 'DELETE',
                 headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
                 }
             });
 
@@ -1566,10 +1587,27 @@ async function deletePCNFromHistory(pcnNumber) {
     }
 
     try {
+        const csrfTokenMeta = document.querySelector('meta[name="csrf-token"]');
+        if (!csrfTokenMeta) {
+            console.error('CSRF token meta tag not found!');
+            alert('Security token not found. Please refresh the page and try again.');
+            return;
+        }
+
+        const csrfToken = csrfTokenMeta.getAttribute('content');
+        console.log('CSRF Token:', csrfToken ? 'Present' : 'Missing');
+
+        if (!csrfToken) {
+            console.error('CSRF token is empty!');
+            alert('Security token is empty. Please refresh the page and try again.');
+            return;
+        }
+
         const response = await fetch(`/api/pcn/delete/${pcnNumber}`, {
             method: 'DELETE',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
             }
         });
 

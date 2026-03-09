@@ -41,7 +41,7 @@ conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE)
 **Required Fix:**
 - Add `SERIALIZABLE` isolation
 - Use `FOR UPDATE` when checking existing inventory
-- Ensure atomic read-modify-write
+- Ensure atomic read-modify-writet
 
 ---
 

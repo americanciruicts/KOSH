@@ -1,154 +1,217 @@
 {% extends "base.html" %}
-
-{% block title %}Shortage Report - Kosh{% endblock %}
+{% block title %}Shortage Report - KOSH{% endblock %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);">
+<div class="row mb-4" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 50%, #fcd34d 100%); border-radius: 12px; padding: 25px; margin: 0;">
     <div class="col-12">
-        <h1 class="h2 mb-2">
-            <i class="bi bi-exclamation-triangle me-2"></i> Shortage Report
+        <h1 class="mb-2">
+            <i class="bi bi-clipboard-data me-2"></i>
+            Shortage Report
         </h1>
-        <p class="mb-0 fs-6">Calculate parts shortages by comparing BOM requirements against current inventory</p>
+        <p class="mb-0">Compare BOM requirements against inventory to identify parts shortages</p>
     </div>
 </div>
 {% endblock %}
 
 {% block content %}
-<div class="row g-4">
-    <!-- Job Selection Section -->
-    <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-header bg-danger text-white">
-                <h5 class="mb-0">
-                    <i class="bi bi-calculator"></i> Calculate Shortage
+<div class="row">
+    <!-- Generate New Report Card -->
+    <div class="col-lg-5">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Generate New Report</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('generate_shortage_report') }}" id="generateReportForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="mb-3">
+                        <label for="job" class="form-label">Job Number <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="job" name="job" list="jobList"
+                               placeholder="Enter or select job number" required autocomplete="off">
+                        <datalist id="jobList">
+                            {% for job in available_jobs %}
+                            <option value="{{ job }}">
+                            {% endfor %}
+                        </datalist>
+                        <div class="form-text">Select a job that has a BOM loaded</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="order_qty" class="form-label">Order Qty (Job Qty) <span class="text-danger">*</span></label>
+                        <input type="number" class="form-control" id="order_qty" name="order_qty"
+                               placeholder="e.g., 100" required min="1" value="">
+                        <div class="form-text">Number of units for this job order (used to calculate REQ = QTY × Order Qty)</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="report_name" class="form-label">Report Name (optional)</label>
+                        <input type="text" class="form-control" id="report_name" name="report_name"
+                               placeholder="e.g., Latrobe-Job, PTH Pick Report">
+                        <div class="form-text">Custom name for this report</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="notes" class="form-label">Notes (optional)</label>
+                        <textarea class="form-control" id="notes" name="notes" rows="2"
+                                  placeholder="Any additional notes..."></textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100" id="generateBtn">
+                        <i class="bi bi-lightning-charge me-2"></i>Generate Shortage Report
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Info Card -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h6><i class="bi bi-info-circle me-2 text-primary"></i>How it works</h6>
+                <ul class="mb-0 small">
+                    <li>Select a job number that has a BOM loaded</li>
+                    <li>Enter the Order Qty (how many units the job requires)</li>
+                    <li><strong>REQ</strong> = BOM QTY &times; Order Qty (total parts needed)</li>
+                    <li>Only parts where On Hand Qty &lt; REQ are shown (shortages)</li>
+                    <li>Export to Excel for sharing or printing</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Saved Reports -->
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-folder2-open me-2"></i>Saved Reports</h5>
+                <span class="badge bg-primary">{{ saved_reports|length }} reports</span>
+            </div>
+            <div class="card-body">
+                {% if saved_reports %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Job</th>
+                                <th>Report Name</th>
+                                <th>Order Qty</th>
+                                <th>Shortages</th>
+                                <th>Created</th>
+                                <th style="width: 100px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for report in saved_reports %}
+                            <tr>
+                                <td><strong>{{ report.job }}</strong></td>
+                                <td>
+                                    <a href="{{ url_for('view_shortage_report', report_id=report.id) }}">
+                                        {{ report.report_name|truncate(30) }}
+                                    </a>
+                                </td>
+                                <td>{{ report.order_qty or '-' }}</td>
+                                <td>
+                                    {% if report.shortage_lines > 0 %}
+                                    <span class="badge bg-danger">{{ report.shortage_lines }} / {{ report.total_lines }}</span>
+                                    {% else %}
+                                    <span class="badge bg-success">0 shortages</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <small class="text-muted">
+                                        {{ report.created_at.strftime('%m/%d/%Y') if report.created_at else '-' }}
+                                    </small>
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{{ url_for('view_shortage_report', report_id=report.id) }}"
+                                           class="btn btn-outline-primary" title="View">
+                                            <i class="bi bi-eye"></i>
+                                        </a>
+                                        <button type="button" class="btn btn-outline-success" title="Export Excel"
+                                                onclick="showExportModal('{{ url_for('export_shortage_report', report_id=report.id) }}')">
+                                            <i class="bi bi-file-earmark-excel"></i>
+                                        </button>
+                                        <button type="button" class="btn btn-outline-danger"
+                                                onclick="deleteReport({{ report.id }})" title="Delete">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-clipboard-x display-1 text-muted"></i>
+                    <h4 class="mt-3 text-muted">No Saved Reports</h4>
+                    <p class="text-muted">Generate your first shortage report using the form on the left.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Delete Report</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete this report? This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST" style="display: inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Export Configuration Modal -->
+<div class="modal fade" id="exportConfigModal" tabindex="-1" aria-labelledby="exportConfigModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title" id="exportConfigModalLabel">
+                    <i class="bi bi-gear me-2"></i>Configure Excel Export
                 </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-            <div class="card-body">
-                <div class="row g-3">
-                    <div class="col-md-6">
-                        <label class="form-label fw-bold">Job Number *</label>
-                        <input type="text" class="form-control form-control-lg" id="jobNumber" placeholder="Enter job number (e.g., 7789)">
-                        <small class="text-muted">The job number from your BOM</small>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Select columns to include, set their order, and optionally highlight columns with color.
+                </p>
+                <div class="mb-3 p-2 border rounded bg-light">
+                    <label class="form-label fw-bold mb-2"><i class="bi bi-funnel me-1"></i>Items to Export</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exportFilter" id="filterAll" value="all" checked>
+                        <label class="form-check-label" for="filterAll">All items</label>
                     </div>
-                    <div class="col-md-3">
-                        <label class="form-label fw-bold">Quantity Needed *</label>
-                        <input type="number" class="form-control form-control-lg" id="quantityNeeded" value="1" min="1" placeholder="10">
-                        <small class="text-muted">Number of boards to build</small>
-                    </div>
-                    <div class="col-md-3 d-flex align-items-end">
-                        <button class="btn btn-danger btn-lg w-100" onclick="calculateShortage()">
-                            <i class="bi bi-calculator-fill"></i> Calculate
-                        </button>
+                    <div class="form-check">
+                        <input class="form-check-input" type="radio" name="exportFilter" id="filterShortages" value="shortages_only">
+                        <label class="form-check-label" for="filterShortages">Shortages only <span class="text-danger">(On Hand &lt; REQ)</span></label>
                     </div>
                 </div>
+                <div class="d-flex justify-content-end mb-2">
+                    <button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="selectAllColumns()">Select All</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="deselectAllColumns()">Deselect All</button>
+                </div>
+                <ul class="list-group" id="columnList"></ul>
             </div>
-        </div>
-    </div>
-
-    <!-- Summary Cards -->
-    <div class="col-12" id="summarySection" style="display: none;">
-        <div class="row g-3">
-            <div class="col-md-3">
-                <div class="card bg-primary text-white">
-                    <div class="card-body text-center">
-                        <i class="bi bi-list-ul display-4"></i>
-                        <h3 class="mt-2" id="totalParts">0</h3>
-                        <p class="mb-0">Total Parts in BOM</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-success text-white">
-                    <div class="card-body text-center">
-                        <i class="bi bi-check-circle display-4"></i>
-                        <h3 class="mt-2" id="partsInStock">0</h3>
-                        <p class="mb-0">Parts in Stock</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-danger text-white">
-                    <div class="card-body text-center">
-                        <i class="bi bi-exclamation-triangle display-4"></i>
-                        <h3 class="mt-2" id="partsShort">0</h3>
-                        <p class="mb-0">Parts Short</p>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card bg-warning text-dark">
-                    <div class="card-body text-center">
-                        <i class="bi bi-currency-dollar display-4"></i>
-                        <h3 class="mt-2" id="shortageCost">$0.00</h3>
-                        <p class="mb-0">Shortage Value</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Shortage Details Table -->
-    <div class="col-12">
-        <div class="card shadow-sm">
-            <div class="card-header bg-danger text-white">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">
-                        <i class="bi bi-list-check"></i> Shortage Details
-                    </h5>
-                    <div>
-                        <button class="btn btn-light btn-sm" onclick="exportShortageToExcel()" id="exportBtn" style="display: none;">
-                            <i class="bi bi-file-earmark-excel"></i> Export Shortage List
-                        </button>
-                    </div>
-                </div>
-            </div>
-            <div class="card-body">
-                <!-- Loading State -->
-                <div id="loadingState" class="text-center py-5" style="display: none;">
-                    <div class="spinner-border text-danger" role="status"></div>
-                    <p class="text-muted mt-2">Calculating shortage...</p>
-                </div>
-
-                <!-- Empty State -->
-                <div id="emptyState" class="text-center py-5">
-                    <i class="bi bi-calculator display-4 text-muted"></i>
-                    <h5 class="text-muted mt-3">No Shortage Report</h5>
-                    <p class="text-muted">Enter a job number and quantity above to calculate shortages</p>
-                </div>
-
-                <!-- Results Table -->
-                <div id="resultsTable" style="display: none;">
-                    <div class="alert alert-info">
-                        <i class="bi bi-info-circle me-2"></i>
-                        <strong>Showing shortage for:</strong> <span id="reportJob">-</span> × <span id="reportQty">-</span> boards
-                    </div>
-
-                    <div class="table-responsive">
-                        <table class="table table-hover">
-                            <thead class="table-danger">
-                                <tr>
-                                    <th>Line</th>
-                                    <th>Description</th>
-                                    <th>MPN</th>
-                                    <th style="width: 100px;">Req'd per Board</th>
-                                    <th style="width: 100px;">Total Required</th>
-                                    <th style="width: 100px;">On Hand</th>
-                                    <th style="width: 100px;">Shortage</th>
-                                    <th style="width: 100px;">Unit Cost</th>
-                                    <th style="width: 120px;">Shortage Cost</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody id="shortageTableBody">
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="alert alert-warning mt-3">
-                        <i class="bi bi-exclamation-triangle me-2"></i>
-                        <strong>Note:</strong> Export this list to Excel and send to purchasing department for ordering.
-                    </div>
-                </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="exportBtn" onclick="executeExport()">
+                    <i class="bi bi-file-earmark-excel me-1"></i>Export Excel
+                </button>
             </div>
         </div>
     </div>
@@ -157,130 +220,143 @@
 
 {% block extra_js %}
 <script>
-let currentShortageData = [];
-let currentJob = '';
-let currentQty = 1;
-
-// Enable enter key
-document.addEventListener('DOMContentLoaded', function() {
-    ['jobNumber', 'quantityNeeded'].forEach(id => {
-        document.getElementById(id).addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                calculateShortage();
-            }
-        });
+    // Form submission loading state
+    document.getElementById('generateReportForm').addEventListener('submit', function() {
+        const btn = document.getElementById('generateBtn');
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise spin me-2"></i>Generating...';
+        btn.disabled = true;
     });
-});
 
-function calculateShortage() {
-    const job = document.getElementById('jobNumber').value.trim();
-    const qty = parseInt(document.getElementById('quantityNeeded').value);
-
-    if (!job) {
-        alert('Please enter a job number');
-        return;
+    // Delete report
+    function deleteReport(reportId) {
+        const form = document.getElementById('deleteForm');
+        form.action = '/shortage_report/delete/' + reportId;
+        const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+        modal.show();
     }
 
-    if (!qty || qty < 1) {
-        alert('Please enter a valid quantity (1 or more)');
-        return;
-    }
+    // Export column configuration
+    const AVAILABLE_COLUMNS = {{ column_definitions | tojson }};
+    let currentExportUrl = '';
 
-    currentJob = job;
-    currentQty = qty;
-
-    showLoading();
-
-    fetch(`/api/shortage/calculate?job=${encodeURIComponent(job)}&quantity=${qty}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success && data.data) {
-                currentShortageData = data.data.shortage_items || [];
-                displayShortage(data.data);
-                updateSummary(data.data);
-            } else {
-                showEmpty(data.error || 'No BOM found for this job');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            showEmpty('Error calculating shortage');
+    function initColumnList() {
+        const list = document.getElementById('columnList');
+        list.innerHTML = '';
+        AVAILABLE_COLUMNS.forEach(col => {
+            const li = document.createElement('li');
+            li.className = 'list-group-item d-flex align-items-center py-2';
+            li.dataset.key = col.key;
+            li.innerHTML = `
+                <input type="checkbox" class="form-check-input me-2 col-checkbox" ${col.default ? 'checked' : ''}>
+                <span class="flex-grow-1">${col.label}</span>
+                <button class="btn btn-sm btn-outline-warning me-1 highlight-btn" title="Highlight column in yellow" onclick="toggleHighlight(this)">
+                    <i class="bi bi-paint-bucket"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary me-1" title="Move up" onclick="moveColumn(this, -1)">
+                    <i class="bi bi-arrow-up"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" title="Move down" onclick="moveColumn(this, 1)">
+                    <i class="bi bi-arrow-down"></i>
+                </button>
+            `;
+            list.appendChild(li);
         });
-}
-
-function displayShortage(data) {
-    hideLoading();
-    document.getElementById('resultsTable').style.display = 'block';
-    document.getElementById('emptyState').style.display = 'none';
-    document.getElementById('summarySection').style.display = 'block';
-    document.getElementById('exportBtn').style.display = 'inline-block';
-
-    document.getElementById('reportJob').textContent = data.job;
-    document.getElementById('reportQty').textContent = data.quantity_needed;
-
-    const tbody = document.getElementById('shortageTableBody');
-    const items = data.shortage_items || [];
-
-    tbody.innerHTML = items.map(item => {
-        const isShort = item.shortage > 0;
-        const statusBadge = isShort
-            ? `<span class="badge bg-danger">SHORT</span>`
-            : `<span class="badge bg-success">OK</span>`;
-
-        const rowClass = isShort ? 'table-danger' : '';
-
-        return `
-            <tr class="${rowClass}">
-                <td>${item.line || '-'}</td>
-                <td><strong>${item.description || '-'}</strong></td>
-                <td><code>${item.mpn || '-'}</code></td>
-                <td class="text-center">${item.qty_per_board || 0}</td>
-                <td class="text-center"><strong>${item.total_required || 0}</strong></td>
-                <td class="text-center">${item.on_hand || 0}</td>
-                <td class="text-center ${isShort ? 'text-danger fw-bold' : ''}">${item.shortage || 0}</td>
-                <td class="text-end">$${(item.unit_cost || 0).toFixed(4)}</td>
-                <td class="text-end ${isShort ? 'text-danger fw-bold' : ''}">$${(item.shortage_cost || 0).toFixed(2)}</td>
-                <td class="text-center">${statusBadge}</td>
-            </tr>
-        `;
-    }).join('');
-}
-
-function updateSummary(data) {
-    document.getElementById('totalParts').textContent = data.total_parts || 0;
-    document.getElementById('partsInStock').textContent = data.parts_in_stock || 0;
-    document.getElementById('partsShort').textContent = data.parts_short || 0;
-    document.getElementById('shortageCost').textContent = '$' + ((data.total_shortage_cost || 0).toFixed(2));
-}
-
-function exportShortageToExcel() {
-    if (!currentJob) {
-        alert('No shortage report to export');
-        return;
     }
 
-    window.location.href = `/api/shortage/export?job=${encodeURIComponent(currentJob)}&quantity=${currentQty}`;
-}
+    function toggleHighlight(btn) {
+        btn.classList.toggle('btn-outline-warning');
+        btn.classList.toggle('btn-warning');
+    }
 
-function showLoading() {
-    document.getElementById('loadingState').style.display = 'block';
-    document.getElementById('emptyState').style.display = 'none';
-    document.getElementById('resultsTable').style.display = 'none';
-    document.getElementById('summarySection').style.display = 'none';
-    document.getElementById('exportBtn').style.display = 'none';
-}
+    function moveColumn(btn, direction) {
+        const li = btn.closest('li');
+        const list = li.parentElement;
+        if (direction === -1 && li.previousElementSibling) {
+            list.insertBefore(li, li.previousElementSibling);
+        } else if (direction === 1 && li.nextElementSibling) {
+            list.insertBefore(li.nextElementSibling, li);
+        }
+    }
 
-function hideLoading() {
-    document.getElementById('loadingState').style.display = 'none';
-}
+    function selectAllColumns() {
+        document.querySelectorAll('#columnList .col-checkbox').forEach(cb => cb.checked = true);
+    }
 
-function showEmpty(message) {
-    hideLoading();
-    document.getElementById('emptyState').style.display = 'block';
-    document.getElementById('emptyState').querySelector('p').textContent = message;
-    document.getElementById('resultsTable').style.display = 'none';
-    document.getElementById('summarySection').style.display = 'none';
-    document.getElementById('exportBtn').style.display = 'none';
-}
+    function deselectAllColumns() {
+        document.querySelectorAll('#columnList .col-checkbox').forEach(cb => cb.checked = false);
+    }
+
+    function executeExport() {
+        const items = document.querySelectorAll('#columnList li');
+        const columns = [];
+        const highlighted = [];
+
+        items.forEach(li => {
+            const checkbox = li.querySelector('.col-checkbox');
+            if (checkbox.checked) {
+                columns.push(li.dataset.key);
+                const hlBtn = li.querySelector('.highlight-btn');
+                if (hlBtn.classList.contains('btn-warning')) {
+                    highlighted.push(li.dataset.key);
+                }
+            }
+        });
+
+        if (columns.length === 0) {
+            alert('Please select at least one column.');
+            return;
+        }
+
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        const btn = document.getElementById('exportBtn');
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating...';
+        btn.disabled = true;
+
+        fetch(currentExportUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({
+                columns: columns,
+                highlighted: highlighted,
+                filter: document.querySelector('input[name="exportFilter"]:checked').value
+            })
+        })
+        .then(resp => {
+            if (!resp.ok) throw new Error('Export failed');
+            const cd = resp.headers.get('Content-Disposition');
+            let filename = 'Shortage_Report.xlsx';
+            if (cd) {
+                const match = cd.match(/filename="?([^"]+)"?/);
+                if (match) filename = match[1];
+            }
+            return resp.blob().then(blob => ({ blob, filename }));
+        })
+        .then(({ blob, filename }) => {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(a.href);
+            bootstrap.Modal.getInstance(document.getElementById('exportConfigModal')).hide();
+        })
+        .catch(err => alert('Export failed: ' + err.message))
+        .finally(() => {
+            btn.innerHTML = originalHtml;
+            btn.disabled = false;
+        });
+    }
+
+    function showExportModal(url) {
+        currentExportUrl = url;
+        initColumnList();
+        document.getElementById('filterAll').checked = true;
+        new bootstrap.Modal(document.getElementById('exportConfigModal')).show();
+    }
 </script>
 {% endblock %}

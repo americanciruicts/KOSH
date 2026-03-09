@@ -913,7 +913,115 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
 
         const result = await response.json();
 
+        if (result.success && result.multiple) {
+            // Multiple items share this PCN - ask user to select the correct one
+            console.warn('Multiple items found for PCN:', pcnNumber, result.matches);
+            const selected = await showPCNSelectionDialog(pcnNumber, result.matches);
+            if (selected) {
+                // Re-fetch with the specific item to get exact data
+                const filtered = await fetch(`/api/pcn/details/${pcnNumber}?item=${encodeURIComponent(selected.job)}`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json', 'Cache-Control': 'no-cache' }
+                });
+                const filteredResult = await filtered.json();
+                if (filteredResult.success && !filteredResult.multiple) {
+                    return fetchAndPopulatePCNDetailsFromData(pcnNumber, filteredResult);
+                }
+            }
+            return;
+        }
+
         if (result.success) {
+            return fetchAndPopulatePCNDetailsFromData(pcnNumber, result);
+        } else {
+            console.warn('PCN lookup failed:', result.error);
+        }
+
+    } catch (error) {
+        console.error('Error fetching PCN details:', error);
+    }
+}
+
+// Show selection dialog when multiple items share the same PCN
+function showPCNSelectionDialog(pcnNumber, matches) {
+    return new Promise((resolve) => {
+        let html = `<div class="modal fade" id="pcnSelectModal" tabindex="-1">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header bg-warning">
+                        <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Multiple Items Found for PCN ${pcnNumber}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>This PCN is associated with multiple items. Please select the correct one:</p>
+                        <div class="list-group">`;
+
+        matches.forEach((m, i) => {
+            html += `<button type="button" class="list-group-item list-group-item-action pcn-select-btn" data-index="${i}">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>Item: ${m.job || 'N/A'}</strong><br>
+                        <small class="text-muted">MPN: ${m.mpn || 'N/A'} | Qty: ${m.quantity || 0} | Loc: ${m.location || 'N/A'}</small>
+                    </div>
+                    <i class="bi bi-chevron-right"></i>
+                </div>
+            </button>`;
+        });
+
+        html += `</div></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        // Remove any existing modal
+        const existing = document.getElementById('pcnSelectModal');
+        if (existing) {
+            var oldModal = bootstrap.Modal.getInstance(existing);
+            if (oldModal) oldModal.dispose();
+            existing.remove();
+        }
+        document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+
+        document.body.insertAdjacentHTML('beforeend', html);
+        const modalEl = document.getElementById('pcnSelectModal');
+        const modal = new bootstrap.Modal(modalEl);
+        let resolved = false;
+
+        modalEl.querySelectorAll('.pcn-select-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.index);
+                resolved = true;
+                const selected = matches[idx];
+                modal.hide();
+                setTimeout(() => {
+                    document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+                    document.body.classList.remove('modal-open');
+                    document.body.style.removeProperty('overflow');
+                    document.body.style.removeProperty('padding-right');
+                    modalEl.remove();
+                    resolve(selected);
+                }, 300);
+            });
+        });
+
+        modalEl.addEventListener('hidden.bs.modal', () => {
+            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            document.body.classList.remove('modal-open');
+            document.body.style.removeProperty('overflow');
+            document.body.style.removeProperty('padding-right');
+            modalEl.remove();
+            if (!resolved) resolve(null);
+        });
+
+        modal.show();
+    });
+}
+
+// Populate form fields from PCN details data
+function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
             console.log('PCN details fetched:', result);
 
             // Show a visual indicator that data is being auto-filled
@@ -1027,13 +1135,6 @@ async function fetchAndPopulatePCNDetails(pcnNumber) {
             `;
             document.body.appendChild(notification);
             setTimeout(() => notification.remove(), 4000);
-
-        } else {
-            console.warn('PCN lookup failed:', result.error);
-        }
-    } catch (error) {
-        console.error('Error fetching PCN details:', error);
-    }
 }
 </script>
 {% endblock %}

@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+.pytest_cache
+logs/
+migration/
+*.mdb
+*.xlsx
+*.sql
+.git
+docker-compose.yml
+Dockerfile
+nginx.conf
+vercel-proxy/
+migrate_all_tables.py
+create_rob_julia_users.py

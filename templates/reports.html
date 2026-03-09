@@ -190,7 +190,7 @@
             </div>
         </div>
         <div class="d-flex gap-2">
-            <a href="{{ url_for('inventory') }}" class="btn btn-outline-primary btn-lg">
+            <a href="{{ url_for('pcb_inventory') }}" class="btn btn-outline-primary btn-lg">
                 <i class="bi bi-table me-1"></i> View Inventory
             </a>
             <button class="btn btn-primary btn-lg shadow-sm" onclick="window.print()">
@@ -430,7 +430,7 @@
                                         {{ '+' if entry.quantity_change > 0 else '' }}{{ entry.quantity_change }}
                                     </td>
                                     <td>{{ entry.new_quantity }}</td>
-                                    <td><code class="small">{{ entry.location or 'N/A' }}</code></td>
+                                    <td><code class="small">{{ entry.loc_to or entry.loc_from or 'N/A' }}</code></td>
                                 </tr>
                                 {% endfor %}
                             </tbody>

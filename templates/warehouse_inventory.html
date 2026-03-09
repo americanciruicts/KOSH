@@ -79,7 +79,7 @@
             <div class="col-md-2">
                 <label for="search_pcn" class="form-label small fw-semibold mb-2" style="color: #475569;">PCN</label>
                 <input type="text" class="form-control" id="search_pcn" name="search_pcn"
-                       value="{{ request.args.get('search_pcn', '') }}" placeholder="Search PCN..." style="border-radius: 6px;">
+                       value="{{ request.args.get('search_pcn', '') }}" placeholder="Enter PCN number" style="border-radius: 6px;">
             </div>
             <div class="col-md-2">
                 <label for="search_item" class="form-label small fw-semibold mb-2" style="color: #475569;">Item Number</label>
@@ -151,9 +151,10 @@
                         <th style="border: none; font-weight: 600; padding: 14px;">Item Number</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MPN</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">DC</th>
-                        <th style="border: none; font-weight: 600; padding: 14px;">On hand qty</th>
-                        <th style="border: none; font-weight: 600; padding: 14px;">Location</th>
-                        <th style="border: none; font-weight: 600; padding: 14px;">MFG_Qty</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">On Hand Qty</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Loc From</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Loc To</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">MFG Qty</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MSD</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">PO</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">Cost</th>
@@ -167,7 +168,8 @@
                         <td>{{ row.Item if row.Item else '-' }}</td>
                         <td>{{ row.MPN if row.MPN else '-' }}</td>
                         <td>{{ row.DC if row.DC else '-' }}</td>
-                        <td>{{ row.OnHandQty if row.OnHandQty else '-' }}</td>
+                        <td>{{ row.OnHandQty if row.OnHandQty is not none else '0' }}</td>
+                        <td>{{ row.Loc_From if row.Loc_From else '-' }}</td>
                         <td>{{ row.Loc_To.replace('Receiving Area', 'Rec Area') if row.Loc_To else '-' }}</td>
                         <td>{{ row.MFG_Qty if row.MFG_Qty else '-' }}</td>
                         <td>{{ row.MSD.replace('Level', 'Lvl') if row.MSD else '-' }}</td>
@@ -330,7 +332,8 @@
                         </div>
                         <div class="col-md-6">
                             <label for="edit_mfg_qty" class="form-label fw-semibold">MFG Quantity</label>
-                            <input type="number" class="form-control" id="edit_mfg_qty">
+                            <input type="number" class="form-control bg-light" id="edit_mfg_qty" readonly>
+                            <small class="text-muted">Cannot be changed</small>
                         </div>
                         <div class="col-md-6">
                             <label for="edit_msd" class="form-label fw-semibold">MSD (Moisture Sensitive)</label>
@@ -347,7 +350,7 @@
                     </div>
                     <div class="alert alert-warning mt-3 mb-0">
                         <i class="bi bi-exclamation-triangle me-2"></i>
-                        <strong>Note:</strong> PCN, Item Number, and MPN cannot be modified. You can edit all other fields.
+                        <strong>Note:</strong> PCN, Item Number, MPN, and MFG Quantity cannot be modified. MFG Quantity is managed through Stock/Pick/Restock operations.
                     </div>
                 </form>
             </div>
@@ -517,6 +520,7 @@ function editItem(jobNumber, pcn, mpn) {
                 document.getElementById('edit_mpn').value = data.item.MPN || '';
                 document.getElementById('edit_dc').value = data.item.DC || '';
                 document.getElementById('edit_onhandqty').value = data.item.OnHandQty || '';
+                document.getElementById('edit_loc_from').value = data.item.Loc_From || '';
                 document.getElementById('edit_location').value = data.item.Loc_To || '';
                 document.getElementById('edit_mfg_qty').value = data.item.MFG_Qty || '';
                 document.getElementById('edit_msd').value = data.item.MSD || '';
@@ -567,6 +571,8 @@ function editItem(jobNumber, pcn, mpn) {
 function saveEdit() {
     console.log('Save button clicked');
 
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
     const itemData = {
         item: document.getElementById('edit_item').value,
         pcn: document.getElementById('edit_pcn').value,
@@ -587,7 +593,8 @@ function saveEdit() {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'X-CSRFToken': csrfToken
         },
         credentials: 'same-origin',
         body: JSON.stringify(itemData)
@@ -595,18 +602,18 @@ function saveEdit() {
     .then(response => {
         console.log('Save response status:', response.status);
 
-        // Check if response is OK before parsing JSON
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
         // Check if response is actually JSON
         const contentType = response.headers.get('content-type');
         if (!contentType || !contentType.includes('application/json')) {
             throw new Error('Server returned non-JSON response');
         }
 
-        return response.json();
+        return response.json().then(data => {
+            if (!response.ok) {
+                throw new Error(data.message || `HTTP ${response.status}: ${response.statusText}`);
+            }
+            return data;
+        });
     })
     .then(data => {
         console.log('Save response data:', data);
