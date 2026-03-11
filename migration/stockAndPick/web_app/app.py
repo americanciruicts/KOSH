@@ -5514,109 +5514,35 @@ def api_bom_parse():
             logger.error(f"Failed to parse Excel file: {e}")
             return jsonify({'success': False, 'error': 'Invalid or corrupted Excel file. Please check the file and try again.'}), 400
 
-        # Check for "Assy BOM" sheet
-        if "Assy BOM" not in wb.sheetnames:
-            return jsonify({'success': False, 'error': 'File must contain "Assy BOM" sheet'}), 400
+        # Check for "BOM to Load" sheet
+        if "BOM to Load" not in wb.sheetnames:
+            return jsonify({'success': False, 'error': 'File must contain "BOM to Load" sheet'}), 400
 
-        ws = wb["Assy BOM"]
+        ws = wb["BOM to Load"]
 
-        # Validate sheet has enough rows
-        if ws.max_row < 12:  # Need at least header rows + some data
-            return jsonify({'success': False, 'error': 'BOM sheet appears empty or incomplete. Need at least 12 rows.'}), 400
+        # Validate sheet has enough rows (header + at least 1 data row)
+        if ws.max_row < 2:
+            return jsonify({'success': False, 'error': 'BOM sheet appears empty or incomplete.'}), 400
 
-        # Extract metadata from header rows (rows 1-10)
-        metadata = {}
-
-        # Scan rows 1-10 for ALL header information
-        for row_num in range(1, 11):
-            for cell in ws[row_num]:
-                if not cell.value:
-                    continue
-
-                cell_text = str(cell.value).upper().strip()
-                next_cell_value = ws.cell(row=row_num, column=cell.column + 1).value
-
-                # Job Number
-                if 'JOB' in cell_text and 'REV' not in cell_text and 'CUST' not in cell_text:
-                    if next_cell_value:
-                        metadata['job'] = next_cell_value
-
-                # Customer Name
-                if ('CUST' in cell_text or 'CUSTOMER' in cell_text) and 'JOB' not in cell_text and 'P/N' not in cell_text and 'REV' not in cell_text:
-                    if next_cell_value:
-                        metadata['customer'] = next_cell_value
-
-                # Job Revision
-                if 'JOB REV' in cell_text:
-                    if next_cell_value:
-                        metadata['job_rev'] = next_cell_value
-
-                # Customer P/N
-                if 'CUST P/N' in cell_text or 'CUSTOMER P/N' in cell_text:
-                    if next_cell_value:
-                        metadata['cust_pn'] = next_cell_value
-
-                # Last Rev Date
-                if 'LAST REV' in cell_text:
-                    if next_cell_value:
-                        metadata['last_rev'] = next_cell_value
-
-                # Customer Revision
-                if 'CUST REV' in cell_text:
-                    if next_cell_value:
-                        metadata['cust_rev'] = next_cell_value
-
-                # Order Qty / WO Quantity
-                if ('BUILD QTY' in cell_text or 'BUILD QUANTITY' in cell_text or
-                    'WO QTY' in cell_text or 'WORK ORDER QTY' in cell_text):
-                    if next_cell_value:
-                        metadata['build_qty'] = next_cell_value
-
-                # Work Order Number
-                if ('WO' in cell_text or 'WORK ORDER' in cell_text) and 'QTY' not in cell_text:
-                    if next_cell_value:
-                        metadata['wo_number'] = next_cell_value
-
-                # Notes
-                if 'NOTE' in cell_text:
-                    if next_cell_value:
-                        metadata['notes'] = next_cell_value
-
-        # Log all captured metadata
-        logger.info(f"BOM Header metadata extracted: {metadata}")
-
-        # Find column headers (LINE column)
-        header_row = None
-        for row_num in range(8, 15):
-            for cell in ws[row_num]:
-                if cell.value and str(cell.value).strip().upper() == 'LINE':
-                    header_row = row_num
-                    break
-            if header_row:
-                break
-
-        if not header_row:
-            return jsonify({'success': False, 'error': 'Could not find column headers'}), 400
-
-        # Map column headers
+        # Row 1 has column headers: Line, DESC, MAN, MPN, ACI PN, QTY, POU, LOC, Cost, Job, Job Rev, Last Rev, Cust, Cust PN, Cust Rev
         col_map = {}
-        for cell in ws[header_row]:
+        for cell in ws[1]:
             if not cell.value:
                 continue
             header = str(cell.value).strip().upper()
             col_idx = cell.column - 1
 
-            if 'LINE' in header:
+            if header == 'LINE':
                 col_map['line'] = col_idx
             elif 'DESC' in header:
                 col_map['desc'] = col_idx
-            elif 'MAN' in header:
+            elif header == 'MAN':
                 col_map['man'] = col_idx
-            elif 'MPN' in header:
+            elif header == 'MPN':
                 col_map['mpn'] = col_idx
             elif 'ACI' in header:
                 col_map['aci_pn'] = col_idx
-            elif 'QTY' in header or 'QUANTITY' in header:
+            elif 'QTY' in header:
                 col_map['qty'] = col_idx
             elif 'POU' in header:
                 col_map['pou'] = col_idx
@@ -5624,10 +5550,25 @@ def api_bom_parse():
                 col_map['loc'] = col_idx
             elif 'COST' in header or 'PRICE' in header:
                 col_map['cost'] = col_idx
+            elif header == 'JOB' and 'job' not in col_map:
+                col_map['job'] = col_idx
+            elif 'JOB REV' in header:
+                col_map['job_rev'] = col_idx
+            elif 'LAST REV' in header:
+                col_map['last_rev'] = col_idx
+            elif header == 'CUST' or header == 'CUSTOMER':
+                col_map['cust'] = col_idx
+            elif 'CUST PN' in header or 'CUST P/N' in header:
+                col_map['cust_pn'] = col_idx
+            elif 'CUST REV' in header:
+                col_map['cust_rev'] = col_idx
 
-        # Parse BOM items
+        logger.info(f"BOM to Load column map: {col_map}")
+
+        # Parse BOM items and extract metadata from first data row
+        metadata = {}
         bom_items = []
-        for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+        for row in ws.iter_rows(min_row=2, values_only=True):
             if not any(row):
                 continue
 
@@ -5644,6 +5585,21 @@ def api_bom_parse():
             mpn = row[col_map.get('mpn', 3)] if 'mpn' in col_map else None
             if not mpn:
                 continue
+
+            # Extract metadata from first valid row
+            if not metadata:
+                if 'job' in col_map and row[col_map['job']]:
+                    metadata['job'] = row[col_map['job']]
+                if 'job_rev' in col_map and row[col_map['job_rev']]:
+                    metadata['job_rev'] = row[col_map['job_rev']]
+                if 'last_rev' in col_map and row[col_map['last_rev']]:
+                    metadata['last_rev'] = row[col_map['last_rev']]
+                if 'cust' in col_map and row[col_map['cust']]:
+                    metadata['customer'] = row[col_map['cust']]
+                if 'cust_pn' in col_map and row[col_map['cust_pn']]:
+                    metadata['cust_pn'] = row[col_map['cust_pn']]
+                if 'cust_rev' in col_map and row[col_map['cust_rev']]:
+                    metadata['cust_rev'] = row[col_map['cust_rev']]
 
             # Handle qty with proper validation
             qty_val = row[col_map.get('qty', 5)] if 'qty' in col_map else None
@@ -5671,6 +5627,7 @@ def api_bom_parse():
                 'cost': cost
             })
 
+        logger.info(f"BOM Header metadata extracted: {metadata}")
         logger.info(f"Parsed BOM: Job={metadata.get('job')}, Items={len(bom_items)}")
 
         return jsonify({

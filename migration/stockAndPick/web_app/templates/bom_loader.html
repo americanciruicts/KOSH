@@ -25,7 +25,7 @@
                         <div class="mb-3">
                             <label for="bomFile" class="form-label">Select Excel File (.xlsx)</label>
                             <input type="file" class="form-control" id="bomFile" name="file" accept=".xlsx,.xls" required>
-                            <div class="form-text">File must contain "Assy BOM" sheet</div>
+                            <div class="form-text">File must contain "BOM to Load" sheet</div>
                         </div>
 
                         <button type="submit" class="btn btn-primary" id="uploadBtn">
@@ -163,7 +163,9 @@
                                     <th>MPN</th>
                                     <th>ACI P/N</th>
                                     <th>Qty</th>
+                                    <th>POU</th>
                                     <th>Location</th>
+                                    <th>Cost</th>
                                 </tr>
                             </thead>
                             <tbody id="bomTableBody">
@@ -368,7 +370,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td class="font-monospace">${item.mpn || ''}</td>
                 <td>${item.aci_pn || ''}</td>
                 <td class="text-end">${item.qty || 0}</td>
+                <td>${item.pou || ''}</td>
                 <td>${item.loc || ''}</td>
+                <td class="text-end">${item.cost ? '$' + Number(item.cost).toFixed(2) : '$0.00'}</td>
             `;
             tbody.appendChild(row);
         });

@@ -2,7 +2,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "https://yield-referenced-remaining-burke.trycloudflare.com/kosh/$1"
+      "dest": "https://aci-kosh.vercel.app/$1"
     }
   ]
 }
