@@ -100,7 +100,15 @@
                             <th>MPN</th>
                             <th>ACI P/N</th>
                             <th>Qty</th>
+                            <th>POU</th>
                             <th>Location</th>
+                            <th>Cost</th>
+                            <th>Job</th>
+                            <th>Job Rev</th>
+                            <th>Last Rev</th>
+                            <th>Customer</th>
+                            <th>Cust P/N</th>
+                            <th>Cust Rev</th>
                         </tr>
                     </thead>
                     <tbody id="bomTableBody"></tbody>
@@ -428,7 +436,15 @@
                 <td class="font-monospace">${item.mpn || ''}</td>
                 <td>${item.aci_pn || ''}</td>
                 <td class="text-end">${item.qty || 0}</td>
+                <td>${item.pou || ''}</td>
                 <td>${item.loc || ''}</td>
+                <td class="text-end">${item.cost ? '$' + Number(item.cost).toFixed(2) : '$0.00'}</td>
+                <td>${item.job || ''}</td>
+                <td>${item.job_rev || ''}</td>
+                <td>${item.last_rev || ''}</td>
+                <td>${item.cust || ''}</td>
+                <td>${item.cust_pn || ''}</td>
+                <td>${item.cust_rev || ''}</td>
             `;
             tbody.appendChild(row);
         });
