@@ -232,9 +232,10 @@ def add_security_headers(response):
     # Enable browser caching for static assets (1 hour)
     if request.path.startswith('/static/'):
         response.headers['Cache-Control'] = 'public, max-age=3600'
-    else:
-        # For dynamic pages, use short cache (1 minute)
-        response.headers['Cache-Control'] = 'public, max-age=60'
+    elif 'no-store' not in response.headers.get('Cache-Control', ''):
+        # For dynamic pages, disable caching to ensure fresh content
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
 
     return response
 
