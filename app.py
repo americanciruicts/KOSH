@@ -6020,7 +6020,13 @@ def job_detail(job_number):
                 w.pcn,
                 w.item,
                 COALESCE(w.loc_to, '') as location,
-                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                b.pou,
+                b.job_rev as bom_job_rev,
+                b.last_rev as bom_last_rev,
+                b.cust as bom_cust,
+                b.cust_pn as bom_cust_pn,
+                b.cust_rev as bom_cust_rev
             FROM pcb_inventory."tblBOM" b
             LEFT JOIN pcb_inventory."tblWhse_Inventory" w
                 ON (b.aci_pn = w.item OR b.mpn = w.mpn)
@@ -6028,7 +6034,7 @@ def job_detail(job_number):
                 AND COALESCE(w.loc_to, '') != 'MFG Floor'
                 AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
                      OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-            GROUP BY b.line, b.aci_pn, b."DESC", b.mpn, b.man, b.qty, b.cost, w.pcn, w.item, w.loc_to
+            GROUP BY b.line, b.aci_pn, b."DESC", b.mpn, b.man, b.qty, b.cost, b.pou, b.job_rev, b.last_rev, b.cust, b.cust_pn, b.cust_rev, w.pcn, w.item, w.loc_to
             ORDER BY
                 CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
                 b.line
@@ -6059,7 +6065,13 @@ def job_detail(job_number):
                 'item': line['item'],
                 'location': location,
                 'unit_cost': float(line['unit_cost'] or 0),
-                'shortage': shortage
+                'shortage': shortage,
+                'pou': line.get('pou') or '',
+                'job_rev': line.get('bom_job_rev') or '',
+                'last_rev': line.get('bom_last_rev') or '',
+                'cust': line.get('bom_cust') or '',
+                'cust_pn': line.get('bom_cust_pn') or '',
+                'cust_rev': line.get('bom_cust_rev') or ''
             })
             if shortage < 0:
                 shortage_count += 1

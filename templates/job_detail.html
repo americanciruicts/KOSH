@@ -145,10 +145,16 @@
                         <th>Description</th>
                         <th>MPN</th>
                         <th class="text-center">QTY</th>
+                        <th>POU</th>
                         <th class="text-center">REQ</th>
                         <th class="text-center">On Hand</th>
                         <th>Location</th>
                         <th class="text-end">Cost</th>
+                        <th>Job Rev</th>
+                        <th>Last Rev</th>
+                        <th>Customer</th>
+                        <th>Cust P/N</th>
+                        <th>Cust Rev</th>
                         <th class="text-center">Shortage</th>
                     </tr>
                 </thead>
@@ -166,6 +172,7 @@
                         </td>
                         <td><small>{{ line.mpn or '-' }}</small></td>
                         <td class="text-center">{{ line.qty }}</td>
+                        <td>{{ line.pou or '-' }}</td>
                         <td class="text-center"><strong>{{ line.req }}</strong></td>
                         <td class="text-center">
                             {% if line.on_hand == 0 %}
@@ -176,6 +183,11 @@
                         </td>
                         <td>{{ line.location or '-' }}</td>
                         <td class="text-end">${{ '%.2f'|format(line.unit_cost) }}</td>
+                        <td>{{ line.job_rev or '-' }}</td>
+                        <td>{{ line.last_rev or '-' }}</td>
+                        <td>{{ line.cust or '-' }}</td>
+                        <td>{{ line.cust_pn or '-' }}</td>
+                        <td>{{ line.cust_rev or '-' }}</td>
                         <td class="text-center">
                             {% if line.shortage < 0 %}
                             <span class="badge bg-danger">{{ line.shortage }}</span>
@@ -190,11 +202,12 @@
                 </tbody>
                 <tfoot class="table-light">
                     <tr>
-                        <td colspan="7" class="text-end"><strong>Totals:</strong></td>
+                        <td colspan="8" class="text-end"><strong>Totals:</strong></td>
                         <td class="text-center"><strong>{{ lines|map(attribute='req')|sum }}</strong></td>
                         <td class="text-center"><strong>{{ lines|map(attribute='on_hand')|sum }}</strong></td>
                         <td></td>
                         <td class="text-end"><strong>${{ '%.2f'|format(lines|map(attribute='unit_cost')|sum) }}</strong></td>
+                        <td colspan="5"></td>
                         <td class="text-center">
                             <strong class="{% if lines|map(attribute='shortage')|sum < 0 %}text-danger{% else %}text-success{% endif %}">
                                 {{ lines|map(attribute='shortage')|sum }}
