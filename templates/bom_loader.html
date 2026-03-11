@@ -47,7 +47,7 @@
                 <div class="card-body">
                     <div class="mb-3">
                         <h6 class="text-primary"><i class="bi bi-1-circle-fill me-2"></i>Upload Your File</h6>
-                        <p class="text-muted small mb-2">Choose an Excel file (.xlsx) with a sheet named <strong>"Assy BOM"</strong></p>
+                        <p class="text-muted small mb-2">Choose an Excel file (.xlsx) with a sheet named <strong>"BOM to Load"</strong></p>
                     </div>
                     <div class="mb-3">
                         <h6 class="text-primary"><i class="bi bi-2-circle-fill me-2"></i>Review the Data</h6>
@@ -166,6 +166,12 @@
                                     <th>POU</th>
                                     <th>Location</th>
                                     <th>Cost</th>
+                                    <th>Job</th>
+                                    <th>Job Rev</th>
+                                    <th>Last Rev</th>
+                                    <th>Customer</th>
+                                    <th>Cust P/N</th>
+                                    <th>Cust Rev</th>
                                 </tr>
                             </thead>
                             <tbody id="bomTableBody">
@@ -373,6 +379,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 <td>${item.pou || ''}</td>
                 <td>${item.loc || ''}</td>
                 <td class="text-end">${item.cost ? '$' + Number(item.cost).toFixed(2) : '$0.00'}</td>
+                <td>${item.job || ''}</td>
+                <td>${item.job_rev || ''}</td>
+                <td>${item.last_rev || ''}</td>
+                <td>${item.cust || ''}</td>
+                <td>${item.cust_pn || ''}</td>
+                <td>${item.cust_rev || ''}</td>
             `;
             tbody.appendChild(row);
         });

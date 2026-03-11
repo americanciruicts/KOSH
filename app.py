@@ -5615,6 +5615,14 @@ def api_bom_parse():
             except (ValueError, TypeError):
                 cost = 0.0
 
+            # Extract per-row metadata fields
+            row_job = str(row[col_map['job']] or '').strip() if 'job' in col_map and row[col_map['job']] else ''
+            row_job_rev = str(row[col_map['job_rev']] or '').strip() if 'job_rev' in col_map and row[col_map['job_rev']] else ''
+            row_last_rev = str(row[col_map['last_rev']] or '').strip() if 'last_rev' in col_map and row[col_map['last_rev']] else ''
+            row_cust = str(row[col_map['cust']] or '').strip() if 'cust' in col_map and row[col_map['cust']] else ''
+            row_cust_pn = str(row[col_map['cust_pn']] or '').strip() if 'cust_pn' in col_map and row[col_map['cust_pn']] else ''
+            row_cust_rev = str(row[col_map['cust_rev']] or '').strip() if 'cust_rev' in col_map and row[col_map['cust_rev']] else ''
+
             bom_items.append({
                 'line': line_num,
                 'desc': str(row[col_map.get('desc', 1)] or '').strip() if 'desc' in col_map else '',
@@ -5624,7 +5632,13 @@ def api_bom_parse():
                 'qty': qty,
                 'pou': str(row[col_map.get('pou', 6)] or '').strip() if 'pou' in col_map else '',
                 'loc': str(row[col_map.get('loc', 7)] or '').strip() if 'loc' in col_map else '',
-                'cost': cost
+                'cost': cost,
+                'job': row_job,
+                'job_rev': row_job_rev,
+                'last_rev': row_last_rev,
+                'cust': row_cust,
+                'cust_pn': row_cust_pn,
+                'cust_rev': row_cust_rev
             })
 
         logger.info(f"BOM Header metadata extracted: {metadata}")
@@ -5708,11 +5722,11 @@ def api_bom_load():
                         item.get('pou'),
                         item.get('loc'),
                         cost,  # Use validated cost
-                        metadata.get('job_rev'),
-                        metadata.get('last_rev'),
-                        metadata.get('customer'),
-                        metadata.get('cust_pn'),
-                        metadata.get('cust_rev')
+                        item.get('job_rev') or metadata.get('job_rev'),
+                        item.get('last_rev') or metadata.get('last_rev'),
+                        item.get('cust') or metadata.get('customer'),
+                        item.get('cust_pn') or metadata.get('cust_pn'),
+                        item.get('cust_rev') or metadata.get('cust_rev')
                     ))
                     inserted_count += 1
                 except Exception as e:
