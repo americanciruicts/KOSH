@@ -3376,31 +3376,43 @@ def generate_shortage_report():
         job_rev = rev_row['job_rev'] if rev_row else None
 
         # Generate report data by comparing BOM vs Inventory
-        # INNER JOIN: only include BOM items that have inventory matches
-        # Excludes items on MFG Floor and only uses latest revision
+        # First deduplicate BOM lines per aci_pn (alternate parts), then match inventory
+        # Uses warehouse MPN (w.mpn) so each PCN shows its actual MPN, not BOM alternates
         cursor.execute("""
-            WITH inventory_match AS (
-                SELECT DISTINCT ON (b.line, b.aci_pn, w.pcn)
+            WITH bom_lines AS (
+                SELECT DISTINCT ON (b.aci_pn)
                     b.line,
                     b.aci_pn,
-                    b.mpn,
+                    b.mpn as bom_mpn,
                     b.man,
                     b."DESC",
                     b.qty,
-                    b.cost,
+                    b.cost
+                FROM pcb_inventory."tblBOM" b
+                WHERE b.job = %s
+                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                ORDER BY b.aci_pn, b.line
+            ),
+            inventory_match AS (
+                SELECT DISTINCT ON (w.pcn, bl.aci_pn)
+                    bl.line,
+                    bl.aci_pn,
+                    w.mpn,
+                    bl.man,
+                    bl."DESC",
+                    bl.qty,
+                    bl.cost,
                     w.pcn,
                     w.item,
                     w.onhandqty,
                     w.loc_to,
-                    CASE WHEN b.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
-                FROM pcb_inventory."tblBOM" b
+                    CASE WHEN bl.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
+                FROM bom_lines bl
                 INNER JOIN pcb_inventory."tblWhse_Inventory" w
-                    ON (b.aci_pn = w.item OR b.mpn = w.mpn)
-                WHERE b.job = %s
-                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-                ORDER BY b.line, b.aci_pn, w.pcn, match_priority
+                    ON (bl.aci_pn = w.item OR bl.bom_mpn = w.mpn)
+                WHERE COALESCE(w.loc_to, '') != 'MFG Floor'
+                ORDER BY w.pcn, bl.aci_pn, match_priority
             )
             SELECT
                 line as line_no,
@@ -6254,31 +6266,42 @@ def job_generate_shortage(job_number):
             flash(f'No BOM data found for job {job_number}. Please load BOM first.', 'warning')
             return redirect(url_for('job_detail', job_number=job_number))
 
-        # INNER JOIN: only BOM items with inventory matches
-        # Exclude MFG Floor items and filter to latest rev
+        # Deduplicate BOM per aci_pn then match inventory using warehouse MPN
         cursor.execute("""
-            WITH inventory_match AS (
-                SELECT DISTINCT ON (b.line, b.aci_pn, w.pcn)
+            WITH bom_lines AS (
+                SELECT DISTINCT ON (b.aci_pn)
                     b.line,
                     b.aci_pn,
-                    b.mpn,
+                    b.mpn as bom_mpn,
                     b.man,
                     b."DESC",
                     b.qty,
-                    b.cost,
+                    b.cost
+                FROM pcb_inventory."tblBOM" b
+                WHERE b.job = %s
+                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                ORDER BY b.aci_pn, b.line
+            ),
+            inventory_match AS (
+                SELECT DISTINCT ON (w.pcn, bl.aci_pn)
+                    bl.line,
+                    bl.aci_pn,
+                    w.mpn,
+                    bl.man,
+                    bl."DESC",
+                    bl.qty,
+                    bl.cost,
                     w.pcn,
                     w.item,
                     w.onhandqty,
                     w.loc_to,
-                    CASE WHEN b.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
-                FROM pcb_inventory."tblBOM" b
+                    CASE WHEN bl.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
+                FROM bom_lines bl
                 INNER JOIN pcb_inventory."tblWhse_Inventory" w
-                    ON (b.aci_pn = w.item OR b.mpn = w.mpn)
-                WHERE b.job = %s
-                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-                ORDER BY b.line, b.aci_pn, w.pcn, match_priority
+                    ON (bl.aci_pn = w.item OR bl.bom_mpn = w.mpn)
+                WHERE COALESCE(w.loc_to, '') != 'MFG Floor'
+                ORDER BY w.pcn, bl.aci_pn, match_priority
             )
             SELECT
                 line as line_no,
