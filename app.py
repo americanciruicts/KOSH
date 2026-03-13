@@ -3370,29 +3370,46 @@ def generate_shortage_report():
         # INNER JOIN: only include BOM items that have inventory matches
         # Excludes items on MFG Floor and only uses latest revision
         cursor.execute("""
+            WITH inventory_match AS (
+                SELECT DISTINCT ON (b.line, b.aci_pn, w.pcn)
+                    b.line,
+                    b.aci_pn,
+                    b.mpn,
+                    b.man,
+                    b."DESC",
+                    b.qty,
+                    b.cost,
+                    w.pcn,
+                    w.item,
+                    w.onhandqty,
+                    w.loc_to,
+                    CASE WHEN b.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
+                FROM pcb_inventory."tblBOM" b
+                INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                    ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+                WHERE b.job = %s
+                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                ORDER BY b.line, b.aci_pn, w.pcn, match_priority
+            )
             SELECT
-                b.line as line_no,
-                b.aci_pn,
-                w.pcn,
-                b.mpn,
-                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
-                w.item as item,
-                COALESCE(w.loc_to, '') as location,
-                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
-                b.man as manufacturer,
-                b."DESC" as description
-            FROM pcb_inventory."tblBOM" b
-            INNER JOIN pcb_inventory."tblWhse_Inventory" w
-                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
-            WHERE b.job = %s
-                AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+                line as line_no,
+                aci_pn,
+                pcn,
+                mpn,
+                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(onhandqty), 0) as qty_on_hand,
+                item,
+                COALESCE(loc_to, '') as location,
+                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                man as manufacturer,
+                "DESC" as description
+            FROM inventory_match
+            GROUP BY line, aci_pn, mpn, man, "DESC", qty, cost, pcn, item, loc_to
             ORDER BY
-                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
-                b.line
+                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
+                line
         """, (job, job, job))
         matched_items = cursor.fetchall()
 
@@ -6010,35 +6027,58 @@ def job_detail(job_number):
         # Get BOM lines with live inventory lookup
         # Exclude MFG Floor items and filter to latest rev
         cursor.execute("""
+            WITH inventory_match AS (
+                SELECT DISTINCT ON (b.line, b.aci_pn, w.pcn)
+                    b.line,
+                    b.aci_pn,
+                    b."DESC",
+                    b.mpn,
+                    b.man,
+                    b.qty,
+                    b.cost,
+                    b.pou,
+                    b.job_rev,
+                    b.last_rev,
+                    b.cust,
+                    b.cust_pn,
+                    b.cust_rev,
+                    w.pcn,
+                    w.item,
+                    w.onhandqty,
+                    w.loc_to,
+                    CASE WHEN b.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
+                FROM pcb_inventory."tblBOM" b
+                LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                    ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+                WHERE b.job = %s
+                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                ORDER BY b.line, b.aci_pn, w.pcn, match_priority
+            )
             SELECT
-                b.line as line_no,
-                b.aci_pn,
-                b."DESC" as description,
-                b.mpn,
-                b.man as manufacturer,
-                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(w.onhandqty), 0) as on_hand,
-                w.pcn,
-                w.item,
-                COALESCE(w.loc_to, '') as location,
-                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
-                b.pou,
-                b.job_rev as bom_job_rev,
-                b.last_rev as bom_last_rev,
-                b.cust as bom_cust,
-                b.cust_pn as bom_cust_pn,
-                b.cust_rev as bom_cust_rev
-            FROM pcb_inventory."tblBOM" b
-            LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
-            WHERE b.job = %s
-                AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-            GROUP BY b.line, b.aci_pn, b."DESC", b.mpn, b.man, b.qty, b.cost, b.pou, b.job_rev, b.last_rev, b.cust, b.cust_pn, b.cust_rev, w.pcn, w.item, w.loc_to
+                line as line_no,
+                aci_pn,
+                "DESC" as description,
+                mpn,
+                man as manufacturer,
+                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(onhandqty), 0) as on_hand,
+                pcn,
+                item,
+                COALESCE(loc_to, '') as location,
+                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                pou,
+                job_rev as bom_job_rev,
+                last_rev as bom_last_rev,
+                cust as bom_cust,
+                cust_pn as bom_cust_pn,
+                cust_rev as bom_cust_rev
+            FROM inventory_match
+            GROUP BY line, aci_pn, "DESC", mpn, man, qty, cost, pou, job_rev, last_rev, cust, cust_pn, cust_rev, pcn, item, loc_to
             ORDER BY
-                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
-                b.line
+                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
+                line
         """, (job_number, job_number, job_number))
         raw_lines = cursor.fetchall()
 
@@ -6231,29 +6271,46 @@ def job_generate_shortage(job_number):
         # INNER JOIN: only BOM items with inventory matches
         # Exclude MFG Floor items and filter to latest rev
         cursor.execute("""
+            WITH inventory_match AS (
+                SELECT DISTINCT ON (b.line, b.aci_pn, w.pcn)
+                    b.line,
+                    b.aci_pn,
+                    b.mpn,
+                    b.man,
+                    b."DESC",
+                    b.qty,
+                    b.cost,
+                    w.pcn,
+                    w.item,
+                    w.onhandqty,
+                    w.loc_to,
+                    CASE WHEN b.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
+                FROM pcb_inventory."tblBOM" b
+                INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                    ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+                WHERE b.job = %s
+                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                ORDER BY b.line, b.aci_pn, w.pcn, match_priority
+            )
             SELECT
-                b.line as line_no,
-                b.aci_pn,
-                w.pcn,
-                b.mpn,
-                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
-                w.item as item,
-                COALESCE(w.loc_to, '') as location,
-                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
-                b.man as manufacturer,
-                b."DESC" as description
-            FROM pcb_inventory."tblBOM" b
-            INNER JOIN pcb_inventory."tblWhse_Inventory" w
-                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
-            WHERE b.job = %s
-                AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+                line as line_no,
+                aci_pn,
+                pcn,
+                mpn,
+                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(onhandqty), 0) as qty_on_hand,
+                item,
+                COALESCE(loc_to, '') as location,
+                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                man as manufacturer,
+                "DESC" as description
+            FROM inventory_match
+            GROUP BY line, aci_pn, mpn, man, "DESC", qty, cost, pcn, item, loc_to
             ORDER BY
-                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
-                b.line
+                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
+                line
         """, (job_number, job_number, job_number))
         matched_items = cursor.fetchall()
 
@@ -6358,29 +6415,46 @@ def job_export(job_number):
 
         # Get BOM lines with live inventory lookup
         cursor.execute("""
+            WITH inventory_match AS (
+                SELECT DISTINCT ON (b.line, b.aci_pn, w.pcn)
+                    b.line,
+                    b.aci_pn,
+                    b.mpn,
+                    b.man,
+                    b."DESC",
+                    b.qty,
+                    b.cost,
+                    w.pcn,
+                    w.item,
+                    w.onhandqty,
+                    w.loc_to,
+                    CASE WHEN b.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
+                FROM pcb_inventory."tblBOM" b
+                INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                    ON (b.aci_pn = w.item OR b.mpn = w.mpn)
+                WHERE b.job = %s
+                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                ORDER BY b.line, b.aci_pn, w.pcn, match_priority
+            )
             SELECT
-                b.line as line_no,
-                b.aci_pn,
-                b.mpn,
-                b.man as manufacturer,
-                b."DESC" as description,
-                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(w.onhandqty), 0) as on_hand,
-                w.pcn,
-                w.item,
-                COALESCE(w.loc_to, '') as location,
-                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
-            FROM pcb_inventory."tblBOM" b
-            INNER JOIN pcb_inventory."tblWhse_Inventory" w
-                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
-            WHERE b.job = %s
-                AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+                line as line_no,
+                aci_pn,
+                mpn,
+                man as manufacturer,
+                "DESC" as description,
+                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(onhandqty), 0) as on_hand,
+                pcn,
+                item,
+                COALESCE(loc_to, '') as location,
+                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+            FROM inventory_match
+            GROUP BY line, aci_pn, mpn, man, "DESC", qty, cost, pcn, item, loc_to
             ORDER BY
-                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
-                b.line
+                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
+                line
         """, (job_number, job_number, job_number))
         raw_items = cursor.fetchall()
 

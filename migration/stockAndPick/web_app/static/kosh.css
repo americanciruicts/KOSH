@@ -13,10 +13,10 @@
             --brand-primary-hover: #1d4ed8;
             --brand-primary-light: #dbeafe;
 
-            /* Navbar - Purple gradient */
-            --navbar-gradient-start: #6d28d9;
-            --navbar-gradient-end: #8b5cf6;
-            --navbar-border: #a78bfa;
+            /* Navbar - Red gradient */
+            --navbar-gradient-start: #b91c1c;
+            --navbar-gradient-end: #dc2626;
+            --navbar-border: #f87171;
 
             /* Card accents - Subtle blue shades */
             --card-accent-1: #2563eb;
@@ -61,10 +61,10 @@
             --brand-primary-hover: #60a5fa;
             --brand-primary-light: #1e3a8a;
 
-            /* Navbar - Dark mode purple gradient */
-            --navbar-gradient-start: #5b21b6;
-            --navbar-gradient-end: #7c3aed;
-            --navbar-border: #8b5cf6;
+            /* Navbar - Dark mode red gradient */
+            --navbar-gradient-start: #991b1b;
+            --navbar-gradient-end: #b91c1c;
+            --navbar-border: #dc2626;
 
             /* Card accents - Adjusted for dark mode */
             --card-accent-1: #3b82f6;
