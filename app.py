@@ -794,6 +794,113 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             try:
+                # PURGE OPERATION: When quantity is 0, delete zero-qty records from inventory
+                if quantity == 0:
+                    if pcn:
+                        # Check that the PCN exists and has zero on-hand qty
+                        cursor.execute("""
+                            SELECT pcn, item, onhandqty
+                            FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE pcn::text = %s AND item::text ILIKE %s
+                            FOR UPDATE
+                        """, (str(pcn), job))
+                        row = cursor.fetchone()
+                        if not row:
+                            conn.rollback()
+                            return {
+                                'success': False,
+                                'error': f'PCN {pcn} not found for item {job} in warehouse inventory.',
+                                'job': job, 'pcb_type': pcb_type
+                            }
+                        if row[2] and int(row[2]) > 0:
+                            conn.rollback()
+                            return {
+                                'success': False,
+                                'error': f'Cannot purge PCN {pcn} — on-hand quantity is {int(row[2])}. Pick the remaining units first or edit quantity to 0.',
+                                'job': job, 'pcb_type': pcb_type
+                            }
+                        # Delete the zero-qty warehouse inventory record
+                        cursor.execute("""
+                            DELETE FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE pcn::text = %s AND item::text ILIKE %s
+                        """, (str(pcn), job))
+                        deleted_count = cursor.rowcount
+                        # Record a PURGE transaction
+                        cursor.execute("""
+                            INSERT INTO pcb_inventory."tblTransaction"
+                            (trantype, item, pcn, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                            VALUES ('PURGE', %s, %s, 0,
+                                    TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
+                                    'Warehouse', 'Purged', %s, %s)
+                        """, (job, str(pcn), work_order or '', username))
+                    else:
+                        # Purge all zero-qty records for this item
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s AND onhandqty = 0
+                            FOR UPDATE
+                        """, (job,))
+                        zero_count = cursor.fetchone()[0]
+                        if zero_count == 0:
+                            # Check if item exists at all
+                            cursor.execute("""
+                                SELECT COUNT(*) FROM pcb_inventory."tblWhse_Inventory"
+                                WHERE item::text ILIKE %s
+                            """, (job,))
+                            total = cursor.fetchone()[0]
+                            conn.rollback()
+                            if total > 0:
+                                return {
+                                    'success': False,
+                                    'error': f'No zero-quantity records found for {job}. All records have on-hand quantity > 0.',
+                                    'job': job, 'pcb_type': pcb_type
+                                }
+                            else:
+                                return {
+                                    'success': False,
+                                    'error': f'Item {job} not found in warehouse inventory.',
+                                    'job': job, 'pcb_type': pcb_type
+                                }
+                        # Get PCNs being purged for transaction logging
+                        cursor.execute("""
+                            SELECT pcn FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s AND onhandqty = 0
+                        """, (job,))
+                        purged_pcns = [str(r[0]) for r in cursor.fetchall()]
+                        # Delete zero-qty records
+                        cursor.execute("""
+                            DELETE FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s AND onhandqty = 0
+                        """, (job,))
+                        deleted_count = cursor.rowcount
+                        # Record PURGE transactions
+                        for p in purged_pcns:
+                            cursor.execute("""
+                                INSERT INTO pcb_inventory."tblTransaction"
+                                (trantype, item, pcn, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                                VALUES ('PURGE', %s, %s, 0,
+                                        TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
+                                        'Warehouse', 'Purged', %s, %s)
+                            """, (job, p, work_order or '', username))
+
+                    conn.commit()
+                    logger.info(f"Purge operation: Deleted {deleted_count} zero-qty records for item {job} by {username}")
+
+                    # Clear cache after inventory change
+                    cache.delete_memoized(self.get_current_inventory)
+                    cache.delete('stats_summary')
+
+                    return {
+                        'success': True,
+                        'message': f'Successfully purged {deleted_count} zero-quantity record(s) for {job}',
+                        'job': job,
+                        'pcb_type': pcb_type,
+                        'quantity_picked': 0,
+                        'new_qty': 0,
+                        'purged': True,
+                        'records_deleted': deleted_count
+                    }
+
                 # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
                 # Use ILIKE for flexible matching (consistent with search_inventory)
@@ -1519,6 +1626,7 @@ class DatabaseManager:
                 else:
                     # Query warehouse inventory - aggregate by ITEM ONLY to show total available
                     # This ensures pick validation uses the correct total quantity
+                    # Include items with zero qty so they can be found for purge operations
                     query = """
                         SELECT
                             item as job,
@@ -1530,7 +1638,7 @@ class DatabaseManager:
                             MAX(mpn) as part_number,
                             COUNT(DISTINCT pcn) as pcn_count
                         FROM pcb_inventory."tblWhse_Inventory"
-                        WHERE onhandqty > 0
+                        WHERE onhandqty >= 0
                     """
 
                     if job:
