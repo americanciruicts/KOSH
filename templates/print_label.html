@@ -5,10 +5,10 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <meta name="version" content="2.0-new-template">
+    <meta name="version" content="3.0-fixed-alignment">
     <title>{{ data.pcn_number }}</title>
     <style type="text/css">
-        /* NEW TEMPLATE VERSION 2.0 - Page setup - exact 3x1 inch label */
+        /* TEMPLATE VERSION 3.0 - Page setup - exact 3x1 inch label */
         @page {
             size: 3in 1in;
             margin: 0;
@@ -26,7 +26,7 @@
         .label-box {
             width: 3in;
             height: 1in;
-            padding: 0.08in 0.12in;
+            padding: 0.06in 0.1in;
             background: white;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
             margin: 0 auto;
@@ -34,73 +34,71 @@
             flex-direction: column;
             box-sizing: border-box;
             position: relative;
+            overflow: hidden;
         }
 
         /* Top section with PCN, Barcode, and QTY */
         .label-top {
-            display: grid;
-            grid-template-columns: auto 1fr auto;
+            display: flex;
             align-items: center;
-            gap: 6px;
-            margin-bottom: 4px;
-            padding-bottom: 3px;
+            justify-content: space-between;
+            gap: 4px;
+            margin-bottom: 3px;
+            padding-bottom: 2px;
             border-bottom: 1.5px solid #000;
+            flex-shrink: 0;
         }
 
         .pcn-section {
-            font-size: 15px;
+            font-size: 13px;
             font-weight: bold;
             color: #000;
+            white-space: nowrap;
         }
 
         .barcode-section {
             display: flex;
             justify-content: center;
             align-items: center;
+            flex-shrink: 1;
+            min-width: 0;
         }
 
         .qty-section {
             text-align: right;
+            white-space: nowrap;
         }
 
         .qty-label {
-            font-size: 9px;
+            font-size: 8px;
             font-weight: bold;
             color: #333;
+            line-height: 1;
         }
 
         .qty-value {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
             color: #000;
+            line-height: 1.1;
         }
 
-        /* Bottom section with details */
+        /* Bottom section with details - single row layout */
         .label-details {
             display: grid;
-            grid-template-columns: 1.8fr 1fr;
-            gap: 6px;
-            font-size: 10px;
-            line-height: 1.5;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 2px 8px;
+            font-size: 8.5px;
+            line-height: 1.3;
             flex: 1;
-            align-items: start;
-        }
-
-        .details-left {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .details-right {
-            text-align: right;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
+            align-content: start;
         }
 
         .detail-line {
             margin: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .detail-line strong {
@@ -178,13 +176,14 @@
             .label-box {
                 width: 3in;
                 height: 1in;
-                padding: 0.08in 0.12in;
+                padding: 0.06in 0.1in;
                 margin: 0 !important;
                 box-shadow: none;
                 border: none;
                 page-break-inside: avoid;
                 page-break-after: avoid;
                 page-break-before: avoid;
+                overflow: hidden;
             }
 
             .controls {
@@ -214,27 +213,23 @@
             </div>
         </div>
 
-        <!-- Bottom section: Item details -->
+        <!-- Bottom section: Item details in 3-column grid -->
         <div class="label-details">
-            <div class="details-left">
-                {% if data.item %}
-                <div class="detail-line"><strong>Job Number:</strong> {{ data.item }}</div>
-                {% endif %}
-                {% if data.mpn %}
-                <div class="detail-line"><strong>MPN:</strong> {{ data.mpn }}</div>
-                {% endif %}
-                {% if data.po_number %}
-                <div class="detail-line"><strong>PO:</strong> {{ data.po_number }}</div>
-                {% endif %}
-            </div>
-            <div class="details-right">
-                {% if data.date_code %}
-                <div class="detail-line">DCC: {{ data.date_code }}</div>
-                {% endif %}
-                {% if data.msd %}
-                <div class="detail-line">MSD: {{ data.msd.replace('Level ', '') if 'Level' in data.msd else data.msd }}</div>
-                {% endif %}
-            </div>
+            {% if data.item %}
+            <div class="detail-line"><strong>Job:</strong> {{ data.item }}</div>
+            {% endif %}
+            {% if data.date_code %}
+            <div class="detail-line"><strong>DCC:</strong> {{ data.date_code }}</div>
+            {% endif %}
+            {% if data.msd %}
+            <div class="detail-line"><strong>MSD:</strong> {{ data.msd.replace('Level ', '') if 'Level' in data.msd else data.msd }}</div>
+            {% endif %}
+            {% if data.mpn %}
+            <div class="detail-line" style="grid-column: span 2;"><strong>MPN:</strong> {{ data.mpn }}</div>
+            {% endif %}
+            {% if data.po_number %}
+            <div class="detail-line"><strong>PO:</strong> {{ data.po_number }}</div>
+            {% endif %}
         </div>
     </div>
 
@@ -248,8 +243,8 @@
     <!-- Barcode generation -->
     <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
     <script>
-        // Version check - NEW TEMPLATE v2.0
-        console.log('✅ NEW LABEL TEMPLATE v2.0 LOADED');
+        // Version check - TEMPLATE v3.0
+        console.log('✅ LABEL TEMPLATE v3.0 LOADED - fixed alignment');
 
         window.addEventListener('load', function() {
             try {
