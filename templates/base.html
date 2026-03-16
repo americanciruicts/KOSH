@@ -625,6 +625,169 @@
                 }
             });
         }
+
+        // Global barcode scanner listener
+        // Barcode scanners type characters very fast (< 50ms between keys) and end with Enter
+        var scanBuffer = '';
+        var scanTimeout = null;
+        var lastKeyTime = 0;
+        var SCAN_THRESHOLD = 50; // max ms between characters for scanner input
+        var MIN_SCAN_LENGTH = 3; // minimum characters to count as a scan
+
+        document.addEventListener('keydown', function(e) {
+            // Skip if user is focused on an input/textarea/select field
+            var tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+                return;
+            }
+
+            var now = Date.now();
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                // Check if we have a valid scan buffer
+                if (scanBuffer.length >= MIN_SCAN_LENGTH) {
+                    handleBarcodeScan(scanBuffer.trim());
+                }
+                scanBuffer = '';
+                clearTimeout(scanTimeout);
+                return;
+            }
+
+            // Only capture printable characters
+            if (e.key.length === 1) {
+                // If too much time passed since last key, reset buffer
+                if (now - lastKeyTime > SCAN_THRESHOLD && scanBuffer.length > 0) {
+                    scanBuffer = '';
+                }
+                scanBuffer += e.key;
+                lastKeyTime = now;
+
+                // Auto-clear buffer after 500ms of no input (in case Enter never comes)
+                clearTimeout(scanTimeout);
+                scanTimeout = setTimeout(function() {
+                    scanBuffer = '';
+                }, 500);
+            }
+        });
+
+        function handleBarcodeScan(scannedValue) {
+            console.log('Barcode scanned:', scannedValue);
+
+            // PCN numbers are typically numeric (up to 5 digits)
+            var pcnNumber = scannedValue.replace(/\D/g, '');
+            if (!pcnNumber) {
+                console.warn('Scanned value is not a valid PCN:', scannedValue);
+                return;
+            }
+
+            // Look up the PCN and show options
+            fetch('/api/pcn/details/' + encodeURIComponent(pcnNumber))
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    if (data.success) {
+                        // PCN found - show scan result modal
+                        showScanResult(data);
+                    } else {
+                        showScanNotFound(pcnNumber);
+                    }
+                })
+                .catch(function(error) {
+                    console.error('Error looking up scanned PCN:', error);
+                    showScanNotFound(pcnNumber);
+                });
+        }
+
+        // Show scan result modal
+        window.showScanResult = function(data) {
+            var pcn = data.pcn_number || data.pcn || '';
+            var item = data.item || data.job || '';
+            var qty = data.quantity || data.onhandqty || 0;
+            var mpn = data.mpn || '';
+            var location = data.location || data.loc_to || '';
+
+            // Remove any existing scan modal
+            var existing = document.getElementById('scanResultModal');
+            if (existing) existing.remove();
+
+            var modalHtml = `
+                <div class="modal fade" id="scanResultModal" tabindex="-1">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header" style="background: linear-gradient(135deg, #059669, #10b981); color: white;">
+                                <h5 class="modal-title"><i class="bi bi-upc-scan me-2"></i>PCN Scanned: ${pcn}</h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 mb-3">
+                                    <div class="col-6"><strong>Item:</strong> ${item}</div>
+                                    <div class="col-6"><strong>QTY:</strong> ${qty}</div>
+                                    <div class="col-6"><strong>MPN:</strong> ${mpn || '-'}</div>
+                                    <div class="col-6"><strong>Location:</strong> ${location || '-'}</div>
+                                </div>
+                                <hr>
+                                <p class="text-muted small mb-0">Choose an action for this PCN:</p>
+                            </div>
+                            <div class="modal-footer d-flex flex-wrap gap-2 justify-content-center">
+                                <button class="btn btn-primary" onclick="window.open('/print-label/${pcn}', 'printLabel', 'width=500,height=350,toolbar=no,menubar=no,scrollbars=no'); bootstrap.Modal.getInstance(document.getElementById('scanResultModal')).hide();">
+                                    <i class="bi bi-printer me-1"></i> Print Label
+                                </button>
+                                <a href="/pick?job=${encodeURIComponent(item)}&pcn=${encodeURIComponent(pcn)}" class="btn btn-danger">
+                                    <i class="bi bi-dash-circle me-1"></i> Pick
+                                </a>
+                                <a href="/stock?job=${encodeURIComponent(item)}&pcn=${encodeURIComponent(pcn)}" class="btn btn-success">
+                                    <i class="bi bi-plus-circle me-1"></i> Stock
+                                </a>
+                                <button class="btn btn-secondary" data-bs-dismiss="modal">
+                                    <i class="bi bi-x-circle me-1"></i> Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            var scanModal = new bootstrap.Modal(document.getElementById('scanResultModal'));
+            scanModal.show();
+
+            // Cleanup on close
+            document.getElementById('scanResultModal').addEventListener('hidden.bs.modal', function() {
+                this.remove();
+            });
+        };
+
+        // Show not found message
+        window.showScanNotFound = function(pcnNumber) {
+            var existing = document.getElementById('scanResultModal');
+            if (existing) existing.remove();
+
+            var modalHtml = `
+                <div class="modal fade" id="scanResultModal" tabindex="-1">
+                    <div class="modal-dialog modal-dialog-centered">
+                        <div class="modal-content">
+                            <div class="modal-header" style="background: linear-gradient(135deg, #dc2626, #ef4444); color: white;">
+                                <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>PCN Not Found</h5>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body text-center py-4">
+                                <i class="bi bi-search" style="font-size: 3rem; color: #dc2626;"></i>
+                                <p class="mt-3 mb-0">PCN <strong>${pcnNumber}</strong> was not found in warehouse inventory.</p>
+                            </div>
+                            <div class="modal-footer justify-content-center">
+                                <button class="btn btn-secondary" data-bs-dismiss="modal"><i class="bi bi-x-circle me-1"></i> Close</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+            var scanModal = new bootstrap.Modal(document.getElementById('scanResultModal'));
+            scanModal.show();
+
+            document.getElementById('scanResultModal').addEventListener('hidden.bs.modal', function() {
+                this.remove();
+            });
+        };
     });
     </script>
 </body>
