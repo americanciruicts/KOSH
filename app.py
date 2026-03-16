@@ -5353,25 +5353,25 @@ def generate_zpl_label(pcn_number):
             # Convert to dict
             data = dict(pcn_data)
 
-            # Generate ZPL code for 3x1 inch label (Zebra ZP450)
+            # Generate ZPL code for 3x1 inch label (Zebra ZP450) - v3.0 aligned layout
             # Label dimensions: 3 inches wide (609 dots @ 203dpi), 1 inch tall (203 dots @ 203dpi)
-            # Padded 20 dots from edges for readability
+            # Padded 15 dots from edges for readability
             zpl = f"""^XA
-^FO20,8^A0N,28,28^FDPCN: {data['pcn_number']}^FS
+^FO15,6^A0N,26,26^FDPCN: {data['pcn_number']}^FS
 
-^FO180,5^BY3,3,55^BCN,55,N,N,N^FD{data['pcn_number']}^FS
+^FO170,4^BY2,2,45^BCN,45,N,N,N^FD{data['pcn_number']}^FS
 
-^FO490,8^A0N,16,16^FDQTY^FS
-^FO490,28^A0N,32,32^FD{data.get('quantity', 0)}^FS
+^FO490,6^A0N,14,14^FDQTY^FS
+^FO490,22^A0N,28,28^FD{data.get('quantity', 0)}^FS
 
-^FO20,70^GB569,0,2^FS
+^FO15,58^GB579,0,2^FS
 
-^FO25,78^A0N,20,20^FDJob: {data.get('item', 'N/A')}^FS
-^FO25,102^A0N,20,20^FDMPN: {data.get('mpn', 'N/A')}^FS
-^FO25,126^A0N,20,20^FDPO: {data.get('po_number', 'N/A')}^FS
+^FO20,65^A0N,22,22^FDJob: {data.get('item', 'N/A')}^FS
+^FO240,65^A0N,22,22^FDDCC: {data.get('date_code', 'N/A')}^FS
+^FO440,65^A0N,22,22^FDMSD: {data.get('msd', 'N/A')}^FS
 
-^FO370,78^A0N,20,20^FDDC: {data.get('date_code', 'N/A')}^FS
-^FO370,102^A0N,20,20^FDMSD: {data.get('msd', 'N/A')}^FS
+^FO20,92^A0N,22,22^FDMPN: {data.get('mpn', 'N/A')}^FS
+^FO440,92^A0N,22,22^FDPO: {data.get('po_number', 'N/A')}^FS
 
 ^XZ"""
 

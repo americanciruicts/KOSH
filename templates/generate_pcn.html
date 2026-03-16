@@ -1527,7 +1527,7 @@ function showPrintPreview(pcnNumber) {
     }
 }
 
-// Generate ZPL code for Zebra thermal printers (4" x 2" label)
+// Generate ZPL code for Zebra thermal printers (3x1 inch label) - v3.0 aligned layout
 function generateZPL(data) {
     const pcn = data.pcn_number || data.pcn || '';
     const item = data.item || data.job || data.part_number || '';
@@ -1537,26 +1537,26 @@ function generateZPL(data) {
     const dc = data.date_code || '';
     const msd = data.msd || data.msd_level || '';
 
-    // ZPL for 4" x 2" label (matches bats.png format)
-    return `^XA
-^FO50,30^A0N,30,30^FDPCN^FS
-^FO50,65^A0N,50,50^FD${pcn}^FS
+    // ZPL for 3x1 inch label (Zebra ZP450 - 609x203 dots @ 203dpi)
+    let zpl = `^XA
+^FO15,6^A0N,26,26^FDPCN: ${pcn}^FS
 
-^FO450,30^A0N,30,30^FDQTY:^FS
-^FO450,65^A0N,50,50^FD${qty}^FS
+^FO170,4^BY2,2,45^BCN,45,N,N,N^FD${pcn}^FS
 
-^FO50,140^BY2,2,40^BCN,40,N,N,N^FD${pcn}^FS
+^FO490,6^A0N,14,14^FDQTY^FS
+^FO490,22^A0N,28,28^FD${qty}^FS
 
-^FO50,210^A0N,25,25^FDItem: ${item}^FS
-${mpn ? `^FO50,240^A0N,25,25^FDMPN: ${mpn}^FS` : ''}
-${po ? `^FO50,270^A0N,25,25^FDPO: ${po}^FS` : ''}
+^FO15,58^GB579,0,2^FS
 
-${dc ? `^FO550,210^A0N,20,20^FDDCC ${dc}^FS` : ''}
-${msd ? `^FO550,235^A0N,20,20^FDMSD ${msd}^FS` : ''}
+^FO20,65^A0N,22,22^FDJob: ${item}^FS
+${dc ? `^FO240,65^A0N,22,22^FDDCC: ${dc}^FS` : ''}
+${msd ? `^FO440,65^A0N,22,22^FDMSD: ${msd}^FS` : ''}
 
-^FO50,320^BY3,3,60^BCN,60,Y,N,N^FD${pcn}^FS
+${mpn ? `^FO20,92^A0N,22,22^FDMPN: ${mpn}^FS` : ''}
+${po ? `^FO440,92^A0N,22,22^FDPO: ${po}^FS` : ''}
 
 ^XZ`;
+    return zpl;
 }
 
 console.log('✅ silentPrint function registered globally');
