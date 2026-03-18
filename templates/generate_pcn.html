@@ -5,7 +5,7 @@
 {% block extra_css %}
 <style>
     .pcn-card {
-        border-left: 4px solid #3b82f6;
+        border-left: 4px solid #8b5cf6;
         border-radius: 12px;
         overflow: hidden;
     }
@@ -15,15 +15,15 @@
         overflow: hidden;
     }
     .pcn-preview {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-        border: 2px dashed #3b82f6;
+        background: linear-gradient(135deg, #f0f9ff 0%, #f5f3ff 100%);
+        border: 2px dashed #8b5cf6;
         border-radius: 12px;
         padding: 24px;
     }
     .pcn-number-display {
         font-size: 3rem;
         font-weight: 800;
-        color: #1e40af;
+        color: #5b21b6;
         font-family: 'Courier New', monospace;
         letter-spacing: 4px;
         text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
@@ -57,12 +57,12 @@
         transition: all 0.3s ease;
     }
     .form-control:focus, .form-select:focus {
-        border-color: #3b82f6;
+        border-color: #8b5cf6;
         box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
     }
     .instruction-card {
-        background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-        border-left: 4px solid #3b82f6;
+        background: linear-gradient(135deg, #eff6ff 0%, #ede9fe 100%);
+        border-left: 4px solid #8b5cf6;
         border-radius: 8px;
         padding: 16px;
         margin-bottom: 16px;
@@ -163,7 +163,7 @@
 {% endblock %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);">
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #8b5cf6 0%, #5b21b6 100%);">
     <div class="col-12">
         <h1 class="h2 mb-2">
             <i class="bi bi-upc-scan me-2"></i> Generate PCN
@@ -793,40 +793,24 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log('Barcode PCN:', barcodeData); // Debug: show what's being encoded
 
         labelPreview.innerHTML = `
-            <div style="font-family: Arial, sans-serif; font-size: 10px; line-height: 1.4; border: 2px solid #000; padding: 10px; background: white;">
-                <!-- Top section with PCN, small barcode, QTY -->
-                <div style="display: grid; grid-template-columns: auto 1fr auto; align-items: center; margin-bottom: 6px;">
-                    <div style="margin-right: 8px;">
-                        <div style="font-weight: bold; font-size: 8px;">PCN</div>
-                        <div style="font-weight: bold; font-size: 14px;">${data.pcn_number}</div>
-                    </div>
-                    <div style="text-align: center;">
-                        <svg id="previewTopBarcode" style="height: 25px;"></svg>
-                    </div>
-                    <div style="text-align: right; margin-left: 8px;">
-                        <div style="font-weight: bold; font-size: 8px;">QTY:</div>
-                        <div style="font-weight: bold; font-size: 14px;">${data.quantity || '0'}</div>
+            <div style="font-family: Arial, sans-serif; font-size: 9px; line-height: 1.3; border: 2px solid #000; padding: 6px 8px; background: white; width: 3in; box-sizing: border-box;">
+                <!-- Top section: PCN | Barcode | QTY -->
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px; padding-bottom: 1px; border-bottom: 1.5px solid #000;">
+                    <div style="font-weight: bold; font-size: 12px; white-space: nowrap;">PCN: ${data.pcn_number}</div>
+                    <div style="flex: 1; text-align: center;"><svg id="previewTopBarcode" style="height: 20px;"></svg></div>
+                    <div style="text-align: right; white-space: nowrap;">
+                        <div style="font-weight: bold; font-size: 7px;">QTY</div>
+                        <div style="font-weight: bold; font-size: 13px;">${data.quantity || '0'}</div>
                     </div>
                 </div>
 
-                <!-- Middle section -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; margin-bottom: 8px;">
-                    <div>
-                        <div style="font-size: 10px; margin-bottom: 2px;">
-                            <span style="font-weight: bold;">Item:</span> ${data.item || ''}
-                        </div>
-                        ${data.mpn ? `<div style="font-size: 10px; margin-bottom: 2px;"><span style="font-weight: bold;">MPN:</span> ${data.mpn}</div>` : ''}
-                        ${data.po_number ? `<div style="font-size: 10px;"><span style="font-weight: bold;">PO:</span></div><div style="font-size: 10px; margin-left: 15px;">${data.po_number}</div>` : ''}
-                    </div>
-                    <div style="text-align: right; font-size: 9px;">
-                        ${data.date_code ? `<div>DCC ${data.date_code}</div>` : ''}
-                        ${data.msd ? `<div>MSD ${data.msd.replace('Level ', '')}</div>` : ''}
-                    </div>
-                </div>
-
-                <!-- Barcode at bottom -->
-                <div style="text-align: center; border-top: 1px solid #ccc; padding-top: 6px;">
-                    <svg id="previewBarcode"></svg>
+                <!-- Details: 4-column, 2-row grid -->
+                <div style="display: grid; grid-template-columns: auto auto auto auto; gap: 0px 10px; font-size: 9px; line-height: 1.3; justify-content: start;">
+                    <div><strong>Job:</strong> ${data.item || '-'}</div>
+                    <div style="grid-column: span 2;"><strong>MPN:</strong> ${data.mpn || '-'}</div>
+                    <div><strong>DCC:</strong> ${data.date_code || '-'}</div>
+                    <div style="grid-column: span 2;"><strong>PO:</strong> ${data.po_number || '-'}</div>
+                    <div><strong>MSD:</strong> ${data.msd ? data.msd.replace('Level ', '') : '-'}</div>
                 </div>
             </div>
         `;
@@ -834,30 +818,17 @@ document.addEventListener('DOMContentLoaded', function() {
         // Wait for DOM to be ready, then generate barcodes
         setTimeout(() => {
             try {
-                // Generate small top barcode - THICK SCANNABLE BARS
                 JsBarcode("#previewTopBarcode", barcodeData, {
                     format: "CODE128",
-                    width: 1.5,        // THICK bars for easy scanning
-                    height: 30,        // Good height for scanning
+                    width: 1,
+                    height: 18,
                     displayValue: false,
-                    margin: 2
+                    margin: 0,
+                    background: "#ffffff",
+                    lineColor: "#000000"
                 });
             } catch (error) {
                 console.error('Error generating top barcode:', error);
-            }
-
-            try {
-                // Generate large bottom barcode - THICK SCANNABLE BARS
-                JsBarcode("#previewBarcode", barcodeData, {
-                    format: "CODE128",
-                    width: 2.0,        // THICK bars for easy scanning
-                    height: 40,        // Good height for scanning
-                    displayValue: true,
-                    fontSize: 12,      // Readable text
-                    margin: 2
-                });
-            } catch (error) {
-                console.error('Error generating bottom barcode:', error);
             }
 
             // Also generate printable version
@@ -868,43 +839,24 @@ document.addEventListener('DOMContentLoaded', function() {
     // Generate printable label (matching bats.png physical label format EXACTLY)
     function generatePrintableLabel(data, barcodeData) {
         printableLabel.innerHTML = `
-            <div style="width: 4in; height: 2in; padding: 0.2in; font-family: Arial, sans-serif; border: 2px solid #000; box-sizing: border-box; background: white;">
-                <!-- Top row: PCN left, small barcode middle, QTY right -->
-                <div style="display: grid; grid-template-columns: auto 1fr auto; align-items: center; margin-bottom: 6px;">
-                    <div style="margin-right: 10px;">
-                        <div style="font-size: 10px; font-weight: bold;">PCN</div>
-                        <div style="font-size: 18px; font-weight: bold;">${data.pcn_number}</div>
-                    </div>
-                    <div style="text-align: center;">
-                        <svg id="topBarcode" style="height: 30px;"></svg>
-                    </div>
-                    <div style="text-align: right; margin-left: 10px;">
-                        <div style="font-size: 10px; font-weight: bold;">QTY:</div>
-                        <div style="font-size: 18px; font-weight: bold;">${data.quantity || '0'}</div>
+            <div style="width: 3in; height: 1in; padding: 0.04in 0.08in; font-family: Arial, sans-serif; border: 2px solid #000; box-sizing: border-box; background: white; display: flex; flex-direction: column;">
+                <!-- Top row: PCN | Barcode | QTY -->
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px; padding-bottom: 1px; border-bottom: 1.5px solid #000; flex-shrink: 0;">
+                    <div style="font-weight: bold; font-size: 12px; white-space: nowrap;">PCN: ${data.pcn_number}</div>
+                    <div style="flex: 1; text-align: center;"><svg id="topBarcode" style="height: 18px;"></svg></div>
+                    <div style="text-align: right; white-space: nowrap;">
+                        <div style="font-weight: bold; font-size: 7px;">QTY</div>
+                        <div style="font-weight: bold; font-size: 13px;">${data.quantity || '0'}</div>
                     </div>
                 </div>
 
-                <!-- Middle section: Left side (Item, MPN, PO) and Right side (DCC, MSD) -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; margin-bottom: 10px;">
-                    <!-- Left column -->
-                    <div>
-                        <div style="font-size: 11px; margin-bottom: 2px;">
-                            <span style="font-weight: bold;">Item:</span> ${data.item || ''}
-                        </div>
-                        ${data.mpn ? `<div style="font-size: 11px; margin-bottom: 2px;"><span style="font-weight: bold;">MPN:</span> ${data.mpn}</div>` : ''}
-                        ${data.po_number ? `<div style="font-size: 11px; margin-bottom: 2px;"><span style="font-weight: bold;">PO:</span></div><div style="font-size: 11px; margin-left: 20px;">${data.po_number}</div>` : ''}
-                    </div>
-
-                    <!-- Right column -->
-                    <div style="text-align: right; font-size: 10px;">
-                        ${data.date_code ? `<div>DCC ${data.date_code}</div>` : ''}
-                        ${data.msd ? `<div>MSD ${data.msd.replace('Level ', '')}</div>` : ''}
-                    </div>
-                </div>
-
-                <!-- Bottom barcode -->
-                <div style="text-align: center; margin-top: auto; padding-top: 6px; border-top: 1px solid #ccc;">
-                    <svg id="printBarcode" style="width: 100%;"></svg>
+                <!-- Details: 4-column, 2-row grid -->
+                <div style="display: grid; grid-template-columns: auto auto auto auto; gap: 0px 10px; font-size: 9px; line-height: 1.3; flex: 1; align-content: center; justify-content: start;">
+                    <div><strong>Job:</strong> ${data.item || '-'}</div>
+                    <div style="grid-column: span 2;"><strong>MPN:</strong> ${data.mpn || '-'}</div>
+                    <div><strong>DCC:</strong> ${data.date_code || '-'}</div>
+                    <div style="grid-column: span 2;"><strong>PO:</strong> ${data.po_number || '-'}</div>
+                    <div><strong>MSD:</strong> ${data.msd ? data.msd.replace('Level ', '') : '-'}</div>
                 </div>
             </div>
         `;
@@ -914,27 +866,15 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 JsBarcode("#topBarcode", barcodeData, {
                     format: "CODE128",
-                    width: 2.0,       // THICK bars for printing/scanning
-                    height: 35,       // Good height
+                    width: 1,
+                    height: 18,
                     displayValue: false,
-                    margin: 2
+                    margin: 0,
+                    background: "#ffffff",
+                    lineColor: "#000000"
                 });
             } catch (error) {
                 console.error('Error generating printable top barcode:', error);
-            }
-
-            try {
-                // Generate large bottom barcode - THICK SCANNABLE BARS
-                JsBarcode("#printBarcode", barcodeData, {
-                    format: "CODE128",
-                    width: 2.5,       // THICK bars for printing/scanning
-                    height: 50,       // Tall for easy scanning
-                    displayValue: true,
-                    fontSize: 14,     // Readable text
-                    margin: 2
-                });
-            } catch (error) {
-                console.error('Error generating printable bottom barcode:', error);
             }
         }, 150);
     }

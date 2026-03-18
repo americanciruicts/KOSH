@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 rounded-3 shadow-lg" style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);">
+<div class="row align-items-center mb-4 p-3 rounded-3 shadow-lg" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%);">
     <div class="col-12">
         <h1 class="h3 mb-0 text-white fw-bold">
             <i class="bi bi-clock-history me-2"></i> Transaction History
@@ -25,7 +25,7 @@
             </div>
             <div class="col-md-2">
                 <button type="submit" class="btn btn-primary btn-lg w-100 shadow-sm"
-                        style="background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); border: none; border-radius: 0.5rem; transition: transform 0.2s;">
+                        style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); border: none; border-radius: 0.5rem; transition: transform 0.2s;">
                     <i class="bi bi-search me-1"></i> Search
                 </button>
             </div>
@@ -35,12 +35,12 @@
         <div class="mt-4 pt-4 border-top">
             <div class="row">
                 <div class="col-md-12">
-                    <div class="alert alert-info mb-0 shadow-sm" role="alert" style="background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 100%); border: 2px solid #3b82f6; border-radius: 0.75rem;">
+                    <div class="alert alert-info mb-0 shadow-sm" role="alert" style="background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); border: 2px solid #8b5cf6; border-radius: 0.75rem;">
                         <div class="d-flex align-items-center">
-                            <i class="bi bi-info-circle-fill me-3" style="font-size: 1.5rem; color: #1e40af;"></i>
+                            <i class="bi bi-info-circle-fill me-3" style="font-size: 1.5rem; color: #5b21b6;"></i>
                             <div>
                                 <small class="text-muted d-block mb-1">DESCRIPTION</small>
-                                <strong style="font-size: 1.2rem; color: #1e40af;">{{ pcn_info.item }} - {{ pcn_info.mpn or 'N/A' }}</strong>
+                                <strong style="font-size: 1.2rem; color: #5b21b6;">{{ pcn_info.item }} - {{ pcn_info.mpn or 'N/A' }}</strong>
                             </div>
                         </div>
                     </div>
@@ -57,7 +57,7 @@
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover mb-0" style="font-size: 0.95rem;">
-                <thead style="background: linear-gradient(135deg, #1e40af 0%, #2563eb 100%); color: white;">
+                <thead style="background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 100%); color: white;">
                     <tr>
                         <th class="py-3 px-3" style="border: none;">Tran Time</th>
                         <th class="py-3 px-3" style="border: none;">Tran</th>
@@ -126,13 +126,13 @@
 }
 
 .table tbody tr:hover {
-    background-color: #dbeafe !important;
+    background-color: #ede9fe !important;
     transform: scale(1.005);
     box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
 }
 
 .form-control:focus {
-    border-color: #3b82f6;
+    border-color: #8b5cf6;
     box-shadow: 0 0 0 0.25rem rgba(59, 130, 246, 0.15);
     transform: scale(1.02);
 }

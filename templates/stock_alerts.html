@@ -56,12 +56,12 @@
                     {% for item in low_stock_items %}
                     <tr style="{% if loop.index % 2 == 0 %}background: #f8fafc;{% endif %} border-left: 3px solid {% if item.onhandqty == 0 %}#dc2626{% elif item.onhandqty < 5 %}#f59e0b{% else %}#eab308{% endif %};">
                         <td class="py-2 px-3">
-                            <a href="{{ url_for('pcn_history', pcn=item.pcn) }}" class="text-decoration-none fw-bold" style="color: #2563eb;">
+                            <a href="{{ url_for('pcn_history', pcn=item.pcn) }}" class="text-decoration-none fw-bold" style="color: #7c3aed;">
                                 {{ item.pcn }}
                             </a>
                         </td>
-                        <td class="py-2 px-3"><strong style="color: #1e3a8a;">{{ item.item or '-' }}</strong></td>
-                        <td class="py-2 px-3"><code style="background: #dbeafe; color: #1e40af; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.85rem; font-weight: 600;">{{ item.mpn or '-' }}</code></td>
+                        <td class="py-2 px-3"><strong style="color: #4c1d95;">{{ item.item or '-' }}</strong></td>
+                        <td class="py-2 px-3"><code style="background: #ede9fe; color: #5b21b6; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.85rem; font-weight: 600;">{{ item.mpn or '-' }}</code></td>
                         <td class="py-2 px-3" style="color: #64748b;">{{ item.dc or '-' }}</td>
                         <td class="py-2 px-3 text-center">
                             <span class="badge shadow-sm {% if item.onhandqty == 0 %}bg-danger{% elif item.onhandqty < 5 %}bg-warning text-dark{% else %}bg-warning text-dark{% endif %}" style="font-size: 0.85rem; padding: 0.4rem 0.8rem;">
@@ -170,12 +170,12 @@
 }
 
 [data-theme="dark"] .table tbody strong {
-    color: #60a5fa !important;
+    color: #a78bfa !important;
 }
 
 [data-theme="dark"] code {
     background: #1e293b !important;
-    color: #60a5fa !important;
+    color: #a78bfa !important;
 }
 
 [data-theme="dark"] .card {
