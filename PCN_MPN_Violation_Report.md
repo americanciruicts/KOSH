@@ -1,0 +1,224 @@
+# PCN-MPN Integrity Report — FULL CROSS-DATABASE ANALYSIS
+**Generated:** 2026-03-13
+**Rule:** Each PCN must map to exactly ONE MPN
+**Scope:** ALL tables in KOSH (PostgreSQL) and Access Database (INVENTORY TABLE.mdb)
+
+---
+
+## Summary
+
+| Database | Tables Checked | Total PCNs with Multiple MPNs |
+|----------|---------------|-------------------------------|
+| **KOSH (PostgreSQL)** | tblWhse_Inventory, tblTransaction, tblReceipt, tblShortageReportItems | **263** |
+| **Access Database** | tblWhse_Inventory, tblTransaction, tblReceipt | **72** |
+
+The massive difference (263 vs 72) is because KOSH includes **tblShortageReportItems** — the shortage report stores the BOM's MPN, which often differs from the warehouse's MPN for the same PCN. This is the exact issue you found with PCN 38207.
+
+---
+
+## The Core Problem: Shortage Report MPN ≠ Warehouse MPN
+
+**141 unique PCNs** in the shortage report have an MPN that differs from what's stored in the warehouse for that same PCN.
+
+This happens because:
+1. The BOM has MPN "A" for a part
+2. The warehouse received an equivalent/alternate part with MPN "B"
+3. The shortage report saves the BOM's MPN with the warehouse's PCN
+4. Now the same PCN has two different MPNs across tables
+
+### All 141 Shortage-vs-Warehouse MPN Mismatches
+
+| PCN | Shortage Report MPN | Warehouse MPN | Item |
+|-----|-------------------|---------------|------|
+| 513 | CRCW121010M00FKEA | CRCW121010M0FKEA | 5984-10 |
+| 1067 | MCR10EZHF475 | MCR10EZHF4750 | 4578-15 |
+| 1477 | C1206C101J5GACTU | 12065A101JAT2A | 5984-6 |
+| 9040 | (FPG4) 3101.0045 | 1N5359BRLG | 4187-5 |
+| 9320 | 1N4003 | 1N4003-T | 5684L-3 |
+| 10298 | CK06BX105K | LP2950CZ-5.0 | 4187-10 |
+| 10763 | CK06BX104K | A202210 | 4187-15 |
+| 11135 | MAX987ESA | MAX987ESA+ | 5984-16 |
+| 14196 | ECJ-1VB1H102K | 06035C102JAT4A | 6163L-7 |
+| 15333 | C1206C104K5RACTU | C3216X7R2E104K160AA | 5984-3 |
+| 15334 | MAX987ESA | MAX987ESA+ | 5984-16 |
+| 15465 | GRM21BR61A106KE19L | GRM21BR61E106KA73L | 6163L-9 |
+| 15553 | ERO-S2PHF1002 | RNMF14FTC10K0 | 5684L-2 |
+| 15967 | C1608X7R1H104K | C0603C104K5RACTU | 6163L-8 |
+| 18101 | GRM21BR61A106KE19L | C0805C106K4PACTU | 6163L-9 |
+| 18581 | 25LC640 | 25LC640A-M/N | 4578-5 |
+| 18582 | 25LC640 | 25LC640A-M/HN (BLANK - NEED TO PROGRAM) | 4578-5 |
+| 19049 | GRM21BR61A106KE19L | C0805C106K4PACTU | 6163L-9 |
+| 21381 | C1608X7R1H104K | C0603C104K5RACTU | 6163L-8 |
+| 23740 | GRM21BR61A106KE19L | C0805C106K4PACTU | 6163L-9 |
+| 25744 | GRM21BR61A106KE19L | GRM21BR61E106KA73L | 6163L-9 |
+| 26268 | 06033C103MAT | 06033C103MAT2A | 4553-315 |
+| 31361 | GD05MPS17J-TR | GB05MPS17-263 | 8500-295 |
+| 32760 | C1608X7R1H104K | C1608X7R1H104K080AA | 6163L-8 |
+| 32865 | ERO-S2PHF1002 | RNMF14FTC10K0 | 5684L-2 |
+| 33456 | ISM95-3251AH-60.000MHZ | SM95-3251AH-60.000MHZ | 8500-470 |
+| 33899 | HSMH-C150 | **john** | 8500-115 |
+| 34295 | GRM21BR61A106KE19L | GRM21BR61E106KA73L | 6163L-9 |
+| 34299 | ECJ-1VB1H102K | 06035C102JAT4A | 6163L-7 |
+| 34300 | GRM21BR61A106KE19L | GRM21BR61E106KA73L | 6163L-9 |
+| 34303 | C1608X7R1H104K | C1608X7R1H104K080AA | 6163L-8 |
+| 34305 | ECJ-1VB1H102K | 06035C102JAT4A | 6163L-7 |
+| 37798 | RNF14FTD470K | MF1/4DCT52R4703F | 7396-125 |
+| 37806 | 271-51K-RC | MF1/4DCT52R5102F | 7396-75 |
+| 38154 | RN14FTD8K20 | RNMF14FTC8K20 | 7396-60 |
+| 38155 | RNF14FTD2M20 | MFR-25FTE52-2M2 | 7396-100 |
+| 38157 | RNF14FTD76K8 | MFR-25FTE52-76K8 | 7396-110 |
+| 38158 | RNF14FTD330K | MF1/4DCT52R3303F | 7396-30 |
+| 38160 | LM7808C | MC7808CTG | 7396-230 |
+| 38163 | RNF14FTD2M20 | MFR-25FTE52-2M2 | 7396-100 |
+| 38170 | RNF14FTD120K | MF1/4DCT52R1203F | 7396-65 |
+| 38183 | CSM030A1 | CSM040A1 | 7396-295 |
+| 38243 | ERO-S2PHF6201 | RNMF14FTC6K20 | 5684L-7 |
+| 38244 | ERO-S2PHF6201 | RNMF14FTC6K20 | 5684L-7 |
+| 38246 | UCN5891A | MIC5891YN | 5684L-11 |
+| 38250 | LM78L05ACZX | LM78L05ACZ/LFT1 | 5684L-8 |
+| 38251 | ERO-S2PHF1002 | RNMF14FTC10K0 | 5684L-2 |
+| 38252 | ERO-S2PHF1002 | RNMF14FTC10K0 | 5684L-2 |
+| 38255 | C316C271J5G5TA7301 | FA18C0G1H271JNU06 | 5684L-5 |
+| 38258 | C316C561J5G5TA7301 | FA18C0G1H561JNU00 | 5684L-6 |
+| 38264 | ERO-S2PHF6201 | RNMF14FTC6K20 | 5684L-7 |
+| 38266 | 1N4003 | 1N4003RLG | 5684L-3 |
+| 38275 | FK26X7R2A104K | FK26X7R2A104KN000 | 5570L-1-4 |
+| 38279 | MC7908CT-BP | MC7908ACTG | 5570L-1-12 |
+| 38280 | VBED15-D24-D12-1 | FEC15-24D12 | 5570L-1-10 |
+| 38282 | ALSR-5-50-1 | ALSR0550R00FE12 | 5570L-1-8 |
+| 38283 | ALSR-5-50-1 | ALSR0550R00FE12 | 5570L-1-8 |
+| 38284 | ALSR-5-50-1 | ALSR0550R00FE12 | 5570L-1-8 |
+| 38286 | MFR-25FBF-2K49 | SFR2500002491FR500 | 5570L-1-9 |
+| 38719 | 26-60-1100 | 1-640388-0 | 4187-65 |
+| 38720 | 202204 | A202210 | 4187-85 |
+| 38725 | T83-A90X | B88069X8300B502 | 4187-55 |
+| 38729 | V27ZA1 | V27ZA1P | 4187-45 |
+| 38731 | 202204 | A202204 | 4187-85 |
+| 38736 | (FPG4) 3101.0045 | 3101.0045 | 4187-5 |
+| 38751 | 1597400000 | 284506-6 | 4272L-27 |
+| 39111 | 1N5408 | 1N5408RLG | 5872-11 |
+| 39113 | CIF-07-B-0-5 | CIF07005-ON | 5872-5 |
+| 39114 | 1A5018-10 | BK1A5018-10-R | 5872-8 |
+| 39116 | GMC-5A | BK-GMC-5-R | 5872-10 |
+| 39120 | CIM-02-9P-5 | 1757242 | 5872-2 |
+| 39121 | GMC-1A | BK-GMC-1R | 5872-9 |
+| 39124 | CIM-07-9P-5 | 1757297 | 5872-3 |
+| 39125 | CIM-07-9P-5 | TBP01R1-508-07BE | 5872-3 |
+| 40044 | INA260 | INA260AIPWR | 8461L-20 |
+| 40404 | C316C271J5G5TA7301 | FA18C0G1H271JNU06 | 5684L-5 |
+| 40407 | C316C561J5G5TA7301 | FA18C0G1H561JNU00 | 5684L-6 |
+| 40750 | 1N4003 | 1N4003RLG | 5684L-3 |
+| 40751 | 1N4003 | 1N4003RLG | 5684L-3 |
+| 40752 | 1N4003 | 1N4003RLG | 5684L-3 |
+| 40784 | UCN5891A | MIC5891YN | 5684L-11 |
+| 40787 | C316C104K5R5TA | C326C104K1R5TA7301 | 5684L-1 |
+| 40842 | RNF14FTD68K0 | MF1/4DCT52R6802F | 7396-25 |
+| 40846 | RNF14FTD330K | MF1/4DCT52R3303F | 7396-30 |
+| 40847 | RNF14FTD220R | MF1/4DCT52R2200F | 7396-10 |
+| 40849 | RNF14FTD1M50 | MF1/4DCT52R1004F | 7396-130 |
+| 40851 | RN14FTD8K20 | MF1/4DCT52R8201F | 7396-60 |
+| 40852 | RNF14FTD750R | MFR-25FTE52-750R | 7396-40 |
+| 40853 | RNF14FTD110K | MF1/4DCT52R1103F | 7396-115 |
+| 40855 | RNF14FTD220K | MF1/4DCT52R2203F | 7396-120 |
+| 40857 | RNF14FTD22K0 | MF1/4DCT52R2202F | 7396-15 |
+| 40859 | RNF14FTD154K | MF1/4DCT52R5601F | 7396-85 |
+| 40863 | RNF14FTD82K0 | MF1/4DCT52R8202F | 7396-20 |
+| 40864 | RNF14FTD243K | MF1/4DCT52R2433F | 7396-70 |
+| 40865 | RNF14FTD39R0 | MF1/4DCT52R39R0F | 7396-50 |
+| 40867 | RNF14FTD76K8 | MF1/4DCT52R7681F | 7396-110 |
+| 40872 | RNF14FTD120K | MF1/4DCT52R1203F | 7396-65 |
+| 40873 | RNF14FTD4R70 | MF1/4DCT52R4R70F | 7396-140 |
+| 40874 | RNF14FTD1K80 | MF1/4DCT52R1801F | 7396-45 |
+| 40876 | 271-51K-RC | MFR-25FTE52-51K | 7396-75 |
+| 40878 | RNF14FTD4K70 | MFR-25FTE52-4K7 | 7396-80 |
+| 40883 | RNF14FTD33R0 | MF1/4DCT52R33R0F | 7396-135 |
+| 40885 | RNF14FTD2M20 | MFR-25FTE52-2M2 | 7396-100 |
+| 40911 | FOXLF024S | ECS-24-32-1X | 7396-245 |
+| 40912 | RNF14FTD154K | CMF55154K00FHEB | 7396-85 |
+| 40923 | MAL203036109E3 | MAL203026109E3 | 7396-195 |
+| 40929 | 5-102694-2 | 5-102398-2 | 7396-415 |
+| 40930 | LM7808C | MC7808CTG | 7396-230 |
+| 40937 | RNF14FTD180K | HVR2500001803FR500 | 7396-385 |
+| 40949 | RC0201FR-07221RL | AC0201FR-07221RL | 8754L-55 |
+| 41003 | RNF14FTD76K8 | MF1/4DCT52R7682F | 7396-110 |
+| 41138 | RNF14FTD39R0 | MF1/4DCT52R39R0F | 7396-50 |
+| 41139 | RNF14FTD243K | MF1/4DCT52R2433F | 7396-70 |
+| 41140 | RNF14FTD76K8 | MF1/4DCT52R7682F | 7396-110 |
+| 41145 | RNF14FTD220K | MF1/4DCT52R2203F | 7396-120 |
+| 41147 | RNF14FTD120K | MF1/4DCT52R1203F | 7396-65 |
+| 41151 | RNF14FTD220R | MF1/4DCT52R2200F | 7396-10 |
+| 41152 | RNF14FTD2M20 | MFR-25FTE52-2M2 | 7396-100 |
+| 41153 | RNF14FTD4R70 | MF1/4DCT52R4R70F | 7396-140 |
+| 41154 | RNF14FTD5K60 | MF1/4DCT52R5601F | 7396-95 |
+| 41156 | 271-51K-RC | MFR-25FTE52-51K | 7396-75 |
+| 41160 | RNF14FTD68K0 | MF1/4DCT52R6802F | 7396-25 |
+| 41161 | RNF14FTD82K0 | MF1/4DCT52R8202F | 7396-20 |
+| 41162 | RNF14FTD110K | MF1/4DCT52R1103F | 7396-115 |
+| 41163 | RNF14FTD22K0 | MF1/4DCT52R2202F | 7396-15 |
+| 41166 | RNF14FTD330K | MF1/4DCT52R3303F | 7396-30 |
+| 41167 | RNF14FTD33R0 | MF1/4DCT52R33R0F | 7396-135 |
+| 41168 | RNF14FTD470K | MF1/4DCT52R4703F | 7396-125 |
+| 41169 | RNF14FTD154K | CMF55154K00FHEB | 7396-85 |
+| 41170 | RNF14FTD1K80 | MF1/4DCT52R1801F | 7396-45 |
+| 41171 | RNF14FTD4K70 | MFR-25FTE52-4K7 | 7396-80 |
+| 41174 | RNF14FTD1M50 | MF1/4DCT52R1004F | 7396-130 |
+| 41177 | RN14FTD8K20 | MF1/4DCT52R8201F | 7396-60 |
+| 41184 | FOXLF024S | ECS-24-32-1X | 7396-245 |
+| 41189 | MAL203036109E3 | MAL203026109E3 | 7396-195 |
+| 41194 | RNF14FTD180K | RNV14FAL180K | 7396-385 |
+| 41195 | LM7808C | MC7808CTG | 7396-230 |
+| 41200 | 5-102694-2 | 5-102398-2 | 7396-415 |
+| 41254 | 5-102694-2 | 5-102398-2 | 7396-415 |
+| 41290 | 5-102694-2 | 5-102398-2 | 7396-415 |
+| 42213 | RNF14FTD4R70 | MF1/4DCT52R4R70F | 7396-140 |
+
+### Worst Offender: PCN 33899
+- Shortage report says MPN = `HSMH-C150` (LED Red)
+- Warehouse says MPN = `john` (a username, not a part number!)
+
+---
+
+## Cross-Table Violations (Receipt vs Warehouse vs Transaction)
+
+Beyond the shortage report, **72 PCNs** (Access) / **122 PCNs** (KOSH) have different MPNs across tblReceipt, tblTransaction, and tblWhse_Inventory.
+
+### Most Affected Jobs
+
+| Job | Violations | Description |
+|-----|-----------|-------------|
+| 7396 | ~60+ PCNs | Bulk of through-hole resistor MPN swaps (BOM MPN vs received alternate) |
+| 5684L | ~15 PCNs | Resistors, capacitors, diodes — alternate MPNs received |
+| 5570L-1 | ~6 PCNs | Power components — alternate suppliers |
+| 4187 | ~8 PCNs | Caps, connectors — old vs new MPNs |
+| 5872 | ~8 PCNs | Fuses, connectors — BOM MPN vs actual received |
+| 6163L | ~10 PCNs | Capacitors — multiple alternates for same value |
+
+### Data Quality Issues Found
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| **Alternate/equivalent MPNs** (BOM vs what was received) | ~100 | `RNF14FTD470K` vs `MF1/4DCT52R4703F` — same 470K resistor, different mfg |
+| **MPN suffix/format differences** | ~30 | `1N4003` vs `1N4003RLG`, `MAX987ESA` vs `MAX987ESA+` |
+| **Whitespace/tab/newline in MPN** | ~25 | `\tHLMP-2300` vs `HLMP-2300` |
+| **Description appended to MPN** | ~10 | `ERJ-8ENF5363V - 536K OHM 1% 1206` |
+| **Completely wrong MPN** | ~8 | PCN 33899: `john` instead of `HSMH-C150` |
+| **ACI internal PN replaced with real MPN** | ~5 | `ACI-1243` → `ERJ-3EKF6200V` |
+| **Truly different parts on same PCN** | ~10 | PCN 10298: `CK06BX105K` (cap) vs `LP2950CZ-5.0` (voltage regulator) |
+
+---
+
+## About PCN 38207
+
+PCN 38207 (`2KBP01M-E4/51`, item 6858L-12) is **consistent** across all raw tables — same MPN everywhere. It does NOT appear in tblShortageReportItems in KOSH. If you saw two different MPNs on a shortage report for this PCN, the mismatch may have been between the **BOM line's MPN** and the **warehouse PCN's MPN** at display time, not in stored data.
+
+---
+
+## Recommendations
+
+1. **The shortage report saving logic needs to track BOTH MPNs** — the BOM MPN and the warehouse MPN — so users can see when an alternate was used.
+
+2. **Normalize MPNs on data entry** — strip whitespace, tabs, newlines; don't allow descriptions in the MPN field.
+
+3. **Fix PCN 33899** — warehouse MPN is literally `john` (a username). Should be `HSMH-C150`.
+
+4. **Add a PCN-MPN consistency check** — when a shortage report is generated, flag any PCN where the warehouse MPN doesn't match the BOM MPN so users know an alternate was used.

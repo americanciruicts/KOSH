@@ -921,7 +921,12 @@
 
         thead.table-light th,
         thead.table-dark th,
-        thead.table-primary th {
+        thead.table-primary th,
+        thead.table-success th,
+        thead.table-info th,
+        thead.table-warning th,
+        thead.table-secondary th,
+        thead[class*="table-"] th {
             background-color: #5b21b6 !important;
             color: #ffffff !important;
             border-color: #7c3aed !important;
