@@ -491,32 +491,60 @@
             background-color: #4c1d95 !important;
         }
 
-        /* All card headers - purple with white text */
-        .card-header {
+        /* All card headers - purple with white text (override all Bootstrap bg classes) */
+        .card-header,
+        .card-header.bg-white,
+        .card-header.bg-light,
+        .card-header.bg-primary,
+        .card-header.bg-success,
+        .card-header.bg-info,
+        .card-header.bg-secondary,
+        .card-header.bg-dark,
+        .card-header.bg-warning,
+        .card-header.bg-danger,
+        .card-header[class*="bg-"] {
             background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 100%) !important;
             color: #ffffff !important;
             border-bottom: 1px solid #8b5cf6 !important;
         }
 
+        .card-header *,
+        .card-header h4,
         .card-header h5,
         .card-header h6,
+        .card-header p,
         .card-header span,
+        .card-header div,
         .card-header i,
         .card-header small,
         .card-header strong,
         .card-header a,
+        .card-header label,
         .card-header .text-dark,
         .card-header .text-muted,
         .card-header .text-success,
         .card-header .text-primary,
         .card-header .text-info,
-        .card-header .text-warning {
+        .card-header .text-warning,
+        .card-header .text-secondary,
+        .card-header .text-danger {
             color: #ffffff !important;
         }
 
         .card-header .badge {
             background-color: rgba(255, 255, 255, 0.2) !important;
             color: #ffffff !important;
+        }
+
+        .card-header .badge.bg-danger {
+            background-color: #ef4444 !important;
+        }
+
+        /* Override bg-opacity modifiers on card-headers */
+        .card-header.bg-warning.bg-opacity-10,
+        .card-header.bg-warning {
+            background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 100%) !important;
+            --bs-bg-opacity: 1 !important;
         }
 
         .btn-outline-primary {
