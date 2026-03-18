@@ -235,16 +235,18 @@
 
 .modern-card-header {
     padding: 1.5rem;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid #8b5cf6;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: var(--bg-secondary);
+    background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 100%) !important;
+    color: white !important;
 }
 
-.modern-card-header h5 {
-    font-size: 1.125rem;
-    font-weight: 600;
+.modern-card-header * ,
+.modern-card-header h5,
+.modern-card-header i,
+.modern-card-header a {
     color: white !important;
 }
 
@@ -271,13 +273,13 @@
 
 .modern-table thead th {
     padding: 1rem 1.5rem;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
+    background: #5b21b6 !important;
+    color: #ffffff !important;
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    border-bottom: 2px solid var(--border-color);
+    border-bottom: 2px solid #7c3aed;
 }
 
 .modern-table tbody tr {
@@ -514,7 +516,7 @@
                 {% if summary %}
                     <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
                         <table class="modern-table">
-                            <thead style="position: sticky; top: 0; background-color: var(--card-bg); z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                            <thead style="position: sticky; top: 0; background-color: #5b21b6; color: white; z-index: 10; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                                 <tr>
                                     <th>MPN / Part Number</th>
                                     <th>Description</th>

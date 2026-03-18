@@ -77,6 +77,38 @@
             background-color: #ef4444 !important;
         }
 
+        /* Modern card headers - purple with white text */
+        .modern-card-header {
+            background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 100%) !important;
+            color: white !important;
+            border-bottom: 1px solid #8b5cf6 !important;
+        }
+        .modern-card-header *,
+        .modern-card-header h5,
+        .modern-card-header h6,
+        .modern-card-header i,
+        .modern-card-header span,
+        .modern-card-header a,
+        .modern-card-header .text-primary,
+        .modern-card-header .text-muted {
+            color: white !important;
+        }
+        .modern-card-header .badge {
+            background-color: rgba(255, 255, 255, 0.2) !important;
+            color: white !important;
+        }
+        [data-theme="dark"] .modern-card-header {
+            background: linear-gradient(135deg, #4c1d95 0%, #6d28d9 100%) !important;
+        }
+
+        /* Modern table headers - purple */
+        .modern-table thead,
+        .modern-table thead th {
+            background: #5b21b6 !important;
+            color: #ffffff !important;
+            border-bottom: 2px solid #7c3aed !important;
+        }
+
         /* Professional Color Scheme - Unified Purple Palette */
         :root {
             /* Light mode colors - Professional Purple Theme */
