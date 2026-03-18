@@ -1,6 +1,6 @@
-        /* Professional Color Scheme - Unified Blue Palette */
+        /* Professional Color Scheme - Unified Purple Palette */
         :root {
-            /* Light mode colors - Professional Blue Theme */
+            /* Light mode colors - Professional Purple Theme */
             --bg-primary: #ffffff;
             --bg-secondary: #f7f9fc;
             --bg-card: #ffffff;
@@ -8,7 +8,7 @@
             --text-secondary: #64748b;
             --border-color: #e2e8f0;
 
-            /* Primary brand color - Professional blue */
+            /* Primary brand color - Professional purple */
             --brand-primary: #7c3aed;
             --brand-primary-hover: #6d28d9;
             --brand-primary-light: #ede9fe;
@@ -18,7 +18,7 @@
             --navbar-gradient-end: #8b5cf6;
             --navbar-border: #a78bfa;
 
-            /* Card accents - Subtle blue shades */
+            /* Card accents - Subtle purple shades */
             --card-accent-1: #7c3aed;
             --card-accent-2: #8b5cf6;
             --card-accent-3: #a78bfa;
@@ -470,7 +470,65 @@
         .table-hover tbody tr:hover {
             background-color: var(--table-hover);
         }
-        /* Professional Button Styles - Unified Blue Palette */
+        /* Override Bootstrap blue defaults to purple */
+        .bg-primary {
+            background-color: #7c3aed !important;
+        }
+
+        .btn-outline-primary {
+            color: #7c3aed;
+            border-color: #7c3aed;
+        }
+
+        .btn-outline-primary:hover {
+            background-color: #7c3aed;
+            border-color: #7c3aed;
+            color: #ffffff;
+        }
+
+        .text-primary {
+            color: #7c3aed !important;
+        }
+
+        .border-primary {
+            border-color: #7c3aed !important;
+        }
+
+        .badge.bg-primary {
+            background-color: #7c3aed !important;
+        }
+
+        .card-header.bg-primary {
+            background-color: #5b21b6 !important;
+            color: #ffffff !important;
+        }
+
+        .pagination .page-item.active .page-link {
+            background-color: #7c3aed;
+            border-color: #7c3aed;
+        }
+
+        .pagination .page-link {
+            color: #7c3aed;
+        }
+
+        .pagination .page-link:hover {
+            color: #5b21b6;
+        }
+
+        a {
+            color: #7c3aed;
+        }
+
+        a:hover {
+            color: #5b21b6;
+        }
+
+        .table-primary {
+            background-color: #ede9fe !important;
+        }
+
+        /* Professional Button Styles - Unified Purple Palette */
         .btn-primary {
             background: var(--button-primary);
             border-color: var(--button-primary);
@@ -680,14 +738,45 @@
             border-bottom: 1px solid var(--border-color);
         }
 
+        /* Light mode - Purple table headers */
+        table thead,
+        table thead tr,
+        .table thead {
+            background-color: #5b21b6 !important;
+        }
+
+        table thead th,
+        .table thead th,
+        thead th {
+            background-color: #5b21b6 !important;
+            color: #ffffff !important;
+            border-color: #7c3aed !important;
+            font-weight: 600 !important;
+        }
+
+        thead.table-light th,
+        thead.table-dark th,
+        thead.table-primary th {
+            background-color: #5b21b6 !important;
+            color: #ffffff !important;
+            border-color: #7c3aed !important;
+        }
+
+        .table-light thead th,
+        .table-dark thead th {
+            background-color: #5b21b6 !important;
+            color: #ffffff !important;
+        }
+
         [data-theme="dark"] .table-light {
             background-color: var(--bg-secondary) !important;
             color: var(--text-primary) !important;
         }
 
         [data-theme="dark"] thead.table-light th {
-            color: var(--text-primary) !important;
-            border-color: var(--border-color) !important;
+            background-color: #4c1d95 !important;
+            color: #ffffff !important;
+            border-color: #8b5cf6 !important;
         }
 
         [data-theme="dark"] .table-dark {
@@ -1627,7 +1716,7 @@
 
         /* Nav dropdown items in dark mode */
         [data-theme="dark"] .dropdown-menu .dropdown-item {
-            color: #ffffff !important;
+            color: rgba(255, 255, 255, 0.9) !important;
         }
 
         [data-theme="dark"] .dropdown-menu .dropdown-item:hover {
