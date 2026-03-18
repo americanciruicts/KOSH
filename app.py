@@ -450,7 +450,7 @@ class RestockForm(FlaskForm):
     po = StringField('PO Number', validators=[Optional(), Length(max=50)])
     quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
     location_from = StringField('Source Location', validators=[Optional(), Length(max=50)], default='Count Area')
-    location_to = StringField('Destination Location', validators=[Optional(), Length(max=50)])
+    location_to = StringField('Destination Location (Optional)', validators=[Optional(), Length(max=50)])
     submit = SubmitField('Restock Parts')
 
     def validate(self, extra_validators=None):

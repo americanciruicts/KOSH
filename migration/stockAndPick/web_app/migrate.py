@@ -220,6 +220,9 @@ def migrate_table_data(all_data):
                         # Clean data
                         if value:
                             clean_value = str(value).replace('\x00', '')
+                            # Strip whitespace from MPN fields to prevent migration corruption
+                            if safe_name.lower() == 'mpn':
+                                clean_value = clean_value.strip(' \t\n\r\xa0').replace('\xa0', '')
                             if len(clean_value) > 1000:
                                 clean_value = clean_value[:1000] + '...'
                             clean_record[safe_name] = clean_value

@@ -470,9 +470,53 @@
         .table-hover tbody tr:hover {
             background-color: var(--table-hover);
         }
-        /* Override Bootstrap blue defaults to purple */
+        /* Override Bootstrap defaults to purple */
         .bg-primary {
             background-color: #7c3aed !important;
+        }
+
+        .bg-success {
+            background-color: #6d28d9 !important;
+        }
+
+        .bg-info {
+            background-color: #7c3aed !important;
+        }
+
+        .bg-secondary {
+            background-color: #5b21b6 !important;
+        }
+
+        .bg-dark {
+            background-color: #4c1d95 !important;
+        }
+
+        /* All card headers - purple with white text */
+        .card-header {
+            background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 100%) !important;
+            color: #ffffff !important;
+            border-bottom: 1px solid #8b5cf6 !important;
+        }
+
+        .card-header h5,
+        .card-header h6,
+        .card-header span,
+        .card-header i,
+        .card-header small,
+        .card-header strong,
+        .card-header a,
+        .card-header .text-dark,
+        .card-header .text-muted,
+        .card-header .text-success,
+        .card-header .text-primary,
+        .card-header .text-info,
+        .card-header .text-warning {
+            color: #ffffff !important;
+        }
+
+        .card-header .badge {
+            background-color: rgba(255, 255, 255, 0.2) !important;
+            color: #ffffff !important;
         }
 
         .btn-outline-primary {
@@ -733,9 +777,23 @@
             background-color: var(--bg-secondary) !important;
         }
 
+        [data-theme="dark"] .card-header,
         [data-theme="dark"] .card-header.bg-light {
-            background-color: var(--bg-secondary) !important;
-            border-bottom: 1px solid var(--border-color);
+            background: linear-gradient(135deg, #4c1d95 0%, #5b21b6 100%) !important;
+            color: #ffffff !important;
+            border-bottom: 1px solid #8b5cf6 !important;
+        }
+
+        [data-theme="dark"] .card-header h5,
+        [data-theme="dark"] .card-header h6,
+        [data-theme="dark"] .card-header span,
+        [data-theme="dark"] .card-header i,
+        [data-theme="dark"] .card-header small,
+        [data-theme="dark"] .card-header strong,
+        [data-theme="dark"] .card-header a,
+        [data-theme="dark"] .card-header .text-dark,
+        [data-theme="dark"] .card-header .text-muted {
+            color: #ffffff !important;
         }
 
         /* Light mode - Purple table headers */
