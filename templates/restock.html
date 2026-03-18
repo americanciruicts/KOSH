@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%);">
+<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white;">
     <div class="col-md-8">
         <h1 class="h2 mb-2 text-white">
             <i class="bi bi-arrow-counterclockwise me-2"></i> Restock Parts
@@ -62,7 +62,7 @@
         <!-- Restock Form -->
         <div class="col-xl-7">
             <div class="card border-0 shadow-lg">
-                <div class="card-header bg-white border-0 pb-0">
+                <div class="card-header border-0 pb-0">
                     <div class="d-flex align-items-center justify-content-between">
                         <div>
                             <h4 class="text-success mb-1">
@@ -215,7 +215,7 @@
         <div class="col-xl-5">
             <!-- Part Details Card (appears after autofill) -->
             <div class="card border-0 shadow-sm mb-4" id="partDetailsCard" style="display: none;">
-                <div class="card-header bg-primary text-white">
+                <div class="card-header">
                     <h5 class="mb-0">
                         <i class="bi bi-info-circle me-2"></i> Part Details
                     </h5>
@@ -260,7 +260,7 @@
 
             <!-- Quick Stats -->
             <div class="card border-0 shadow-sm mb-4">
-                <div class="card-header bg-success text-white">
+                <div class="card-header">
                     <h5 class="mb-0">
                         <i class="bi bi-info-circle me-2"></i> Restock Information
                     </h5>
@@ -292,7 +292,7 @@
 
             <!-- Recent Restock Activity -->
             <div class="card border-0 shadow-sm">
-                <div class="card-header bg-light">
+                <div class="card-header">
                     <h6 class="mb-0 text-dark">
                         <i class="bi bi-clock-history"></i> Recent Restock Activity
                     </h6>

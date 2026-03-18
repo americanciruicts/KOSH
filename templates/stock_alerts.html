@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="row align-items-center mb-3 p-2 rounded-3 shadow" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%);">
+<div class="row align-items-center mb-3 p-2 rounded-3 shadow" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white;">
     <div class="col-12">
         <h1 class="h4 mb-0 fw-bold" style="color: white !important;">
             <i class="bi bi-exclamation-triangle me-2"></i> Stock Alerts
@@ -14,7 +14,7 @@
 <!-- Stats Summary -->
 <div class="row mb-3">
     <div class="col-12">
-        <div class="card border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%);">
+        <div class="card border-0 shadow-sm rounded-3" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white;">
             <div class="card-body py-2">
                 <div class="row text-center">
                     <div class="col-md-6">
@@ -34,7 +34,7 @@
 <!-- Stock Alerts Table -->
 {% if low_stock_items %}
 <div class="card border-0 shadow rounded-3">
-    <div class="card-header text-white border-0 py-2" style="background: #5b21b6;">
+    <div class="card-header border-0 py-2" style="background: #5b21b6;">
         <h6 class="mb-0 fw-bold"><i class="bi bi-list-ul me-2"></i>Low Stock Items</h6>
     </div>
     <div class="card-body p-0">

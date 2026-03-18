@@ -1,3 +1,49 @@
+        /* ============================================
+           PAGE HEADERS & PROFESSIONAL HEADERS
+           All page banners: purple gradient + white text
+           ============================================ */
+        .professional-header {
+            background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%) !important;
+            color: white !important;
+            border-radius: 12px !important;
+            padding: 25px !important;
+            border-bottom: none !important;
+        }
+
+        .professional-header *,
+        .professional-header h1,
+        .professional-header h2,
+        .professional-header h3,
+        .professional-header h4,
+        .professional-header h5,
+        .professional-header h6,
+        .professional-header p,
+        .professional-header span,
+        .professional-header small,
+        .professional-header a,
+        .professional-header i,
+        .professional-header .text-muted,
+        .professional-header .text-dark,
+        .professional-header .text-primary,
+        .professional-header .text-secondary,
+        .professional-header .header-icon,
+        .professional-header .header-icon i {
+            color: white !important;
+        }
+
+        .professional-header .header-icon {
+            background: rgba(255, 255, 255, 0.15) !important;
+        }
+
+        .professional-header .badge {
+            background-color: rgba(255, 255, 255, 0.2) !important;
+            color: white !important;
+        }
+
+        [data-theme="dark"] .professional-header {
+            background: linear-gradient(135deg, #4c1d95 0%, #6d28d9 100%) !important;
+        }
+
         /* Professional Color Scheme - Unified Purple Palette */
         :root {
             /* Light mode colors - Professional Purple Theme */
