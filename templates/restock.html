@@ -31,9 +31,9 @@
                         <h5 class="alert-heading mb-2">Restock Workflow</h5>
                         <p class="mb-1"><strong>Step 1:</strong> Parts are counted and staged in Count Area</p>
                         <p class="mb-1"><strong>Step 2:</strong> Restock moves parts from Count Area → Your specified location</p>
-                        <p class="mb-0"><strong>Step 3:</strong> You must enter a destination location for the parts</p>
+                        <p class="mb-0"><strong>Step 3:</strong> Optionally enter a destination location for the parts</p>
                         <small class="text-muted d-block mt-2">
-                            <i class="bi bi-shield-check"></i> Source: Count Area (fixed) | Destination: Your choice (required)
+                            <i class="bi bi-shield-check"></i> Source: Count Area (fixed) | Destination: Your choice (optional)
                         </small>
                     </div>
                 </div>
@@ -115,6 +115,13 @@
                                     </div>
                                 {% endif %}
                                 <small class="text-muted">Or search by Item Number</small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.po.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.po(class="form-control form-control-lg border-2", placeholder="e.g., PO-12345", readonly="readonly") }}
+                                <small class="text-muted">Auto-filled from part lookup</small>
                             </div>
                         </div>
                     </div>
@@ -344,6 +351,7 @@ let autofillTimeout = null;
 let isAutoFilling = false; // Flag to prevent input event loops
 const pcnInput = document.getElementById('{{ form.pcn.id }}');
 const itemInput = document.getElementById('{{ form.item.id }}');
+const poInput = document.getElementById('{{ form.po.id }}');
 const partDetailsCard = document.getElementById('partDetailsCard');
 
 // Function to fetch and display part details
@@ -381,13 +389,16 @@ function fetchPartDetails(pcn, item) {
                 document.getElementById('detail-mfg').textContent = partData.mfg_qty.toLocaleString();
                 document.getElementById('available-qty').textContent = partData.mfg_qty.toLocaleString();
 
-                // Auto-fill the other field (PCN or Item)
-                // Always update with fetched data to ensure accuracy
+                // Auto-fill all fields with fetched data
                 isAutoFilling = true; // Prevent input event from triggering another fetch
                 if (pcn) {
-                    itemInput.value = partData.item;
+                    itemInput.value = partData.item || '';
                 } else if (item) {
-                    pcnInput.value = partData.pcn;
+                    pcnInput.value = partData.pcn || '';
+                }
+                // Always fill PO number
+                if (poInput) {
+                    poInput.value = partData.po || '';
                 }
                 setTimeout(() => { isAutoFilling = false; }, 100); // Reset flag after a short delay
 
@@ -476,12 +487,7 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
     // No MFG quantity validation - users can adjust based on actual counts
 
     // Confirmation dialog
-    const location = document.getElementById('{{ form.location_to.id }}').value;
-    if (!location) {
-        e.preventDefault();
-        alert('Please enter a destination location');
-        return false;
-    }
+    const location = document.getElementById('{{ form.location_to.id }}').value || 'default location';
     const confirmMsg = `Are you sure you want to restock ${quantity} units from Count Area to ${location}?`;
     if (!confirm(confirmMsg)) {
         e.preventDefault();

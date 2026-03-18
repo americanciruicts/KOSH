@@ -445,11 +445,12 @@ class PickForm(FlaskForm):
 
 class RestockForm(FlaskForm):
     """Form for restocking parts from Count Area to specified location."""
-    pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=1)])
+    pcn = StringField('PCN Number', validators=[Optional(), Length(max=50)])
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
+    po = StringField('PO Number', validators=[Optional(), Length(max=50)])
     quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
     location_from = StringField('Source Location', validators=[Optional(), Length(max=50)], default='Count Area')
-    location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50)])
+    location_to = StringField('Destination Location', validators=[Optional(), Length(max=50)])
     submit = SubmitField('Restock Parts')
 
     def validate(self, extra_validators=None):
@@ -2533,8 +2534,11 @@ def pick():
             logger.info(f"pick_pcb returned: {result}")
 
             if result.get('success'):
-                flash(f"Successfully picked {result['picked_qty']} units of {result['job']}. "
-                      f"Remaining: {result['new_qty']}", 'success')
+                if result.get('purged'):
+                    flash(f"Successfully purged {result.get('records_deleted', 0)} zero-quantity record(s) for {result['job']}.", 'success')
+                else:
+                    flash(f"Successfully picked {result['picked_qty']} units of {result['job']}. "
+                          f"Remaining: {result['new_qty']}", 'success')
                 return redirect(url_for('pick'))
             else:
                 error_msg = result.get('error', 'Unknown error')
@@ -2574,12 +2578,19 @@ def restock():
         try:
             username = session.get('username', 'system')
 
+            pcn_value = None
+            if form.pcn.data:
+                try:
+                    pcn_value = int(form.pcn.data.strip())
+                except (ValueError, AttributeError):
+                    pcn_value = None
+
             result = db_manager.restock_pcb(
-                pcn=form.pcn.data if form.pcn.data else None,
-                item=form.item.data if form.item.data else None,
+                pcn=pcn_value,
+                item=form.item.data.strip() if form.item.data else None,
                 quantity=form.quantity.data,
                 location_from=form.location_from.data or 'Count Area',
-                location_to=form.location_to.data,
+                location_to=form.location_to.data.strip() if form.location_to.data else None,
                 username=username
             )
             logger.info(f"restock_pcb returned: {result}")

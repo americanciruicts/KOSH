@@ -445,11 +445,12 @@ class PickForm(FlaskForm):
 
 class RestockForm(FlaskForm):
     """Form for restocking parts from Count Area to specified location."""
-    pcn = IntegerField('PCN Number', validators=[Optional(), NumberRange(min=1)])
+    pcn = StringField('PCN Number', validators=[Optional(), Length(max=50)])
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
+    po = StringField('PO Number', validators=[Optional(), Length(max=50)])
     quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
     location_from = StringField('Source Location', validators=[Optional(), Length(max=50)], default='Count Area')
-    location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50)])
+    location_to = StringField('Destination Location', validators=[Optional(), Length(max=50)])
     submit = SubmitField('Restock Parts')
 
     def validate(self, extra_validators=None):
@@ -594,21 +595,12 @@ class DatabaseManager:
                 cursor.close()
                 self.return_connection(conn)
 
-    @staticmethod
-    def normalize_mpn(mpn):
-        """Strip tabs, newlines, non-breaking spaces, and leading/trailing whitespace from MPN."""
-        if not mpn:
-            return mpn
-        return mpn.strip(' \t\n\r\xa0').replace('\xa0', '')
-
     def stock_pcb(self, job: str, pcb_type: str, quantity: int, location_from: str, location_to: str,
                   itar_classification: str = 'NONE', user_role: str = 'USER',
                   itar_auth: bool = False, username: str = 'system', work_order: str = None,
                   dc: str = None, msd: str = None, pcn: int = None, mpn: str = None,
                   part_number: str = None) -> Dict[str, Any]:
         """Stock PCB - directly updates warehouse inventory and transaction tables."""
-        # Normalize MPN to prevent whitespace corruption
-        mpn = self.normalize_mpn(mpn)
         # CRITICAL: Input validation
         if not isinstance(quantity, int) or quantity < 1 or quantity > 10000:
             return {
@@ -803,6 +795,113 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             try:
+                # PURGE OPERATION: When quantity is 0, delete zero-qty records from inventory
+                if quantity == 0:
+                    if pcn:
+                        # Check that the PCN exists and has zero on-hand qty
+                        cursor.execute("""
+                            SELECT pcn, item, onhandqty
+                            FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE pcn::text = %s AND item::text ILIKE %s
+                            FOR UPDATE
+                        """, (str(pcn), job))
+                        row = cursor.fetchone()
+                        if not row:
+                            conn.rollback()
+                            return {
+                                'success': False,
+                                'error': f'PCN {pcn} not found for item {job} in warehouse inventory.',
+                                'job': job, 'pcb_type': pcb_type
+                            }
+                        if row[2] and int(row[2]) > 0:
+                            conn.rollback()
+                            return {
+                                'success': False,
+                                'error': f'Cannot purge PCN {pcn} — on-hand quantity is {int(row[2])}. Pick the remaining units first or edit quantity to 0.',
+                                'job': job, 'pcb_type': pcb_type
+                            }
+                        # Delete the zero-qty warehouse inventory record
+                        cursor.execute("""
+                            DELETE FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE pcn::text = %s AND item::text ILIKE %s
+                        """, (str(pcn), job))
+                        deleted_count = cursor.rowcount
+                        # Record a PURGE transaction
+                        cursor.execute("""
+                            INSERT INTO pcb_inventory."tblTransaction"
+                            (trantype, item, pcn, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                            VALUES ('PURGE', %s, %s, 0,
+                                    TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
+                                    'Warehouse', 'Purged', %s, %s)
+                        """, (job, str(pcn), work_order or '', username))
+                    else:
+                        # Purge all zero-qty records for this item
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s AND onhandqty = 0
+                            FOR UPDATE
+                        """, (job,))
+                        zero_count = cursor.fetchone()[0]
+                        if zero_count == 0:
+                            # Check if item exists at all
+                            cursor.execute("""
+                                SELECT COUNT(*) FROM pcb_inventory."tblWhse_Inventory"
+                                WHERE item::text ILIKE %s
+                            """, (job,))
+                            total = cursor.fetchone()[0]
+                            conn.rollback()
+                            if total > 0:
+                                return {
+                                    'success': False,
+                                    'error': f'No zero-quantity records found for {job}. All records have on-hand quantity > 0.',
+                                    'job': job, 'pcb_type': pcb_type
+                                }
+                            else:
+                                return {
+                                    'success': False,
+                                    'error': f'Item {job} not found in warehouse inventory.',
+                                    'job': job, 'pcb_type': pcb_type
+                                }
+                        # Get PCNs being purged for transaction logging
+                        cursor.execute("""
+                            SELECT pcn FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s AND onhandqty = 0
+                        """, (job,))
+                        purged_pcns = [str(r[0]) for r in cursor.fetchall()]
+                        # Delete zero-qty records
+                        cursor.execute("""
+                            DELETE FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s AND onhandqty = 0
+                        """, (job,))
+                        deleted_count = cursor.rowcount
+                        # Record PURGE transactions
+                        for p in purged_pcns:
+                            cursor.execute("""
+                                INSERT INTO pcb_inventory."tblTransaction"
+                                (trantype, item, pcn, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                                VALUES ('PURGE', %s, %s, 0,
+                                        TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
+                                        'Warehouse', 'Purged', %s, %s)
+                            """, (job, p, work_order or '', username))
+
+                    conn.commit()
+                    logger.info(f"Purge operation: Deleted {deleted_count} zero-qty records for item {job} by {username}")
+
+                    # Clear cache after inventory change
+                    cache.delete_memoized(self.get_current_inventory)
+                    cache.delete('stats_summary')
+
+                    return {
+                        'success': True,
+                        'message': f'Successfully purged {deleted_count} zero-quantity record(s) for {job}',
+                        'job': job,
+                        'pcb_type': pcb_type,
+                        'quantity_picked': 0,
+                        'new_qty': 0,
+                        'purged': True,
+                        'records_deleted': deleted_count
+                    }
+
                 # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
                 # Use ILIKE for flexible matching (consistent with search_inventory)
@@ -1528,6 +1627,7 @@ class DatabaseManager:
                 else:
                     # Query warehouse inventory - aggregate by ITEM ONLY to show total available
                     # This ensures pick validation uses the correct total quantity
+                    # Include items with zero qty so they can be found for purge operations
                     query = """
                         SELECT
                             item as job,
@@ -1539,7 +1639,7 @@ class DatabaseManager:
                             MAX(mpn) as part_number,
                             COUNT(DISTINCT pcn) as pcn_count
                         FROM pcb_inventory."tblWhse_Inventory"
-                        WHERE onhandqty > 0
+                        WHERE onhandqty >= 0
                     """
 
                     if job:
@@ -2434,8 +2534,11 @@ def pick():
             logger.info(f"pick_pcb returned: {result}")
 
             if result.get('success'):
-                flash(f"Successfully picked {result['picked_qty']} units of {result['job']}. "
-                      f"Remaining: {result['new_qty']}", 'success')
+                if result.get('purged'):
+                    flash(f"Successfully purged {result.get('records_deleted', 0)} zero-quantity record(s) for {result['job']}.", 'success')
+                else:
+                    flash(f"Successfully picked {result['picked_qty']} units of {result['job']}. "
+                          f"Remaining: {result['new_qty']}", 'success')
                 return redirect(url_for('pick'))
             else:
                 error_msg = result.get('error', 'Unknown error')
@@ -2475,12 +2578,19 @@ def restock():
         try:
             username = session.get('username', 'system')
 
+            pcn_value = None
+            if form.pcn.data:
+                try:
+                    pcn_value = int(form.pcn.data.strip())
+                except (ValueError, AttributeError):
+                    pcn_value = None
+
             result = db_manager.restock_pcb(
-                pcn=form.pcn.data if form.pcn.data else None,
-                item=form.item.data if form.item.data else None,
+                pcn=pcn_value,
+                item=form.item.data.strip() if form.item.data else None,
                 quantity=form.quantity.data,
                 location_from=form.location_from.data or 'Count Area',
-                location_to=form.location_to.data,
+                location_to=form.location_to.data.strip() if form.location_to.data else None,
                 username=username
             )
             logger.info(f"restock_pcb returned: {result}")
@@ -4664,7 +4774,7 @@ def api_generate_pcn():
                 'PCN Generation',  # trantype
                 data.get('item'),  # item (job number)
                 pcn_number,  # pcn
-                PCBInventoryManager.normalize_mpn(data.get('mpn')),  # mpn
+                data.get('mpn'),  # mpn
                 data.get('date_code'),  # dc
                 data.get('msd'),  # msd
                 data.get('quantity', '0'),  # tranqty
@@ -4686,7 +4796,7 @@ def api_generate_pcn():
             """, (
                 data.get('item'),
                 pcn_number,
-                PCBInventoryManager.normalize_mpn(data.get('mpn')) or '',
+                data.get('mpn') or '',
                 data.get('date_code'),
                 data.get('quantity', 0),  # Set initial quantity from user input
                 data.get('location_from', '-'),
@@ -5254,25 +5364,25 @@ def generate_zpl_label(pcn_number):
             # Convert to dict
             data = dict(pcn_data)
 
-            # Generate ZPL code for 3x1 inch label (Zebra ZP450)
+            # Generate ZPL code for 3x1 inch label (Zebra ZP450) - v3.0 aligned layout
             # Label dimensions: 3 inches wide (609 dots @ 203dpi), 1 inch tall (203 dots @ 203dpi)
-            # Padded 20 dots from edges for readability
+            # Padded 15 dots from edges for readability
             zpl = f"""^XA
-^FO20,8^A0N,28,28^FDPCN: {data['pcn_number']}^FS
+^FO15,6^A0N,26,26^FDPCN: {data['pcn_number']}^FS
 
-^FO180,5^BY3,3,55^BCN,55,N,N,N^FD{data['pcn_number']}^FS
+^FO170,4^BY2,2,45^BCN,45,N,N,N^FD{data['pcn_number']}^FS
 
-^FO490,8^A0N,16,16^FDQTY^FS
-^FO490,28^A0N,32,32^FD{data.get('quantity', 0)}^FS
+^FO490,6^A0N,14,14^FDQTY^FS
+^FO490,22^A0N,28,28^FD{data.get('quantity', 0)}^FS
 
-^FO20,70^GB569,0,2^FS
+^FO15,58^GB579,0,2^FS
 
-^FO25,78^A0N,20,20^FDJob: {data.get('item', 'N/A')}^FS
-^FO25,102^A0N,20,20^FDMPN: {data.get('mpn', 'N/A')}^FS
-^FO25,126^A0N,20,20^FDPO: {data.get('po_number', 'N/A')}^FS
+^FO20,65^A0N,22,22^FDJob: {data.get('item', 'N/A')}^FS
+^FO240,65^A0N,22,22^FDDCC: {data.get('date_code', 'N/A')}^FS
+^FO440,65^A0N,22,22^FDMSD: {data.get('msd', 'N/A')}^FS
 
-^FO370,78^A0N,20,20^FDDC: {data.get('date_code', 'N/A')}^FS
-^FO370,102^A0N,20,20^FDMSD: {data.get('msd', 'N/A')}^FS
+^FO20,92^A0N,22,22^FDMPN: {data.get('mpn', 'N/A')}^FS
+^FO440,92^A0N,22,22^FDPO: {data.get('po_number', 'N/A')}^FS
 
 ^XZ"""
 
@@ -6046,37 +6156,78 @@ def job_detail(job_number):
         job_rev = rev_row['job_rev'] if rev_row else None
 
         # Get BOM lines with live inventory lookup
-        # Exclude MFG Floor items and filter to latest rev
+        # First deduplicate BOM per aci_pn, then match inventory using warehouse MPN
         cursor.execute("""
+            WITH bom_lines AS (
+                SELECT DISTINCT ON (b.aci_pn)
+                    b.line,
+                    b.aci_pn,
+                    b."DESC",
+                    b.mpn as bom_mpn,
+                    b.man,
+                    b.qty,
+                    b.cost,
+                    b.pou,
+                    b.job_rev,
+                    b.last_rev,
+                    b.cust,
+                    b.cust_pn,
+                    b.cust_rev
+                FROM pcb_inventory."tblBOM" b
+                WHERE b.job = %s
+                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                ORDER BY b.aci_pn, b.line
+            ),
+            inventory_match AS (
+                SELECT DISTINCT ON (w.pcn, bl.aci_pn)
+                    bl.line,
+                    bl.aci_pn,
+                    bl."DESC",
+                    w.mpn,
+                    bl.man,
+                    bl.qty,
+                    bl.cost,
+                    bl.pou,
+                    bl.job_rev,
+                    bl.last_rev,
+                    bl.cust,
+                    bl.cust_pn,
+                    bl.cust_rev,
+                    w.pcn,
+                    w.item,
+                    w.onhandqty,
+                    w.loc_to,
+                    CASE WHEN bl.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
+                FROM bom_lines bl
+                LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                    ON (bl.aci_pn = w.item OR bl.bom_mpn = w.mpn)
+                WHERE COALESCE(w.loc_to, '') != 'MFG Floor'
+                ORDER BY w.pcn, bl.aci_pn, match_priority
+            )
             SELECT
-                b.line as line_no,
-                b.aci_pn,
-                b."DESC" as description,
-                b.mpn,
-                b.man as manufacturer,
-                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(w.onhandqty), 0) as on_hand,
-                w.pcn,
-                w.item,
-                COALESCE(w.loc_to, '') as location,
-                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
-                b.pou,
-                b.job_rev as bom_job_rev,
-                b.last_rev as bom_last_rev,
-                b.cust as bom_cust,
-                b.cust_pn as bom_cust_pn,
-                b.cust_rev as bom_cust_rev
-            FROM pcb_inventory."tblBOM" b
-            LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
-            WHERE b.job = %s
-                AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-            GROUP BY b.line, b.aci_pn, b."DESC", b.mpn, b.man, b.qty, b.cost, b.pou, b.job_rev, b.last_rev, b.cust, b.cust_pn, b.cust_rev, w.pcn, w.item, w.loc_to
+                line as line_no,
+                aci_pn,
+                "DESC" as description,
+                mpn,
+                man as manufacturer,
+                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(onhandqty), 0) as on_hand,
+                pcn,
+                item,
+                COALESCE(loc_to, '') as location,
+                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                pou,
+                job_rev as bom_job_rev,
+                last_rev as bom_last_rev,
+                cust as bom_cust,
+                cust_pn as bom_cust_pn,
+                cust_rev as bom_cust_rev
+            FROM inventory_match
+            GROUP BY line, aci_pn, "DESC", mpn, man, qty, cost, pou, job_rev, last_rev, cust, cust_pn, cust_rev, pcn, item, loc_to
             ORDER BY
-                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
-                b.line
+                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
+                line
         """, (job_number, job_number, job_number))
         raw_lines = cursor.fetchall()
 
@@ -6422,31 +6573,60 @@ def job_export(job_number):
         rev_row = cursor.fetchone()
         job_rev = rev_row['job_rev'] if rev_row else None
 
-        # Get BOM lines with live inventory lookup
+        # Deduplicate BOM per aci_pn then match inventory using warehouse MPN
         cursor.execute("""
+            WITH bom_lines AS (
+                SELECT DISTINCT ON (b.aci_pn)
+                    b.line,
+                    b.aci_pn,
+                    b.mpn as bom_mpn,
+                    b.man,
+                    b."DESC",
+                    b.qty,
+                    b.cost
+                FROM pcb_inventory."tblBOM" b
+                WHERE b.job = %s
+                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                ORDER BY b.aci_pn, b.line
+            ),
+            inventory_match AS (
+                SELECT DISTINCT ON (w.pcn, bl.aci_pn)
+                    bl.line,
+                    bl.aci_pn,
+                    w.mpn,
+                    bl.man,
+                    bl."DESC",
+                    bl.qty,
+                    bl.cost,
+                    w.pcn,
+                    w.item,
+                    w.onhandqty,
+                    w.loc_to,
+                    CASE WHEN bl.aci_pn = w.item THEN 1 ELSE 2 END as match_priority
+                FROM bom_lines bl
+                INNER JOIN pcb_inventory."tblWhse_Inventory" w
+                    ON (bl.aci_pn = w.item OR bl.bom_mpn = w.mpn)
+                WHERE COALESCE(w.loc_to, '') != 'MFG Floor'
+                ORDER BY w.pcn, bl.aci_pn, match_priority
+            )
             SELECT
-                b.line as line_no,
-                b.aci_pn,
-                b.mpn,
-                b.man as manufacturer,
-                b."DESC" as description,
-                CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(w.onhandqty), 0) as on_hand,
-                w.pcn,
-                w.item,
-                COALESCE(w.loc_to, '') as location,
-                CAST(COALESCE(NULLIF(b.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
-            FROM pcb_inventory."tblBOM" b
-            INNER JOIN pcb_inventory."tblWhse_Inventory" w
-                ON (b.aci_pn = w.item OR b.mpn = w.mpn)
-            WHERE b.job = %s
-                AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                     OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-            GROUP BY b.line, b.aci_pn, b.mpn, b.man, b."DESC", b.qty, b.cost, w.pcn, w.item, w.loc_to
+                line as line_no,
+                aci_pn,
+                mpn,
+                man as manufacturer,
+                "DESC" as description,
+                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
+                COALESCE(SUM(onhandqty), 0) as on_hand,
+                pcn,
+                item,
+                COALESCE(loc_to, '') as location,
+                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+            FROM inventory_match
+            GROUP BY line, aci_pn, mpn, man, "DESC", qty, cost, pcn, item, loc_to
             ORDER BY
-                CASE WHEN b.line ~ '^[0-9]+$' THEN CAST(b.line AS INTEGER) ELSE 999999 END,
-                b.line
+                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
+                line
         """, (job_number, job_number, job_number))
         raw_items = cursor.fetchall()
 
