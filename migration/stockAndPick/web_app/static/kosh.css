@@ -222,7 +222,7 @@
         }
         
         .modern-nav-link {
-            color: rgba(255, 255, 255, 0.9) !important;
+            color: #ffffff !important;
             font-weight: 500;
             font-size: 0.92rem;
             padding: 6px 14px !important;
@@ -265,7 +265,7 @@
         }
 
         .dropdown-item {
-            color: rgba(255, 255, 255, 0.9) !important;
+            color: #ffffff !important;
             padding: 10px 20px;
             font-size: 0.95rem;
             transition: all 0.2s ease;
@@ -1627,7 +1627,7 @@
 
         /* Nav dropdown items in dark mode */
         [data-theme="dark"] .dropdown-menu .dropdown-item {
-            color: rgba(255, 255, 255, 0.9) !important;
+            color: #ffffff !important;
         }
 
         [data-theme="dark"] .dropdown-menu .dropdown-item:hover {
