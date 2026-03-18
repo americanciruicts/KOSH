@@ -27,7 +27,7 @@
     </noscript>
 
     <!-- Application CSS (cached by browser) -->
-    <link href="{{ url_for('static', filename='kosh.css') }}?v=20260318" rel="stylesheet">
+    <link href="{{ url_for('static', filename='kosh.css') }}?v=20260318b" rel="stylesheet">
 
     {% block extra_css %}{% endblock %}
 </head>
@@ -219,7 +219,9 @@
         {% endwith %}
 
         <!-- Page Header -->
+        <div class="page-header-wrapper">
         {% block page_header %}{% endblock %}
+        </div>
 
         <!-- Page Content -->
         {% block content %}{% endblock %}

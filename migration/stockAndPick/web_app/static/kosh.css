@@ -44,6 +44,39 @@
             background: linear-gradient(135deg, #4c1d95 0%, #6d28d9 100%) !important;
         }
 
+        /* Page header wrapper - force white text on all purple gradient banners */
+        .page-header-wrapper > div {
+            color: white !important;
+        }
+        .page-header-wrapper > div *,
+        .page-header-wrapper > div h1,
+        .page-header-wrapper > div h2,
+        .page-header-wrapper > div h3,
+        .page-header-wrapper > div h4,
+        .page-header-wrapper > div h5,
+        .page-header-wrapper > div h6,
+        .page-header-wrapper > div p,
+        .page-header-wrapper > div span,
+        .page-header-wrapper > div small,
+        .page-header-wrapper > div a:not(.btn),
+        .page-header-wrapper > div i,
+        .page-header-wrapper > div strong,
+        .page-header-wrapper > div .text-muted,
+        .page-header-wrapper > div .text-dark,
+        .page-header-wrapper > div .text-primary,
+        .page-header-wrapper > div .text-secondary,
+        .page-header-wrapper > div .text-success,
+        .page-header-wrapper > div .text-info {
+            color: white !important;
+        }
+        .page-header-wrapper > div .badge {
+            background-color: rgba(255, 255, 255, 0.2) !important;
+            color: white !important;
+        }
+        .page-header-wrapper > div .badge.bg-danger {
+            background-color: #ef4444 !important;
+        }
+
         /* Professional Color Scheme - Unified Purple Palette */
         :root {
             /* Light mode colors - Professional Purple Theme */
