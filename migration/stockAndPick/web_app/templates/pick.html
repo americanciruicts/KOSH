@@ -825,12 +825,22 @@ function showConfirmationModal() {
                     }
 
                     // Use native browser confirm dialog
-                    const remaining = currentInventoryCheck.qty - quantity;
-                    const message = `Are you sure you want to pick the following items?\n\n` +
+                    let message;
+                    if (quantity === 0) {
+                        // Purge operation - removing zero-qty records from inventory
+                        message = `PURGE FROM INVENTORY\n\n` +
+                                  `This will permanently remove all zero-quantity records for:\n\n` +
+                                  `Item: ${job}\n\n` +
+                                  `The records will be deleted from warehouse inventory.\n` +
+                                  `This action is logged in the audit trail.`;
+                    } else {
+                        const remaining = currentInventoryCheck.qty - quantity;
+                        message = `Are you sure you want to pick the following items?\n\n` +
                                   `Item: ${job}\n` +
                                   `Quantity: ${quantity}\n` +
                                   `Remaining After Pick: ${remaining}\n\n` +
                                   `This action cannot be undone, but is logged in the audit trail.`;
+                    }
 
                     if (confirm(message)) {
                         // CRITICAL: Mark as submitting to prevent double-clicks
@@ -871,12 +881,21 @@ function showConfirmationModal() {
     }
 
     // Use native browser confirm dialog
-    const remaining = currentInventoryCheck.qty - quantity;
-    const message = `Are you sure you want to pick the following items?\n\n` +
+    let message;
+    if (quantity === 0) {
+        message = `PURGE FROM INVENTORY\n\n` +
+                  `This will permanently remove all zero-quantity records for:\n\n` +
+                  `Item: ${job}\n\n` +
+                  `The records will be deleted from warehouse inventory.\n` +
+                  `This action is logged in the audit trail.`;
+    } else {
+        const remaining = currentInventoryCheck.qty - quantity;
+        message = `Are you sure you want to pick the following items?\n\n` +
                   `Item: ${job}\n` +
                   `Quantity: ${quantity}\n` +
                   `Remaining After Pick: ${remaining}\n\n` +
                   `This action cannot be undone, but is logged in the audit trail.`;
+    }
 
     if (confirm(message)) {
         // CRITICAL: Mark as submitting to prevent double-clicks

@@ -1441,13 +1441,26 @@
             opacity: 1 !important;
         }
 
-        /* Light mode subtitle text - dark gray */
+        /* Light mode - white text on purple gradient backgrounds */
+        .row[style*="linear-gradient"] *,
+        .row[style*="linear-gradient"] h1,
+        .row[style*="linear-gradient"] h2,
+        .row[style*="linear-gradient"] h3,
+        .row[style*="linear-gradient"] h4,
+        .row[style*="linear-gradient"] h5,
+        .row[style*="linear-gradient"] h6,
+        .row[style*="linear-gradient"] p,
+        .row[style*="linear-gradient"] span,
+        .row[style*="linear-gradient"] div,
+        .row[style*="linear-gradient"] i,
+        .row[style*="linear-gradient"] small,
+        .row[style*="linear-gradient"] strong,
         .row[style*="linear-gradient"] .text-white-50,
-        .row[style*="linear-gradient"] p.text-white-50,
+        .row[style*="linear-gradient"] .text-muted,
         div[style*="linear-gradient"] .text-white-50,
         div[style*="linear-gradient"] p.text-white-50 {
-            color: #333333 !important;
-            opacity: 0.9 !important;
+            color: #ffffff !important;
+            opacity: 1 !important;
         }
 
         /* DARK MODE: White text on gradient backgrounds */
@@ -1502,7 +1515,7 @@
             opacity: 1 !important;
         }
 
-        /* Headers need block display - light mode black */
+        /* Headers need block display - white on purple */
         .row[style*="linear-gradient"] h1,
         .row[style*="linear-gradient"] h2,
         .row[style*="linear-gradient"] h3,
@@ -1510,7 +1523,7 @@
         div[style*="linear-gradient"] h2,
         div[style*="linear-gradient"] h3 {
             display: block !important;
-            color: #000000 !important;
+            color: #ffffff !important;
         }
 
         /* Headers in dark mode - white */

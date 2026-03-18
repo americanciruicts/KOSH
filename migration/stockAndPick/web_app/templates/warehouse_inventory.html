@@ -177,6 +177,10 @@
                         <td>{{ row.Cost if row.Cost else '-' }}</td>
                         <td class="text-center">
                             <div class="btn-group btn-group-sm" role="group">
+                                <button type="button" class="btn btn-outline-secondary" title="Print Label"
+                                        onclick="printItemLabel('{{ row.PCN }}')">
+                                    <i class="bi bi-printer"></i>
+                                </button>
                                 <button type="button" class="btn btn-outline-success" title="Stock"
                                         onclick="stockItem('{{ row.Item }}', '{{ row.PCN }}', '{{ row.MPN }}')">
                                     <i class="bi bi-plus-circle"></i>
@@ -478,6 +482,15 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
 });
+
+// Print label from warehouse inventory
+function printItemLabel(pcn) {
+    if (!pcn || pcn === '-') {
+        alert('No PCN available for this item.');
+        return;
+    }
+    window.open('/print-label/' + encodeURIComponent(pcn), 'printLabel', 'width=500,height=350,toolbar=no,menubar=no,scrollbars=no');
+}
 
 // Action button functions
 function stockItem(jobNumber, pcn, mpn) {
