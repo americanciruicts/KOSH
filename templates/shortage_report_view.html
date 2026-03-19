@@ -44,6 +44,10 @@
         background-color: rgba(239, 68, 68, 0.2) !important;
     }
 
+    [data-theme="dark"] .shortage-row td {
+        color: #fca5a5 !important;
+    }
+
     .stat-card {
         text-align: center;
         padding: 15px;
@@ -58,33 +62,71 @@
         font-size: 0.875rem;
         color: var(--text-secondary);
     }
+
+    .stat-icon-wrap {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.3rem;
+        margin: 0 auto 8px auto;
+    }
+
+    /* Dark mode stat cards */
+    [data-theme="dark"] .shortage-stat-card {
+        background: var(--bg-card) !important;
+        border-color: var(--border-color) !important;
+    }
+
+    [data-theme="dark"] .shortage-stat-card .stat-label {
+        color: var(--text-secondary) !important;
+    }
+
+    /* Dark mode table text fix for this page */
+    [data-theme="dark"] #shortageTable tbody td,
+    [data-theme="dark"] #shortageTable tbody td strong,
+    [data-theme="dark"] #shortageTable tbody td small,
+    [data-theme="dark"] #shortageTable tfoot td,
+    [data-theme="dark"] #shortageTable tfoot td strong {
+        color: #f1f5f9 !important;
+    }
+
+    [data-theme="dark"] #shortageTable tbody td .text-muted {
+        color: #94a3b8 !important;
+    }
 </style>
 {% endblock %}
 
 {% block page_header %}
-<div class="row mb-4" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 25px; margin: 0;">
-    <div class="col-md-8">
-        <h1 class="mb-2">
-            <i class="bi bi-clipboard-data me-2"></i>
-            {{ report.report_name }}
-        </h1>
-        <p class="mb-0">
-            Job: <strong>{{ report.job }}</strong> |
-            Rev: <strong>{{ report.job_rev or 'N/A' }}</strong> |
-            Order Qty: <strong>{{ report.order_qty or 'N/A' }}</strong> |
-            Created: {{ report.created_at.strftime('%m/%d/%Y %I:%M %p') if report.created_at else 'N/A' }} by {{ report.created_by }}
-        </p>
-    </div>
-    <div class="col-md-4 text-end no-print">
-        <a href="{{ url_for('shortage_report') }}" class="btn btn-light me-2">
-            <i class="bi bi-arrow-left me-1"></i>Back
-        </a>
-        <button onclick="showExportModal()" class="btn btn-success me-2">
-            <i class="bi bi-file-earmark-excel me-1"></i>Export Excel
-        </button>
-        <button onclick="window.print()" class="btn btn-secondary">
-            <i class="bi bi-printer me-1"></i>Print
-        </button>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-clipboard-data" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">{{ report.report_name }}</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">
+                    Job: <strong>{{ report.job }}</strong> |
+                    Rev: <strong>{{ report.job_rev or 'N/A' }}</strong> |
+                    Order Qty: <strong>{{ report.order_qty or 'N/A' }}</strong> |
+                    Created: {{ report.created_at.strftime('%m/%d/%Y %I:%M %p') if report.created_at else 'N/A' }} by {{ report.created_by }}
+                </p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;" class="no-print">
+            <a href="{{ url_for('shortage_report') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-arrow-left" style="color: white !important;"></i> Back
+            </a>
+            <button onclick="showExportModal()" class="btn btn-light btn-lg shadow-sm fw-bold" style="color: #5b21b6 !important; white-space: nowrap;">
+                <i class="bi bi-file-earmark-excel" style="color: #5b21b6 !important;"></i> Export Excel
+            </button>
+            <button onclick="window.print()" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-printer" style="color: white !important;"></i> Print
+            </button>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -93,33 +135,37 @@
 <!-- Summary Statistics -->
 <div class="row mb-4">
     <div class="col-md-3">
-        <div class="card">
+        <div class="card shortage-stat-card" style="border-left: 4px solid #7c3aed;">
             <div class="card-body stat-card">
-                <div class="stat-value text-primary">{{ report.order_qty or 'N/A' }}</div>
+                <div class="stat-icon-wrap" style="background: rgba(124,58,237,0.12);"><i class="bi bi-box-seam" style="color: #7c3aed;"></i></div>
+                <div class="stat-value" style="color: #7c3aed !important;">{{ report.order_qty or 'N/A' }}</div>
                 <div class="stat-label">Order Qty (Job Qty)</div>
             </div>
         </div>
     </div>
     <div class="col-md-3">
-        <div class="card">
+        <div class="card shortage-stat-card" style="border-left: 4px solid #ef4444;">
             <div class="card-body stat-card">
-                <div class="stat-value text-danger">{{ report.shortage_lines }}</div>
+                <div class="stat-icon-wrap" style="background: rgba(239,68,68,0.12);"><i class="bi bi-exclamation-triangle" style="color: #ef4444;"></i></div>
+                <div class="stat-value" style="color: #ef4444 !important;">{{ report.shortage_lines }}</div>
                 <div class="stat-label">Shortage Items (On Hand &lt; REQ)</div>
             </div>
         </div>
     </div>
     <div class="col-md-3">
-        <div class="card">
+        <div class="card shortage-stat-card" style="border-left: 4px solid #10b981;">
             <div class="card-body stat-card">
-                <div class="stat-value text-success">${{ "%.2f"|format(report.total_cost|float) }}</div>
+                <div class="stat-icon-wrap" style="background: rgba(16,185,129,0.12);"><i class="bi bi-currency-dollar" style="color: #10b981;"></i></div>
+                <div class="stat-value" style="color: #10b981 !important;">${{ "%.2f"|format(report.total_cost|float) }}</div>
                 <div class="stat-label">Total BOM Cost</div>
             </div>
         </div>
     </div>
     <div class="col-md-3">
-        <div class="card">
+        <div class="card shortage-stat-card" style="border-left: 4px solid #f59e0b;">
             <div class="card-body stat-card">
-                <div class="stat-value text-warning">${{ "%.2f"|format(report.shortage_cost|float) }}</div>
+                <div class="stat-icon-wrap" style="background: rgba(245,158,11,0.12);"><i class="bi bi-cash-stack" style="color: #f59e0b;"></i></div>
+                <div class="stat-value" style="color: #f59e0b !important;">${{ "%.2f"|format(report.shortage_cost|float) }}</div>
                 <div class="stat-label">Shortage Cost</div>
             </div>
         </div>
