@@ -10,7 +10,7 @@
             border-bottom: none !important;
         }
 
-        .professional-header *,
+        .professional-header *:not(.btn):not(.btn *),
         .professional-header h1,
         .professional-header h2,
         .professional-header h3,
@@ -18,13 +18,13 @@
         .professional-header h5,
         .professional-header h6,
         .professional-header p,
-        .professional-header span,
+        .professional-header span:not(.btn span),
         .professional-header small,
-        .professional-header a,
-        .professional-header i,
+        .professional-header a:not(.btn),
+        .professional-header i:not(.btn i),
         .professional-header .text-muted,
         .professional-header .text-dark,
-        .professional-header .text-primary,
+        .professional-header .text-primary:not(.btn),
         .professional-header .text-secondary,
         .professional-header .header-icon,
         .professional-header .header-icon i {
@@ -45,10 +45,11 @@
         }
 
         /* Page header wrapper - force white text on all purple gradient banners */
+        /* Exclude .btn and its children so button colors are not overridden */
         .page-header-wrapper > div {
             color: white !important;
         }
-        .page-header-wrapper > div *,
+        .page-header-wrapper > div *:not(.btn):not(.btn *),
         .page-header-wrapper > div h1,
         .page-header-wrapper > div h2,
         .page-header-wrapper > div h3,
@@ -56,16 +57,16 @@
         .page-header-wrapper > div h5,
         .page-header-wrapper > div h6,
         .page-header-wrapper > div p,
-        .page-header-wrapper > div span,
+        .page-header-wrapper > div span:not(.btn span),
         .page-header-wrapper > div small,
         .page-header-wrapper > div a:not(.btn),
-        .page-header-wrapper > div i,
+        .page-header-wrapper > div i:not(.btn i),
         .page-header-wrapper > div strong,
         .page-header-wrapper > div .text-muted,
         .page-header-wrapper > div .text-dark,
-        .page-header-wrapper > div .text-primary,
+        .page-header-wrapper > div .text-primary:not(.btn),
         .page-header-wrapper > div .text-secondary,
-        .page-header-wrapper > div .text-success,
+        .page-header-wrapper > div .text-success:not(.btn),
         .page-header-wrapper > div .text-info {
             color: white !important;
         }
@@ -99,6 +100,155 @@
         }
         [data-theme="dark"] .modern-card-header {
             background: linear-gradient(135deg, #4c1d95 0%, #6d28d9 100%) !important;
+        }
+
+        /* Dashboard stat cards */
+        .stat-card {
+            background: var(--bg-card, #ffffff);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0,0,0,0.1));
+            border: 1px solid var(--border-color, #e2e8f0);
+            height: 100%;
+        }
+        .stat-card-body {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .stat-icon {
+            width: 52px;
+            height: 52px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+        .stat-icon-blue { background: rgba(59,130,246,0.12); color: #3b82f6 !important; }
+        .stat-icon-blue i { color: #3b82f6 !important; }
+        .stat-icon-cyan { background: rgba(6,182,212,0.12); color: #06b6d4 !important; }
+        .stat-icon-cyan i { color: #06b6d4 !important; }
+        .stat-icon-indigo { background: rgba(99,102,241,0.12); color: #6366f1 !important; }
+        .stat-icon-indigo i { color: #6366f1 !important; }
+        .stat-icon-success { background: rgba(34,197,94,0.12); color: #22c55e !important; }
+        .stat-icon-success i { color: #22c55e !important; }
+        .stat-icon-danger { background: rgba(239,68,68,0.12); color: #ef4444 !important; }
+        .stat-icon-danger i { color: #ef4444 !important; }
+        .stat-label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-secondary, #64748b) !important;
+            margin-bottom: 2px;
+        }
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: var(--text-primary, #1e293b) !important;
+            line-height: 1.2;
+        }
+        .stat-trend {
+            font-size: 0.78rem;
+            color: var(--text-secondary, #64748b) !important;
+            margin-top: 2px;
+        }
+        .stat-trend i {
+            color: var(--text-secondary, #64748b) !important;
+        }
+        .stat-card-alert {
+            border-color: #fca5a5;
+            background: rgba(239,68,68,0.04);
+        }
+        [data-theme="dark"] .stat-card {
+            background: var(--bg-card);
+            border-color: var(--border-color);
+        }
+
+        /* Modern table styles */
+        .modern-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .modern-table tbody td {
+            color: #1e293b !important;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.9rem;
+            vertical-align: middle;
+        }
+        .modern-table tbody tr:hover {
+            background-color: rgba(124, 58, 237, 0.04);
+        }
+        .modern-table .pcb-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: 600;
+            color: #1e293b !important;
+            font-size: 0.85rem;
+        }
+        .modern-table .pcb-badge i {
+            color: #7c3aed !important;
+        }
+        .modern-table .location-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(124, 58, 237, 0.08);
+            color: #5b21b6 !important;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.82rem;
+            font-weight: 500;
+        }
+        .modern-table .location-tag i {
+            color: #7c3aed !important;
+            font-size: 0.75rem;
+        }
+        .modern-table .badge-count {
+            display: inline-block;
+            background: rgba(59, 130, 246, 0.1);
+            color: #2563eb !important;
+            font-weight: 600;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 0.85rem;
+        }
+        .modern-table .qty-value {
+            color: #1e293b !important;
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+        .modern-table td .text-muted,
+        .modern-table td small.text-muted {
+            color: #64748b !important;
+        }
+        .modern-table td.text-muted {
+            color: #64748b !important;
+        }
+        [data-theme="dark"] .modern-table tbody td {
+            color: #f1f5f9 !important;
+            border-color: #334155;
+        }
+        [data-theme="dark"] .modern-table .pcb-badge {
+            color: #f1f5f9 !important;
+        }
+        [data-theme="dark"] .modern-table .location-tag {
+            background: rgba(139, 92, 246, 0.15);
+            color: #c4b5fd !important;
+        }
+        [data-theme="dark"] .modern-table .badge-count {
+            background: rgba(96, 165, 250, 0.15);
+            color: #93c5fd !important;
+        }
+        [data-theme="dark"] .modern-table .qty-value {
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] .modern-table td .text-muted,
+        [data-theme="dark"] .modern-table td small.text-muted,
+        [data-theme="dark"] .modern-table td.text-muted {
+            color: #94a3b8 !important;
         }
 
         /* Modern table headers - purple */
@@ -332,7 +482,10 @@
             align-items: center;
         }
         
-        .modern-nav-link {
+        .modern-nav-link,
+        .modern-navbar .modern-nav-link,
+        [data-theme="dark"] .modern-navbar .modern-nav-link,
+        [data-theme="dark"] a.modern-nav-link {
             color: #ffffff !important;
             font-weight: 500;
             font-size: 0.92rem;
@@ -345,24 +498,34 @@
             display: flex;
             align-items: center;
         }
-        
-        .modern-nav-link:hover {
+
+        .modern-nav-link:hover,
+        .modern-navbar .modern-nav-link:hover,
+        [data-theme="dark"] .modern-navbar .modern-nav-link:hover,
+        [data-theme="dark"] a.modern-nav-link:hover {
             color: #ffffff !important;
             background: rgba(255, 255, 255, 0.1);
             transform: translateY(-1px);
         }
-        
-        .modern-nav-link.active {
+
+        .modern-nav-link.active,
+        .modern-navbar .modern-nav-link.active,
+        [data-theme="dark"] .modern-navbar .modern-nav-link.active,
+        [data-theme="dark"] a.modern-nav-link.active {
             color: #ffffff !important;
             background: rgba(255, 255, 255, 0.15);
             font-weight: 600;
         }
         
-        .modern-nav-link i {
+        .modern-nav-link i,
+        .modern-navbar .modern-nav-link i,
+        [data-theme="dark"] .modern-navbar .modern-nav-link i,
+        [data-theme="dark"] a.modern-nav-link i {
             margin-right: 5px;
             font-size: 1rem;
             width: 18px;
             text-align: center;
+            color: #ffffff !important;
         }
 
         /* Dropdown Menu Styling */
@@ -400,6 +563,11 @@
         .dropdown-toggle::after {
             margin-left: 6px;
             vertical-align: middle;
+        }
+
+        .modern-navbar .modern-nav-link.dropdown-toggle::after,
+        [data-theme="dark"] .modern-navbar .modern-nav-link.dropdown-toggle::after {
+            border-top-color: #ffffff !important;
         }
 
         .modern-time-badge {
@@ -530,6 +698,52 @@
 
         .table {
             color: var(--text-primary);
+        }
+        /* Ensure ALL table body cells have visible text in light mode */
+        table tbody td,
+        .table tbody td,
+        table tbody th,
+        .table tbody th {
+            color: #1e293b !important;
+        }
+        table tbody td .text-muted,
+        table tbody td small,
+        .table tbody td .text-muted,
+        .table tbody td small {
+            color: #64748b !important;
+        }
+        table tbody td strong,
+        .table tbody td strong {
+            color: #0f172a !important;
+        }
+
+        /* Card body and footer text visibility */
+        .modern-card {
+            background: var(--bg-card, #ffffff);
+        }
+        .modern-card-body {
+            color: var(--text-primary, #1e293b) !important;
+        }
+        .modern-card-body *:not(.btn):not(.btn *) {
+            color: inherit;
+        }
+        .modern-card-footer {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border-color, #e2e8f0);
+            color: var(--text-secondary, #64748b) !important;
+        }
+        .card-body {
+            color: var(--text-primary, #1e293b) !important;
+        }
+        .card-body label,
+        .card-body .form-label {
+            color: var(--text-primary, #1e293b) !important;
+        }
+        .card-body input,
+        .card-body select,
+        .card-body .form-control,
+        .card-body .form-select {
+            color: var(--text-primary, #1e293b) !important;
         }
 
         /* Dark Mode Text Visibility Improvements */
@@ -1278,12 +1492,12 @@
             color: #ffffff !important;
         }
 
-        /* Fix links - better visibility */
-        [data-theme="dark"] a {
+        /* Fix links - better visibility (exclude navbar links) */
+        [data-theme="dark"] a:not(.modern-nav-link):not(.navbar-brand) {
             color: #a78bfa !important;
         }
 
-        [data-theme="dark"] a:hover {
+        [data-theme="dark"] a:hover:not(.modern-nav-link):not(.navbar-brand) {
             color: #c4b5fd !important;
         }
 
@@ -1482,11 +1696,11 @@
         }
 
         /* Link colors in dark mode */
-        [data-theme="dark"] a:not(.btn):not(.nav-link):not(.dropdown-item) {
+        [data-theme="dark"] a:not(.btn):not(.nav-link):not(.dropdown-item):not(.modern-nav-link):not(.navbar-brand) {
             color: #a78bfa;
         }
 
-        [data-theme="dark"] a:not(.btn):not(.nav-link):not(.dropdown-item):hover {
+        [data-theme="dark"] a:not(.btn):not(.nav-link):not(.dropdown-item):not(.modern-nav-link):not(.navbar-brand):hover {
             color: #c4b5fd;
         }
 

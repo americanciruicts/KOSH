@@ -28,6 +28,10 @@ from flask_caching import Cache
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+import time
+
+# Cache buster - changes on every app restart so browsers get fresh assets
+APP_START_TIME = str(int(time.time()))
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
@@ -228,12 +232,13 @@ def add_security_headers(response):
     # Feature Policy
     response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
 
-    # Performance optimizations
-    # Enable browser caching for static assets (1 hour)
-    if request.path.startswith('/static/'):
+    # Cache static assets (CSS, JS, fonts, images) for performance
+    # but disable caching for HTML pages to ensure fresh content
+    if response.content_type and any(
+        t in response.content_type for t in ['text/css', 'javascript', 'font', 'image/', 'woff', 'svg']
+    ):
         response.headers['Cache-Control'] = 'public, max-age=3600'
     elif 'no-store' not in response.headers.get('Cache-Control', ''):
-        # For dynamic pages, disable caching to ensure fresh content
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
 
@@ -246,7 +251,8 @@ def inject_current_time():
         'current_year': datetime.now().year,
         'current_user': g.get('current_user', {}),
         'user_can_see_itar': g.get('user_can_see_itar', False),
-        'is_admin': is_admin_user()
+        'is_admin': is_admin_user(),
+        'cache_version': APP_START_TIME
     }
 
 @app.template_filter('moment_fromnow')
@@ -2133,9 +2139,13 @@ def require_auth(f):
                     'error': 'Authentication required. Please log in.'
                 }), 401
 
-            # For page requests, redirect to login
-            flash('Please log in to access this page.', 'warning')
-            return redirect(url_for('login', next=request.url))
+            # For page requests, redirect to FORGE login with SSO redirect back to KOSH
+            is_local = request.host and ('.local' in request.host or '192.168.' in request.host or 'localhost' in request.host)
+            if is_local:
+                forge_login_url = 'http://acidashboard.aci.local:103/login?redirect=kosh'
+            else:
+                forge_login_url = 'https://aci-forge.vercel.app/login?redirect=kosh'
+            return redirect(forge_login_url)
 
         logger.info(f"Auth passed, calling function {f.__name__}")
         # Check for ACI Dashboard SSO token in headers (optional)
@@ -2244,6 +2254,15 @@ def login():
     # If already logged in, redirect to dashboard
     if 'user_id' in session:
         return redirect(url_for('index'))
+
+    # For GET requests, redirect to FORGE login (centralized auth)
+    if request.method == 'GET':
+        is_local = request.host and ('.local' in request.host or '192.168.' in request.host or 'localhost' in request.host)
+        if is_local:
+            forge_login_url = 'http://acidashboard.aci.local:103/login?redirect=kosh'
+        else:
+            forge_login_url = 'https://aci-forge.vercel.app/login?redirect=kosh'
+        return redirect(forge_login_url)
 
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
@@ -2362,8 +2381,11 @@ def logout():
     username = session.get('username', 'Unknown')
     session.clear()
     logger.info(f"User logged out: {username}")
-    flash('You have been logged out successfully.', 'success')
-    return redirect(url_for('login'))
+    # Redirect to FORGE login with redirect back to KOSH
+    is_local = request.host and ('.local' in request.host or '192.168.' in request.host or 'localhost' in request.host)
+    if is_local:
+        return redirect('http://acidashboard.aci.local:103/login?redirect=kosh')
+    return redirect('https://aci-forge.vercel.app/login?redirect=kosh')
 
 @app.route('/')
 @require_auth
@@ -4115,10 +4137,13 @@ def sso_callback():
     username = payload.get('sub', '')
 
     # Look up user in KOSH database
+    # Try exact match first, then email match, then email prefix match (case-insensitive)
     conn = None
     try:
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Try exact match on userlogin
         cursor.execute("""
             SELECT id, userid, username, userlogin, usersecurity
             FROM pcb_inventory."tblUser"
@@ -4126,8 +4151,44 @@ def sso_callback():
         """, (username,))
         user = cursor.fetchone()
 
+        # Try case-insensitive match
         if not user:
-            flash(f'SSO login failed: User "{username}" not found in KOSH. Contact your administrator.', 'danger')
+            cursor.execute("""
+                SELECT id, userid, username, userlogin, usersecurity
+                FROM pcb_inventory."tblUser"
+                WHERE LOWER(userlogin) = LOWER(%s)
+            """, (username,))
+            user = cursor.fetchone()
+
+        # If username is an email, try matching by email prefix (e.g., adam@... matches adam or AdamJ)
+        if not user and '@' in username:
+            email_prefix = username.split('@')[0].lower()
+            cursor.execute("""
+                SELECT id, userid, username, userlogin, usersecurity
+                FROM pcb_inventory."tblUser"
+                WHERE LOWER(userlogin) LIKE %s
+                ORDER BY id LIMIT 1
+            """, (email_prefix + '%',))
+            user = cursor.fetchone()
+
+        # Auto-create user if not found (FORGE is the source of truth)
+        if not user:
+            from passlib.hash import bcrypt as passlib_bcrypt
+            display_name = username.split('@')[0].capitalize() if '@' in username else username
+            default_password = passlib_bcrypt.hash('Welcome1!')
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblUser" (username, userlogin, password, usersecurity)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, username, userlogin, usersecurity
+            """, (display_name, username, default_password, 'user'))
+            conn.commit()
+            user = cursor.fetchone()
+            if user:
+                user['userid'] = None
+                logger.info(f"SSO auto-created KOSH user: {username}")
+
+        if not user:
+            flash(f'SSO login failed: Could not create user "{username}" in KOSH. Contact your administrator.', 'danger')
             return redirect(url_for('login'))
 
         # Create KOSH session (same as regular login)
@@ -5364,25 +5425,23 @@ def generate_zpl_label(pcn_number):
             # Convert to dict
             data = dict(pcn_data)
 
-            # Generate ZPL code for 3x1 inch label (Zebra ZP450) - v3.0 aligned layout
+            # Generate ZPL code for 3x1 inch label (Zebra ZP450) - v5.0 compact scannable
             # Label dimensions: 3 inches wide (609 dots @ 203dpi), 1 inch tall (203 dots @ 203dpi)
-            # Padded 15 dots from edges for readability
             zpl = f"""^XA
-^FO15,6^A0N,26,26^FDPCN: {data['pcn_number']}^FS
+^FO30,5^A0N,24,24^FDPCN: {data['pcn_number']}^FS
+^FO30,28^A0N,24,24^FDQTY: {data.get('quantity', 0)}^FS
 
-^FO170,4^BY2,2,45^BCN,45,N,N,N^FD{data['pcn_number']}^FS
-
-^FO490,6^A0N,14,14^FDQTY^FS
-^FO490,22^A0N,28,28^FD{data.get('quantity', 0)}^FS
+^FO210,2^BY3,2,55^BCN,55,N,N,N^FD{data['pcn_number']}^FS
 
 ^FO15,58^GB579,0,2^FS
 
-^FO20,65^A0N,22,22^FDJob: {data.get('item', 'N/A')}^FS
-^FO240,65^A0N,22,22^FDDCC: {data.get('date_code', 'N/A')}^FS
-^FO440,65^A0N,22,22^FDMSD: {data.get('msd', 'N/A')}^FS
+^FO35,65^A0N,22,22^FDItem No: {data.get('item', 'N/A')}^FS
+^FO320,65^A0N,22,22^FDDCC: {data.get('date_code', 'N/A')}^FS
 
-^FO20,92^A0N,22,22^FDMPN: {data.get('mpn', 'N/A')}^FS
-^FO440,92^A0N,22,22^FDPO: {data.get('po_number', 'N/A')}^FS
+^FO35,88^A0N,22,22^FDMPN: {data.get('mpn', 'N/A')}^FS
+^FO320,88^A0N,22,22^FDMSD: {data.get('msd', 'N/A')}^FS
+
+^FO35,111^A0N,22,22^FDPO: {data.get('po_number', 'N/A')}^FS
 
 ^XZ"""
 
