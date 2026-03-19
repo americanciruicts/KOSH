@@ -74,28 +74,49 @@
         margin: 0 auto 8px auto;
     }
 
+    /* Stat card color variants */
+    .shortage-stat-card.stat-purple { border-left: 4px solid #7c3aed; }
+    .shortage-stat-card.stat-purple .stat-icon-wrap { background: rgba(124,58,237,0.12); }
+    .shortage-stat-card.stat-purple .stat-icon-wrap i { color: #7c3aed; }
+    .shortage-stat-card.stat-purple .stat-value { color: #7c3aed !important; }
+
+    .shortage-stat-card.stat-red { border-left: 4px solid #ef4444; }
+    .shortage-stat-card.stat-red .stat-icon-wrap { background: rgba(239,68,68,0.12); }
+    .shortage-stat-card.stat-red .stat-icon-wrap i { color: #ef4444; }
+    .shortage-stat-card.stat-red .stat-value { color: #ef4444 !important; }
+
+    .shortage-stat-card.stat-green { border-left: 4px solid #10b981; }
+    .shortage-stat-card.stat-green .stat-icon-wrap { background: rgba(16,185,129,0.12); }
+    .shortage-stat-card.stat-green .stat-icon-wrap i { color: #10b981; }
+    .shortage-stat-card.stat-green .stat-value { color: #10b981 !important; }
+
+    .shortage-stat-card.stat-amber { border-left: 4px solid #f59e0b; }
+    .shortage-stat-card.stat-amber .stat-icon-wrap { background: rgba(245,158,11,0.12); }
+    .shortage-stat-card.stat-amber .stat-icon-wrap i { color: #f59e0b; }
+    .shortage-stat-card.stat-amber .stat-value { color: #f59e0b !important; }
+
     /* Dark mode stat cards */
     [data-theme="dark"] .shortage-stat-card {
         background: var(--bg-card) !important;
-        border-color: var(--border-color) !important;
     }
-
     [data-theme="dark"] .shortage-stat-card .stat-label {
-        color: var(--text-secondary) !important;
+        color: #cbd5e1 !important;
     }
+    [data-theme="dark"] .shortage-stat-card.stat-purple .stat-value { color: #a78bfa !important; }
+    [data-theme="dark"] .shortage-stat-card.stat-purple .stat-icon-wrap { background: rgba(124,58,237,0.2); }
+    [data-theme="dark"] .shortage-stat-card.stat-purple .stat-icon-wrap i { color: #a78bfa; }
 
-    /* Dark mode table text fix for this page */
-    [data-theme="dark"] #shortageTable tbody td,
-    [data-theme="dark"] #shortageTable tbody td strong,
-    [data-theme="dark"] #shortageTable tbody td small,
-    [data-theme="dark"] #shortageTable tfoot td,
-    [data-theme="dark"] #shortageTable tfoot td strong {
-        color: #f1f5f9 !important;
-    }
+    [data-theme="dark"] .shortage-stat-card.stat-red .stat-value { color: #f87171 !important; }
+    [data-theme="dark"] .shortage-stat-card.stat-red .stat-icon-wrap { background: rgba(239,68,68,0.2); }
+    [data-theme="dark"] .shortage-stat-card.stat-red .stat-icon-wrap i { color: #f87171; }
 
-    [data-theme="dark"] #shortageTable tbody td .text-muted {
-        color: #94a3b8 !important;
-    }
+    [data-theme="dark"] .shortage-stat-card.stat-green .stat-value { color: #34d399 !important; }
+    [data-theme="dark"] .shortage-stat-card.stat-green .stat-icon-wrap { background: rgba(16,185,129,0.2); }
+    [data-theme="dark"] .shortage-stat-card.stat-green .stat-icon-wrap i { color: #34d399; }
+
+    [data-theme="dark"] .shortage-stat-card.stat-amber .stat-value { color: #fbbf24 !important; }
+    [data-theme="dark"] .shortage-stat-card.stat-amber .stat-icon-wrap { background: rgba(245,158,11,0.2); }
+    [data-theme="dark"] .shortage-stat-card.stat-amber .stat-icon-wrap i { color: #fbbf24; }
 </style>
 {% endblock %}
 
@@ -135,37 +156,37 @@
 <!-- Summary Statistics -->
 <div class="row mb-4">
     <div class="col-md-3">
-        <div class="card shortage-stat-card" style="border-left: 4px solid #7c3aed;">
+        <div class="card shortage-stat-card stat-purple">
             <div class="card-body stat-card">
-                <div class="stat-icon-wrap" style="background: rgba(124,58,237,0.12);"><i class="bi bi-box-seam" style="color: #7c3aed;"></i></div>
-                <div class="stat-value" style="color: #7c3aed !important;">{{ report.order_qty or 'N/A' }}</div>
+                <div class="stat-icon-wrap"><i class="bi bi-box-seam"></i></div>
+                <div class="stat-value">{{ report.order_qty or 'N/A' }}</div>
                 <div class="stat-label">Order Qty (Job Qty)</div>
             </div>
         </div>
     </div>
     <div class="col-md-3">
-        <div class="card shortage-stat-card" style="border-left: 4px solid #ef4444;">
+        <div class="card shortage-stat-card stat-red">
             <div class="card-body stat-card">
-                <div class="stat-icon-wrap" style="background: rgba(239,68,68,0.12);"><i class="bi bi-exclamation-triangle" style="color: #ef4444;"></i></div>
-                <div class="stat-value" style="color: #ef4444 !important;">{{ report.shortage_lines }}</div>
+                <div class="stat-icon-wrap"><i class="bi bi-exclamation-triangle"></i></div>
+                <div class="stat-value">{{ report.shortage_lines }}</div>
                 <div class="stat-label">Shortage Items (On Hand &lt; REQ)</div>
             </div>
         </div>
     </div>
     <div class="col-md-3">
-        <div class="card shortage-stat-card" style="border-left: 4px solid #10b981;">
+        <div class="card shortage-stat-card stat-green">
             <div class="card-body stat-card">
-                <div class="stat-icon-wrap" style="background: rgba(16,185,129,0.12);"><i class="bi bi-currency-dollar" style="color: #10b981;"></i></div>
-                <div class="stat-value" style="color: #10b981 !important;">${{ "%.2f"|format(report.total_cost|float) }}</div>
+                <div class="stat-icon-wrap"><i class="bi bi-currency-dollar"></i></div>
+                <div class="stat-value">${{ "%.2f"|format(report.total_cost|float) }}</div>
                 <div class="stat-label">Total BOM Cost</div>
             </div>
         </div>
     </div>
     <div class="col-md-3">
-        <div class="card shortage-stat-card" style="border-left: 4px solid #f59e0b;">
+        <div class="card shortage-stat-card stat-amber">
             <div class="card-body stat-card">
-                <div class="stat-icon-wrap" style="background: rgba(245,158,11,0.12);"><i class="bi bi-cash-stack" style="color: #f59e0b;"></i></div>
-                <div class="stat-value" style="color: #f59e0b !important;">${{ "%.2f"|format(report.shortage_cost|float) }}</div>
+                <div class="stat-icon-wrap"><i class="bi bi-cash-stack"></i></div>
+                <div class="stat-value">${{ "%.2f"|format(report.shortage_cost|float) }}</div>
                 <div class="stat-label">Shortage Cost</div>
             </div>
         </div>

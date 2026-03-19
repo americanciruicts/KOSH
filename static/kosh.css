@@ -716,6 +716,29 @@
         .table tbody td strong {
             color: #0f172a !important;
         }
+        /* Dark mode overrides - must match or exceed light mode specificity */
+        [data-theme="dark"] table tbody td,
+        [data-theme="dark"] .table tbody td,
+        [data-theme="dark"] table tbody th,
+        [data-theme="dark"] .table tbody th {
+            color: #f1f5f9 !important;
+        }
+        [data-theme="dark"] table tbody td .text-muted,
+        [data-theme="dark"] table tbody td small,
+        [data-theme="dark"] .table tbody td .text-muted,
+        [data-theme="dark"] .table tbody td small {
+            color: #94a3b8 !important;
+        }
+        [data-theme="dark"] table tbody td strong,
+        [data-theme="dark"] .table tbody td strong {
+            color: #ffffff !important;
+        }
+        [data-theme="dark"] table tfoot td,
+        [data-theme="dark"] table tfoot td strong,
+        [data-theme="dark"] .table tfoot td,
+        [data-theme="dark"] .table tfoot td strong {
+            color: #ffffff !important;
+        }
 
         /* Card body and footer text visibility */
         .modern-card {
