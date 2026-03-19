@@ -5498,6 +5498,7 @@ def print_label(pcn_number):
             if not pcn_data:
                 return "PCN not found", 404
 
+            log_user_activity('PRINT_LABEL', f"Printed label for PCN {pcn_number}", f"Item: {pcn_data.get('item', '')}")
             response = make_response(render_template('print_label.html', data=dict(pcn_data)))
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
             response.headers['Pragma'] = 'no-cache'
@@ -6113,6 +6114,7 @@ def api_bom_load():
 
             conn.commit()
             logger.info(f"Loaded {inserted_count} BOM items for Job {job}")
+            log_user_activity('BOM_UPLOAD', f"Loaded BOM for job {job}", f"{inserted_count} items loaded")
 
             return jsonify({
                 'success': True,
