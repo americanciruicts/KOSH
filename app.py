@@ -2188,6 +2188,75 @@ db_manager = DatabaseManager()
 user_manager = UserManager(db_manager)
 expiration_manager = ExpirationManager()
 
+# Create tblActivityLog table if it doesn't exist
+try:
+    _conn = db_manager.get_connection()
+    _cur = _conn.cursor()
+    _cur.execute('''
+        CREATE TABLE IF NOT EXISTS pcb_inventory."tblActivityLog" (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            username VARCHAR(100),
+            full_name VARCHAR(200),
+            action_type VARCHAR(50) NOT NULL,
+            description TEXT,
+            details TEXT,
+            created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'),
+            seen BOOLEAN DEFAULT FALSE,
+            seen_at TIMESTAMP
+        )
+    ''')
+    _cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_created ON pcb_inventory."tblActivityLog" (created_at DESC)')
+    _cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_seen ON pcb_inventory."tblActivityLog" (seen)')
+    _conn.commit()
+    logger.info("tblActivityLog table ready")
+except Exception as _e:
+    logger.error(f"Failed to create tblActivityLog: {_e}")
+finally:
+    try:
+        db_manager.return_connection(_conn)
+    except:
+        pass
+
+
+def log_user_activity(action_type, description, details=None):
+    """Log a user activity to tblActivityLog for admin notifications.
+
+    action_type: LOGIN, LOGOUT, STOCK, PICK, RESTOCK, PCN_GENERATE, SHORTAGE_REPORT, PART_NUMBER_CHANGE
+    """
+    conn = None
+    try:
+        user_id = session.get('user_id')
+        username = session.get('username', 'system')
+        full_name = session.get('full_name', '')
+
+        # Skip logging for super admin
+        if username and username.lower() == 'kanav':
+            return
+
+        conn = db_manager.get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO pcb_inventory."tblActivityLog"
+            (user_id, username, full_name, action_type, description, details, seen)
+            VALUES (%s, %s, %s, %s, %s, %s, FALSE)
+        """, (user_id, username, full_name, action_type, description, details))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to log activity: {e}")
+        if conn:
+            try:
+                conn.rollback()
+            except:
+                pass
+    finally:
+        if conn:
+            try:
+                db_manager.return_connection(conn)
+            except:
+                pass
+
+
 @app.route('/health')
 def health_check():
     """Health check endpoint for Docker."""
@@ -2339,6 +2408,9 @@ def login():
 
                 conn.commit()
 
+                # Log activity
+                log_user_activity('LOGIN', f'{user["username"] or username} logged in')
+
                 logger.info(f"Successful login: {username}")
                 flash(f'Welcome back, {user["username"] or username}!', 'success')
 
@@ -2379,6 +2451,8 @@ def login():
 def logout():
     """Secure logout - clears all session data."""
     username = session.get('username', 'Unknown')
+    full_name = session.get('full_name', '')
+    log_user_activity('LOGOUT', f'{full_name or username} logged out')
     session.clear()
     logger.info(f"User logged out: {username}")
     # Redirect to FORGE login with redirect back to KOSH
@@ -2507,6 +2581,7 @@ def stock():
             logger.info(f"stock_pcb returned: {result}")
 
             if result.get('success'):
+                log_user_activity('STOCK', f"Stocked {result['stocked_qty']} units of {result['job']}", f"New total: {result['new_qty']}")
                 flash(f"Successfully stocked {result['stocked_qty']} units of {result['job']}. "
                       f"New total: {result['new_qty']}", 'success')
                 return redirect(url_for('stock'))
@@ -2557,8 +2632,10 @@ def pick():
 
             if result.get('success'):
                 if result.get('purged'):
+                    log_user_activity('PICK', f"Purged {result.get('records_deleted', 0)} zero-quantity record(s) for {result['job']}")
                     flash(f"Successfully purged {result.get('records_deleted', 0)} zero-quantity record(s) for {result['job']}.", 'success')
                 else:
+                    log_user_activity('PICK', f"Picked {result['picked_qty']} units of {result['job']}", f"Remaining: {result['new_qty']}")
                     flash(f"Successfully picked {result['picked_qty']} units of {result['job']}. "
                           f"Remaining: {result['new_qty']}", 'success')
                 return redirect(url_for('pick'))
@@ -2619,6 +2696,7 @@ def restock():
 
             if result.get('success'):
                 location_to = result.get('location_to', '')
+                log_user_activity('RESTOCK', f"Restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to {location_to}", f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}")
                 flash(f"Successfully restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to {location_to}. "
                       f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}", 'success')
                 # Pass PCN to show print label button
@@ -2700,6 +2778,7 @@ def part_number_change():
 
             conn.commit()
 
+            log_user_activity('PART_NUMBER_CHANGE', f"Changed part number for PCN {pcn}: '{old_part_number}' → '{new_part_number}'")
             logger.info(f"Part number changed by {username}: PCN {pcn} from '{old_part_number}' to '{new_part_number}'")
             flash(f'Successfully changed part number for PCN {pcn} from "{old_part_number}" to "{new_part_number}".', 'success')
 
@@ -3619,6 +3698,7 @@ def generate_shortage_report():
             ))
 
         conn.commit()
+        log_user_activity('SHORTAGE_REPORT', f"Generated shortage report for job {job}", f"{len(report_items)} items, {shortage_count} shortages")
         flash(f'Shortage report generated! {len(report_items)} items matched inventory, {shortage_count} have shortages.', 'success')
         return redirect(url_for('view_shortage_report', report_id=report_id))
 
@@ -4870,6 +4950,7 @@ def api_generate_pcn():
             conn.commit()
 
             logger.info(f"Generated PCN: {pcn_number} for item: {data.get('item')}")
+            log_user_activity('PCN_GENERATE', f"Generated PCN {pcn_number} for item {data.get('item')}", f"Qty: {data.get('quantity', 0)}, MPN: {data.get('mpn', '')}")
 
             return jsonify({
                 'success': True,
@@ -6029,18 +6110,18 @@ def admin_notifications():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Get all login notifications, most recent first
+        # Get all activity notifications, most recent first
         cursor.execute("""
-            SELECT id, user_id, username, full_name, login_time, ip_address, seen, seen_at
-            FROM pcb_inventory."tblLoginNotifications"
-            ORDER BY login_time DESC
-            LIMIT 100
+            SELECT id, user_id, username, full_name, action_type, description, details, created_at, seen, seen_at
+            FROM pcb_inventory."tblActivityLog"
+            ORDER BY created_at DESC
+            LIMIT 200
         """)
         notifications = cursor.fetchall()
 
         # Count unseen notifications
         cursor.execute("""
-            SELECT COUNT(*) as count FROM pcb_inventory."tblLoginNotifications" WHERE seen = FALSE
+            SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
         """)
         unseen_count = cursor.fetchone()['count']
 
@@ -6069,7 +6150,7 @@ def mark_notifications_seen():
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE pcb_inventory."tblLoginNotifications"
+            UPDATE pcb_inventory."tblActivityLog"
             SET seen = TRUE, seen_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
             WHERE seen = FALSE
         """)
@@ -6099,8 +6180,8 @@ def clear_notifications():
         cursor = conn.cursor()
 
         cursor.execute("""
-            DELETE FROM pcb_inventory."tblLoginNotifications"
-            WHERE login_time < NOW() - INTERVAL '7 days'
+            DELETE FROM pcb_inventory."tblActivityLog"
+            WHERE created_at < NOW() - INTERVAL '7 days'
         """)
         deleted_count = cursor.rowcount
         conn.commit()
@@ -6129,7 +6210,7 @@ def get_notification_count():
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         cursor.execute("""
-            SELECT COUNT(*) as count FROM pcb_inventory."tblLoginNotifications" WHERE seen = FALSE
+            SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
         """)
         result = cursor.fetchone()
 
@@ -6577,6 +6658,7 @@ def job_generate_shortage(job_number):
             ))
 
         conn.commit()
+        log_user_activity('SHORTAGE_REPORT', f"Generated shortage report for job {job_number}", f"{len(report_items)} items, {shortage_count} shortages")
         flash(f'Shortage report generated! {len(report_items)} items matched, {shortage_count} shortages.', 'success')
         return redirect(url_for('job_detail', job_number=job_number))
 
