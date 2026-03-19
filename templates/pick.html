@@ -1,20 +1,25 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white;">
-    <div class="col-md-8">
-        <h1 class="h2 mb-2">
-            <i class="bi bi-dash-circle-fill me-2"></i> Pick Electronic Parts
-        </h1>
-        <p class="mb-0 fs-6">Remove components from inventory • Safety validated • Audit tracked</p>
-    </div>
-    <div class="col-md-4 text-end">
-        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
-            <i class="bi bi-table"></i> View Inventory
-        </a>
-        <a href="{{ url_for('stock') }}" class="btn btn-light btn-lg fw-bold">
-            <i class="bi bi-plus-circle"></i> Stock Parts
-        </a>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-dash-circle-fill" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Pick Electronic Parts</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Remove components from inventory • Safety validated • Audit tracked</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
+                <i class="bi bi-table"></i> View Inventory
+            </a>
+            <a href="{{ url_for('stock') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-plus-circle" style="color: white !important;"></i> Stock Parts
+            </a>
+        </div>
     </div>
 </div>
 {% endblock %}

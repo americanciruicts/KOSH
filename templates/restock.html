@@ -1,20 +1,25 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white;">
-    <div class="col-md-8">
-        <h1 class="h2 mb-2 text-white">
-            <i class="bi bi-arrow-counterclockwise me-2"></i> Restock Parts
-        </h1>
-        <p class="mb-0 fs-6 text-white">Return parts from MFG floor to Count Area • Traceability maintained • Audit tracked</p>
-    </div>
-    <div class="col-md-4 text-end">
-        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
-            <i class="bi bi-table"></i> View Inventory
-        </a>
-        <a href="{{ url_for('pick') }}" class="btn btn-light btn-lg fw-bold">
-            <i class="bi bi-dash-circle"></i> Pick Parts
-        </a>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-arrow-counterclockwise" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Restock Parts</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Return parts from MFG floor to Count Area • Traceability maintained • Audit tracked</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
+                <i class="bi bi-table"></i> View Inventory
+            </a>
+            <a href="{{ url_for('pick') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-dash-circle" style="color: white !important;"></i> Pick Parts
+            </a>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -348,7 +353,10 @@
 
 // Autofill functionality
 let autofillTimeout = null;
-let isAutoFilling = false; // Flag to prevent input event loops
+let isAutoFilling = false;
+let currentFetchController = null; // AbortController for cancelling stale requests
+let lastFetchedPcn = null; // Track what we already fetched to avoid duplicates
+let lastFetchedItem = null;
 const pcnInput = document.getElementById('{{ form.pcn.id }}');
 const itemInput = document.getElementById('{{ form.item.id }}');
 const poInput = document.getElementById('{{ form.po.id }}');
@@ -356,10 +364,18 @@ const partDetailsCard = document.getElementById('partDetailsCard');
 
 // Function to fetch and display part details
 function fetchPartDetails(pcn, item) {
-    // Clear previous details
-    partDetailsCard.style.display = 'none';
+    // Skip if we already fetched this exact combination
+    if (pcn && pcn === lastFetchedPcn) return;
+    if (item && !pcn && item === lastFetchedItem) return;
+
+    // Cancel any in-flight request
+    if (currentFetchController) {
+        currentFetchController.abort();
+    }
+    currentFetchController = new AbortController();
 
     if (!pcn && !item) {
+        partDetailsCard.style.display = 'none';
         return;
     }
 
@@ -372,14 +388,20 @@ function fetchPartDetails(pcn, item) {
     partDetailsCard.style.display = 'block';
     document.getElementById('detail-pcn').textContent = 'Loading...';
 
-    // Fetch part details
-    fetch(`/api/get-part-details?${params.toString()}`)
+    // Fetch part details with cache-busting and abort signal
+    fetch(`/api/get-part-details?${params.toString()}&_t=${Date.now()}`, {
+        signal: currentFetchController.signal
+    })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
                 const partData = data.data;
 
-                // Populate part details
+                // Track what we fetched
+                if (pcn) lastFetchedPcn = pcn;
+                if (item && !pcn) lastFetchedItem = item;
+
+                // Populate part details card
                 document.getElementById('detail-pcn').textContent = partData.pcn;
                 document.getElementById('detail-item').textContent = partData.item;
                 document.getElementById('detail-mpn').textContent = partData.mpn || '-';
@@ -389,18 +411,24 @@ function fetchPartDetails(pcn, item) {
                 document.getElementById('detail-mfg').textContent = partData.mfg_qty.toLocaleString();
                 document.getElementById('available-qty').textContent = partData.mfg_qty.toLocaleString();
 
-                // Auto-fill all fields with fetched data
-                isAutoFilling = true; // Prevent input event from triggering another fetch
+                // Auto-fill ALL form fields together
+                isAutoFilling = true;
+
+                // Fill item or pcn (whichever user didn't type)
                 if (pcn) {
                     itemInput.value = partData.item || '';
                 } else if (item) {
                     pcnInput.value = partData.pcn || '';
                 }
+
                 // Always fill PO number
                 if (poInput) {
+                    poInput.removeAttribute('readonly');
                     poInput.value = partData.po || '';
+                    poInput.setAttribute('readonly', 'readonly');
                 }
-                setTimeout(() => { isAutoFilling = false; }, 100); // Reset flag after a short delay
+
+                setTimeout(() => { isAutoFilling = false; }, 100);
 
                 // Show/hide warnings
                 if (partData.has_mfg_qty) {
@@ -413,45 +441,89 @@ function fetchPartDetails(pcn, item) {
 
                 partDetailsCard.style.display = 'block';
             } else {
-                // Hide details card on error
                 partDetailsCard.style.display = 'none';
+                // Clear auto-filled fields on error
+                if (pcn) itemInput.value = '';
+                if (poInput) {
+                    poInput.removeAttribute('readonly');
+                    poInput.value = '';
+                    poInput.setAttribute('readonly', 'readonly');
+                }
                 console.error('Error fetching part details:', data.error);
             }
         })
         .catch(error => {
+            if (error.name === 'AbortError') return; // Ignore cancelled requests
             console.error('Error fetching part details:', error);
             partDetailsCard.style.display = 'none';
         });
 }
 
-// Add event listeners for autofill with debounce
+// PCN input - debounced typing
 pcnInput.addEventListener('input', function() {
-    if (isAutoFilling) return; // Skip if this is from autofill
-
+    if (isAutoFilling) return;
     clearTimeout(autofillTimeout);
+    lastFetchedPcn = null; // Reset so blur/enter can re-fetch
     const pcnValue = this.value.trim();
 
     if (pcnValue.length >= 3) {
         autofillTimeout = setTimeout(() => {
             fetchPartDetails(pcnValue, null);
-        }, 500); // Wait 500ms after user stops typing
+        }, 300);
     } else {
         partDetailsCard.style.display = 'none';
+        // Clear dependent fields when PCN is cleared
+        itemInput.value = '';
+        if (poInput) { poInput.removeAttribute('readonly'); poInput.value = ''; poInput.setAttribute('readonly', 'readonly'); }
     }
 });
 
-itemInput.addEventListener('input', function() {
-    if (isAutoFilling) return; // Skip if this is from autofill
-
+// PCN blur - immediate fetch (barcode scanner fires input fast then moves focus)
+pcnInput.addEventListener('blur', function() {
     clearTimeout(autofillTimeout);
+    const pcnValue = this.value.trim();
+    if (pcnValue.length >= 3) {
+        fetchPartDetails(pcnValue, null);
+    }
+});
+
+// PCN Enter key - immediate fetch (barcode scanners send Enter after data)
+pcnInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        clearTimeout(autofillTimeout);
+        lastFetchedPcn = null; // Force re-fetch on explicit Enter
+        const pcnValue = this.value.trim();
+        if (pcnValue.length >= 3) {
+            fetchPartDetails(pcnValue, null);
+        }
+    }
+});
+
+// Item input - debounced typing
+itemInput.addEventListener('input', function() {
+    if (isAutoFilling) return;
+    clearTimeout(autofillTimeout);
+    lastFetchedItem = null;
     const itemValue = this.value.trim();
 
     if (itemValue.length >= 3) {
         autofillTimeout = setTimeout(() => {
             fetchPartDetails(null, itemValue);
-        }, 500); // Wait 500ms after user stops typing
+        }, 300);
     } else {
         partDetailsCard.style.display = 'none';
+        pcnInput.value = '';
+        if (poInput) { poInput.removeAttribute('readonly'); poInput.value = ''; poInput.setAttribute('readonly', 'readonly'); }
+    }
+});
+
+// Item blur - immediate fetch
+itemInput.addEventListener('blur', function() {
+    clearTimeout(autofillTimeout);
+    const itemValue = this.value.trim();
+    if (itemValue.length >= 3) {
+        fetchPartDetails(null, itemValue);
     }
 });
 

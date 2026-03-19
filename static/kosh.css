@@ -1574,16 +1574,38 @@
         }
 
         /* Fix buttons - ensure proper contrast */
-        [data-theme="dark"] .btn-light {
+        [data-theme="dark"] .btn-light:not(.btn-header-white) {
             background-color: #334155 !important;
             border-color: #475569 !important;
             color: #f8fafc !important;
         }
 
-        [data-theme="dark"] .btn-light:hover {
+        [data-theme="dark"] .btn-light:hover:not(.btn-header-white) {
             background-color: #475569 !important;
             border-color: #64748b !important;
             color: #ffffff !important;
+        }
+
+        /* White buttons inside purple page headers - stay white in all themes */
+        .btn-header-white,
+        [data-theme="dark"] .btn-header-white {
+            background: #ffffff !important;
+            color: #5b21b6 !important;
+            border-color: #ffffff !important;
+        }
+        .btn-header-white i,
+        [data-theme="dark"] .btn-header-white i {
+            color: #5b21b6 !important;
+        }
+        .btn-header-white:hover,
+        [data-theme="dark"] .btn-header-white:hover {
+            background: #f1f5f9 !important;
+            color: #4c1d95 !important;
+            border-color: #f1f5f9 !important;
+        }
+        .btn-header-white:hover i,
+        [data-theme="dark"] .btn-header-white:hover i {
+            color: #4c1d95 !important;
         }
 
         [data-theme="dark"] .btn-dark {

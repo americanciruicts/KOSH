@@ -1,69 +1,46 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="professional-header mb-5" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 25px; margin: 0;">
-    <div class="d-flex justify-content-between align-items-start">
-        <div>
-            <div class="d-flex align-items-center gap-3 mb-2">
-                <div class="header-icon">
-                    <i class="bi bi-speedometer2"></i>
-                </div>
-                <div>
-                    <h1 class="mb-1" style="font-size: 2rem; font-weight: 600; color: white !important;">Dashboard</h1>
-                    <p class="mb-0" style="color: rgba(255,255,255,0.85) !important;" style="font-size: 0.95rem;">Real-time inventory monitoring and analytics</p>
-                </div>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-speedometer2" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Dashboard</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Real-time inventory monitoring and analytics</p>
             </div>
         </div>
-        <div class="d-flex gap-2">
-            <a href="{{ url_for('stock') }}" class="btn btn-primary btn-lg shadow-sm">
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('stock') }}" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
                 <i class="bi bi-plus-circle me-1"></i> Add Stock
             </a>
-            <a href="{{ url_for('pick') }}" class="btn btn-outline-primary btn-lg">
-                <i class="bi bi-dash-circle me-1"></i> Pick Parts
+            <a href="{{ url_for('pick') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-dash-circle me-1" style="color: white !important;"></i> Pick Parts
             </a>
-            <a href="{{ url_for('restock') }}" class="btn btn-outline-success btn-lg">
-                <i class="bi bi-arrow-counterclockwise me-1"></i> Restock
+            <a href="{{ url_for('restock') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-arrow-counterclockwise me-1" style="color: white !important;"></i> Restock
             </a>
         </div>
     </div>
 </div>
-
-<style>
-.professional-header {
-    padding-bottom: 0;
-    border-bottom: none;
-}
-
-.header-icon {
-    color: white !important;
-    width: 60px;
-    height: 60px;
-    background: linear-gradient(135deg, var(--brand-primary), var(--card-accent-2));
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 1.75rem;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
-}
-</style>
 {% endblock %}
 
 {% block content %}
-<!-- Statistics Cards - Enhanced Professional Design -->
+<!-- Statistics Cards -->
 <div class="row g-4 mb-5">
     <div class="col-md-6 col-lg-3">
-        <div class="stat-card">
-            <div class="stat-card-body">
-                <div class="stat-icon stat-icon-blue">
-                    <i class="bi bi-briefcase"></i>
+        <div style="background: linear-gradient(135deg, #3b82f6, #2563eb); border-radius: 12px; padding: 22px; color: white; height: 100%; box-shadow: 0 4px 15px rgba(59,130,246,0.3);">
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <div style="width: 52px; height: 52px; background: rgba(255,255,255,0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                    <i class="bi bi-briefcase" style="color: white !important;"></i>
                 </div>
-                <div class="stat-content">
-                    <div class="stat-label">Total Jobs</div>
-                    <div class="stat-value">{{ stats.total_jobs }}</div>
-                    <div class="stat-trend">
-                        <i class="bi bi-graph-up"></i> Active projects
+                <div>
+                    <div style="font-size: 0.85rem; font-weight: 500; color: rgba(255,255,255,0.8) !important;">Total Jobs</div>
+                    <div style="font-size: 1.75rem; font-weight: 700; color: white !important; line-height: 1.2;">{{ stats.total_jobs }}</div>
+                    <div style="font-size: 0.78rem; color: rgba(255,255,255,0.7) !important;">
+                        <i class="bi bi-graph-up" style="color: rgba(255,255,255,0.7) !important;"></i> Active projects
                     </div>
                 </div>
             </div>
@@ -71,16 +48,16 @@
     </div>
 
     <div class="col-md-6 col-lg-3">
-        <div class="stat-card">
-            <div class="stat-card-body">
-                <div class="stat-icon stat-icon-cyan">
-                    <i class="bi bi-box-seam"></i>
+        <div style="background: linear-gradient(135deg, #06b6d4, #0891b2); border-radius: 12px; padding: 22px; color: white; height: 100%; box-shadow: 0 4px 15px rgba(6,182,212,0.3);">
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <div style="width: 52px; height: 52px; background: rgba(255,255,255,0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                    <i class="bi bi-box-seam" style="color: white !important;"></i>
                 </div>
-                <div class="stat-content">
-                    <div class="stat-label">Total Quantity</div>
-                    <div class="stat-value">{{ '{:,}'.format(stats.total_quantity) }}</div>
-                    <div class="stat-trend">
-                        <i class="bi bi-layers"></i> Items in warehouse
+                <div>
+                    <div style="font-size: 0.85rem; font-weight: 500; color: rgba(255,255,255,0.8) !important;">Total Quantity</div>
+                    <div style="font-size: 1.75rem; font-weight: 700; color: white !important; line-height: 1.2;">{{ '{:,}'.format(stats.total_quantity) }}</div>
+                    <div style="font-size: 0.78rem; color: rgba(255,255,255,0.7) !important;">
+                        <i class="bi bi-layers" style="color: rgba(255,255,255,0.7) !important;"></i> Items in warehouse
                     </div>
                 </div>
             </div>
@@ -88,16 +65,16 @@
     </div>
 
     <div class="col-md-6 col-lg-3">
-        <div class="stat-card">
-            <div class="stat-card-body">
-                <div class="stat-icon stat-icon-indigo">
-                    <i class="bi bi-list-check"></i>
+        <div style="background: linear-gradient(135deg, #8b5cf6, #7c3aed); border-radius: 12px; padding: 22px; color: white; height: 100%; box-shadow: 0 4px 15px rgba(139,92,246,0.3);">
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <div style="width: 52px; height: 52px; background: rgba(255,255,255,0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                    <i class="bi bi-list-check" style="color: white !important;"></i>
                 </div>
-                <div class="stat-content">
-                    <div class="stat-label">Inventory Items</div>
-                    <div class="stat-value">{{ stats.total_items }}</div>
-                    <div class="stat-trend">
-                        <i class="bi bi-tag"></i> Unique entries
+                <div>
+                    <div style="font-size: 0.85rem; font-weight: 500; color: rgba(255,255,255,0.8) !important;">Inventory Items</div>
+                    <div style="font-size: 1.75rem; font-weight: 700; color: white !important; line-height: 1.2;">{{ stats.total_items }}</div>
+                    <div style="font-size: 0.78rem; color: rgba(255,255,255,0.7) !important;">
+                        <i class="bi bi-tag" style="color: rgba(255,255,255,0.7) !important;"></i> Unique entries
                     </div>
                 </div>
             </div>
@@ -106,16 +83,16 @@
 
     <div class="col-md-6 col-lg-3">
         <a href="{{ url_for('stock_alerts') }}" class="text-decoration-none">
-            <div class="stat-card {% if stats.low_stock_count > 0 %}stat-card-alert{% endif %}" style="cursor: pointer;">
-                <div class="stat-card-body">
-                    <div class="stat-icon {% if stats.low_stock_count > 0 %}stat-icon-danger{% else %}stat-icon-success{% endif %}">
-                        <i class="bi bi-{% if stats.low_stock_count > 0 %}exclamation-triangle{% else %}check-circle{% endif %}"></i>
+            <div style="background: linear-gradient(135deg, {% if stats.low_stock_count > 0 %}#ef4444, #dc2626{% else %}#22c55e, #16a34a{% endif %}); border-radius: 12px; padding: 22px; color: white; height: 100%; cursor: pointer; box-shadow: 0 4px 15px {% if stats.low_stock_count > 0 %}rgba(239,68,68,0.3){% else %}rgba(34,197,94,0.3){% endif %};">
+                <div style="display: flex; align-items: center; gap: 16px;">
+                    <div style="width: 52px; height: 52px; background: rgba(255,255,255,0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                        <i class="bi bi-{% if stats.low_stock_count > 0 %}exclamation-triangle{% else %}check-circle{% endif %}" style="color: white !important;"></i>
                     </div>
-                    <div class="stat-content">
-                        <div class="stat-label">Stock Alerts</div>
-                        <div class="stat-value {% if stats.low_stock_count > 0 %}text-danger{% endif %}">{{ stats.low_stock_count }}</div>
-                        <div class="stat-trend">
-                            <i class="bi bi-info-circle"></i> Below {{ low_stock_threshold }} units
+                    <div>
+                        <div style="font-size: 0.85rem; font-weight: 500; color: rgba(255,255,255,0.8) !important;">Stock Alerts</div>
+                        <div style="font-size: 1.75rem; font-weight: 700; color: white !important; line-height: 1.2;">{{ stats.low_stock_count }}</div>
+                        <div style="font-size: 0.78rem; color: rgba(255,255,255,0.7) !important;">
+                            <i class="bi bi-info-circle" style="color: rgba(255,255,255,0.7) !important;"></i> Below {{ low_stock_threshold }} units
                         </div>
                     </div>
                 </div>

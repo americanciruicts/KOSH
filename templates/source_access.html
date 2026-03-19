@@ -1,17 +1,22 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="d-flex justify-content-between align-items-center mb-4" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 25px;">
-    <div>
-        <h1 class="h2 mb-0 text-white">
-            <i class="bi bi-check-circle text-success"></i> Migration Status
-        </h1>
-        <p class="text-muted">Microsoft Access to PostgreSQL migration completed successfully</p>
-    </div>
-    <div>
-        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-primary">
-            <i class="bi bi-table"></i> View Migrated Data
-        </a>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-check-circle" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Migration Status</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Microsoft Access to PostgreSQL migration completed successfully</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
+                <i class="bi bi-table"></i> View Migrated Data
+            </a>
+        </div>
     </div>
 </div>
 {% endblock %}
