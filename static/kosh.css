@@ -1878,34 +1878,34 @@
         .row[style*="linear-gradient"] h5,
         .row[style*="linear-gradient"] h6,
         .row[style*="linear-gradient"] p,
-        .row[style*="linear-gradient"] span,
+        .row[style*="linear-gradient"] span:not(.btn span),
         .row[style*="linear-gradient"] div,
-        .row[style*="linear-gradient"] i,
+        .row[style*="linear-gradient"] i:not(.btn i),
         .row[style*="linear-gradient"] small,
         .row[style*="linear-gradient"] strong,
         .row[style*="linear-gradient"] .text-white,
         .row[style*="linear-gradient"] .text-white-50,
         .row[style*="linear-gradient"] .text-muted,
-        .row[style*="linear-gradient"].mb-4 *,
+        .row[style*="linear-gradient"].mb-4 *:not(.btn):not(.btn *),
         .row[style*="linear-gradient"].mb-4 h1,
         .row[style*="linear-gradient"].mb-4 h2,
         .row[style*="linear-gradient"].mb-4 p,
-        .row[style*="linear-gradient"].mb-4 i,
-        .row[style*="linear-gradient"].mb-4 span,
-        div[style*="linear-gradient"] *,
+        .row[style*="linear-gradient"].mb-4 i:not(.btn i),
+        .row[style*="linear-gradient"].mb-4 span:not(.btn span),
+        div[style*="linear-gradient"] *:not(.btn):not(.btn *),
         div[style*="linear-gradient"] h1,
         div[style*="linear-gradient"] h2,
         div[style*="linear-gradient"] h3,
         div[style*="linear-gradient"] p,
-        div[style*="linear-gradient"] i,
-        div[style*="linear-gradient"] span {
+        div[style*="linear-gradient"] i:not(.btn i),
+        div[style*="linear-gradient"] span:not(.btn span) {
             color: #000000 !important;
             visibility: visible !important;
             opacity: 1 !important;
         }
 
         /* Light mode - white text on purple gradient backgrounds */
-        .row[style*="linear-gradient"] *,
+        .row[style*="linear-gradient"] *:not(.btn):not(.btn *),
         .row[style*="linear-gradient"] h1,
         .row[style*="linear-gradient"] h2,
         .row[style*="linear-gradient"] h3,
@@ -1913,9 +1913,9 @@
         .row[style*="linear-gradient"] h5,
         .row[style*="linear-gradient"] h6,
         .row[style*="linear-gradient"] p,
-        .row[style*="linear-gradient"] span,
+        .row[style*="linear-gradient"] span:not(.btn span),
         .row[style*="linear-gradient"] div,
-        .row[style*="linear-gradient"] i,
+        .row[style*="linear-gradient"] i:not(.btn i),
         .row[style*="linear-gradient"] small,
         .row[style*="linear-gradient"] strong,
         .row[style*="linear-gradient"] .text-white-50,
@@ -1927,7 +1927,7 @@
         }
 
         /* DARK MODE: White text on gradient backgrounds */
-        [data-theme="dark"] .row[style*="linear-gradient"] *,
+        [data-theme="dark"] .row[style*="linear-gradient"] *:not(.btn):not(.btn *),
         [data-theme="dark"] .row[style*="linear-gradient"] h1,
         [data-theme="dark"] .row[style*="linear-gradient"] h2,
         [data-theme="dark"] .row[style*="linear-gradient"] h3,
@@ -1935,27 +1935,27 @@
         [data-theme="dark"] .row[style*="linear-gradient"] h5,
         [data-theme="dark"] .row[style*="linear-gradient"] h6,
         [data-theme="dark"] .row[style*="linear-gradient"] p,
-        [data-theme="dark"] .row[style*="linear-gradient"] span,
+        [data-theme="dark"] .row[style*="linear-gradient"] span:not(.btn span),
         [data-theme="dark"] .row[style*="linear-gradient"] div,
-        [data-theme="dark"] .row[style*="linear-gradient"] i,
+        [data-theme="dark"] .row[style*="linear-gradient"] i:not(.btn i),
         [data-theme="dark"] .row[style*="linear-gradient"] small,
         [data-theme="dark"] .row[style*="linear-gradient"] strong,
         [data-theme="dark"] .row[style*="linear-gradient"] .text-white,
         [data-theme="dark"] .row[style*="linear-gradient"] .text-white-50,
         [data-theme="dark"] .row[style*="linear-gradient"] .text-muted,
-        [data-theme="dark"] .row[style*="linear-gradient"].mb-4 *,
+        [data-theme="dark"] .row[style*="linear-gradient"].mb-4 *:not(.btn):not(.btn *),
         [data-theme="dark"] .row[style*="linear-gradient"].mb-4 h1,
         [data-theme="dark"] .row[style*="linear-gradient"].mb-4 h2,
         [data-theme="dark"] .row[style*="linear-gradient"].mb-4 p,
-        [data-theme="dark"] .row[style*="linear-gradient"].mb-4 i,
-        [data-theme="dark"] .row[style*="linear-gradient"].mb-4 span,
-        [data-theme="dark"] div[style*="linear-gradient"] *,
+        [data-theme="dark"] .row[style*="linear-gradient"].mb-4 i:not(.btn i),
+        [data-theme="dark"] .row[style*="linear-gradient"].mb-4 span:not(.btn span),
+        [data-theme="dark"] div[style*="linear-gradient"] *:not(.btn):not(.btn *),
         [data-theme="dark"] div[style*="linear-gradient"] h1,
         [data-theme="dark"] div[style*="linear-gradient"] h2,
         [data-theme="dark"] div[style*="linear-gradient"] h3,
         [data-theme="dark"] div[style*="linear-gradient"] p,
-        [data-theme="dark"] div[style*="linear-gradient"] i,
-        [data-theme="dark"] div[style*="linear-gradient"] span {
+        [data-theme="dark"] div[style*="linear-gradient"] i:not(.btn i),
+        [data-theme="dark"] div[style*="linear-gradient"] span:not(.btn span) {
             color: #ffffff !important;
             visibility: visible !important;
             opacity: 1 !important;
@@ -2000,38 +2000,38 @@
         }
 
         /* Background gradient class support - light mode black */
-        div[class*="bg-gradient"] *,
-        .bg-gradient *,
+        div[class*="bg-gradient"] *:not(.btn):not(.btn *),
+        .bg-gradient *:not(.btn):not(.btn *),
         .bg-gradient h1,
         .bg-gradient h2,
         .bg-gradient h3,
         .bg-gradient p,
-        .bg-gradient span,
-        .bg-gradient i,
-        .row.bg-gradient *,
+        .bg-gradient span:not(.btn span),
+        .bg-gradient i:not(.btn i),
+        .row.bg-gradient *:not(.btn):not(.btn *),
         .row.bg-gradient h1,
         .row.bg-gradient h2,
         .row.bg-gradient p,
-        .row.bg-gradient i {
+        .row.bg-gradient i:not(.btn i) {
             color: #000000 !important;
             visibility: visible !important;
             opacity: 1 !important;
         }
 
         /* Background gradient class support - dark mode white */
-        [data-theme="dark"] div[class*="bg-gradient"] *,
-        [data-theme="dark"] .bg-gradient *,
+        [data-theme="dark"] div[class*="bg-gradient"] *:not(.btn):not(.btn *),
+        [data-theme="dark"] .bg-gradient *:not(.btn):not(.btn *),
         [data-theme="dark"] .bg-gradient h1,
         [data-theme="dark"] .bg-gradient h2,
         [data-theme="dark"] .bg-gradient h3,
         [data-theme="dark"] .bg-gradient p,
-        [data-theme="dark"] .bg-gradient span,
-        [data-theme="dark"] .bg-gradient i,
-        [data-theme="dark"] .row.bg-gradient *,
+        [data-theme="dark"] .bg-gradient span:not(.btn span),
+        [data-theme="dark"] .bg-gradient i:not(.btn i),
+        [data-theme="dark"] .row.bg-gradient *:not(.btn):not(.btn *),
         [data-theme="dark"] .row.bg-gradient h1,
         [data-theme="dark"] .row.bg-gradient h2,
         [data-theme="dark"] .row.bg-gradient p,
-        [data-theme="dark"] .row.bg-gradient i {
+        [data-theme="dark"] .row.bg-gradient i:not(.btn i) {
             color: #ffffff !important;
             visibility: visible !important;
             opacity: 1 !important;
