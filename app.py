@@ -2208,7 +2208,56 @@ try:
     ''')
     _cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_created ON pcb_inventory."tblActivityLog" (created_at DESC)')
     _cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_seen ON pcb_inventory."tblActivityLog" (seen)')
+    # Migrate old login notifications into activity log (one-time)
+    _cur.execute("""
+        INSERT INTO pcb_inventory."tblActivityLog" (user_id, username, full_name, action_type, description, created_at, seen, seen_at)
+        SELECT user_id, username, full_name, 'LOGIN', COALESCE(full_name, username) || ' logged in', login_time, seen, seen_at
+        FROM pcb_inventory."tblLoginNotifications" ln
+        WHERE NOT EXISTS (
+            SELECT 1 FROM pcb_inventory."tblActivityLog" al
+            WHERE al.username = ln.username AND al.action_type = 'LOGIN' AND al.created_at = ln.login_time
+        )
+    """)
+    _migrated_logins = _cur.rowcount
+
+    # Migrate old transaction history into activity log (one-time, last 30 days)
+    _cur.execute("""
+        INSERT INTO pcb_inventory."tblActivityLog" (username, action_type, description, details, created_at, seen)
+        SELECT
+            t.userid,
+            CASE
+                WHEN t.trantype ILIKE '%%stock%%' AND t.trantype NOT ILIKE '%%restock%%' THEN 'STOCK'
+                WHEN t.trantype ILIKE '%%pick%%' THEN 'PICK'
+                WHEN t.trantype ILIKE '%%restock%%' THEN 'RESTOCK'
+                WHEN t.trantype ILIKE '%%pcn%%' THEN 'PCN_GENERATE'
+                WHEN t.trantype ILIKE '%%pn_change%%' THEN 'PART_NUMBER_CHANGE'
+                ELSE 'OTHER'
+            END,
+            t.trantype || ' - ' || COALESCE(t.item, '') || CASE WHEN t.pcn IS NOT NULL THEN ' (PCN: ' || t.pcn || ')' ELSE '' END,
+            'Qty: ' || COALESCE(t.tranqty, '0'),
+            CASE
+                WHEN t.tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}' THEN TO_TIMESTAMP(t.tran_time, 'MM/DD/YY HH24:MI:SS')
+                ELSE t.created_at
+            END,
+            TRUE
+        FROM pcb_inventory."tblTransaction" t
+        WHERE t.created_at > NOW() - INTERVAL '30 days'
+        AND t.userid IS NOT NULL AND t.userid != ''
+        AND NOT EXISTS (
+            SELECT 1 FROM pcb_inventory."tblActivityLog" al
+            WHERE al.username = t.userid AND al.description LIKE t.trantype || ' - %%'
+            AND al.created_at = CASE
+                WHEN t.tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}' THEN TO_TIMESTAMP(t.tran_time, 'MM/DD/YY HH24:MI:SS')
+                ELSE t.created_at
+            END
+        )
+    """)
+    _migrated_txns = _cur.rowcount
     _conn.commit()
+    if _migrated_logins > 0:
+        logger.info(f"Migrated {_migrated_logins} old login notifications into tblActivityLog")
+    if _migrated_txns > 0:
+        logger.info(f"Migrated {_migrated_txns} old transactions into tblActivityLog")
     logger.info("tblActivityLog table ready")
 except Exception as _e:
     logger.error(f"Failed to create tblActivityLog: {_e}")
