@@ -757,7 +757,9 @@
             color: #f8fafc !important;
         }
 
-        [data-theme="dark"] table strong {
+        [data-theme="dark"] table strong,
+        [data-theme="dark"] table tbody td strong,
+        [data-theme="dark"] .table tbody td strong {
             color: #ffffff !important;
         }
 
