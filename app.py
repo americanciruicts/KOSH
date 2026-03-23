@@ -48,7 +48,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'kosh-pcb-inventory-secret-key-2025-production-v1')
 
 # Session Configuration
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)  # 8 hour session timeout
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=14)  # 14 hour session timeout
 app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevent JavaScript access to session cookie
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF protection
@@ -1559,6 +1559,11 @@ class DatabaseManager:
 
     def get_audit_log(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Get recent warehouse transaction entries."""
+        cache_key = f"audit_log_{limit}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
         conn = None
         try:
             conn = self.get_connection()
@@ -1566,28 +1571,31 @@ class DatabaseManager:
                 cur.execute(
                     """
                     SELECT
-                        id,
-                        trantype as operation,
-                        item as job,
-                        mpn as pcb_type,
-                        tranqty::integer as quantity_change,
-                        COALESCE(
-                            (SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" w WHERE w.pcn::text = t.pcn::text LIMIT 1),
-                            tranqty::integer
-                        ) as new_quantity,
-                        tran_time as timestamp,
-                        loc_from,
-                        loc_to,
-                        userid as user_id
+                        t.id,
+                        t.trantype as operation,
+                        t.item as job,
+                        t.mpn as pcb_type,
+                        t.tranqty::integer as quantity_change,
+                        COALESCE(w.onhandqty, t.tranqty::integer) as new_quantity,
+                        t.tran_time as timestamp,
+                        t.loc_from,
+                        t.loc_to,
+                        t.userid as user_id
                     FROM pcb_inventory."tblTransaction" t
-                    WHERE trantype IN ('GEN', 'STOCK', 'PICK', 'UPDATE')
-                      AND tran_time IS NOT NULL
-                    ORDER BY tran_time DESC
+                    LEFT JOIN LATERAL (
+                        SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" w
+                        WHERE w.pcn::text = t.pcn::text LIMIT 1
+                    ) w ON true
+                    WHERE t.trantype IN ('GEN', 'STOCK', 'PICK', 'UPDATE')
+                      AND t.tran_time IS NOT NULL
+                    ORDER BY t.tran_time DESC
                     LIMIT %s
                     """,
                     (limit,)
                 )
-                return [dict(row) for row in cur.fetchall()]
+                result = [dict(row) for row in cur.fetchall()]
+                cache.set(cache_key, result, timeout=120)  # Cache for 2 minutes
+                return result
         except Exception as e:
             logger.error(f"Failed to get audit log from transactions: {e}")
             return []
@@ -1595,6 +1603,92 @@ class DatabaseManager:
             if conn:
                 self.return_connection(conn)
     
+    def get_dashboard_data(self, summary_limit=100, activity_limit=10, low_stock_threshold=10, low_stock_limit=50):
+        """Get all dashboard data in a single DB connection to minimize round trips."""
+        conn = None
+        try:
+            conn = self.get_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+
+            # 1) Inventory stats
+            cur.execute('''
+                SELECT
+                    COUNT(DISTINCT item) as total_jobs,
+                    SUM(onhandqty) as total_quantity,
+                    COUNT(*) as total_items,
+                    COUNT(DISTINCT mpn) as unique_mpns
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE onhandqty > 0
+            ''')
+            stats = dict(cur.fetchone())
+
+            # 2) Inventory summary
+            cur.execute('''
+                SELECT
+                    w.mpn as pcb_type,
+                    w.loc_to as location,
+                    COUNT(DISTINCT w.item) as job_count,
+                    SUM(w.onhandqty) as total_qty,
+                    AVG(w.onhandqty) as avg_qty,
+                    MAX(p."DESC") as description
+                FROM pcb_inventory."tblWhse_Inventory" w
+                LEFT JOIN pcb_inventory."tblPN_List" p ON w.item = p.item
+                WHERE w.onhandqty > 0
+                GROUP BY w.mpn, w.loc_to
+                ORDER BY total_qty DESC, w.mpn, w.loc_to
+                LIMIT %s
+            ''', (summary_limit,))
+            summary = [dict(row) for row in cur.fetchall()]
+
+            # 3) Low stock items
+            cur.execute('''
+                SELECT
+                    item as job, pcn, mpn as pcb_type,
+                    onhandqty as qty, loc_to as location, migrated_at as updated_at
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE onhandqty > 0 AND onhandqty < %s
+                ORDER BY onhandqty ASC
+                LIMIT %s
+            ''', (low_stock_threshold, low_stock_limit))
+            low_stock = [dict(row) for row in cur.fetchall()]
+
+            # 4) Recent activity
+            cur.execute("""
+                SELECT
+                    t.id,
+                    t.trantype as operation,
+                    t.item as job,
+                    t.mpn as pcb_type,
+                    t.tranqty::integer as quantity_change,
+                    COALESCE(w.onhandqty, t.tranqty::integer) as new_quantity,
+                    t.tran_time as timestamp,
+                    t.loc_from, t.loc_to,
+                    t.userid as user_id
+                FROM pcb_inventory."tblTransaction" t
+                LEFT JOIN LATERAL (
+                    SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" w
+                    WHERE w.pcn::text = t.pcn::text LIMIT 1
+                ) w ON true
+                WHERE t.trantype IN ('GEN', 'STOCK', 'PICK', 'UPDATE')
+                  AND t.tran_time IS NOT NULL
+                ORDER BY t.tran_time DESC
+                LIMIT %s
+            """, (activity_limit,))
+            activity = [dict(row) for row in cur.fetchall()]
+
+            return {
+                'stats': stats,
+                'summary': summary,
+                'low_stock': low_stock,
+                'activity': activity,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get dashboard data: {e}")
+            return None
+        finally:
+            if conn:
+                self.return_connection(conn)
+
     def search_inventory(self, job: str = None, pcb_type: str = None, pcn: str = None,
                         user_role: str = 'USER', itar_auth: bool = False) -> List[Dict[str, Any]]:
         """Search warehouse inventory with optional filters.
@@ -2126,12 +2220,8 @@ def require_auth(f):
     """Decorator to require user authentication - NO GUEST ACCESS."""
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        logger.info(f"=== REQUIRE_AUTH CALLED for {request.path} method={request.method} ===")
-        logger.info(f"Session has user_id: {'user_id' in session}, username: {'username' in session}")
-
         # Check if user is logged in
         if 'user_id' not in session or 'username' not in session:
-            logger.warning(f"Auth failed for {request.path} - no session")
             # For API requests, return JSON error instead of redirect
             if request.path.startswith('/api/'):
                 return jsonify({
@@ -2147,7 +2237,6 @@ def require_auth(f):
                 forge_login_url = 'https://aci-forge.vercel.app/login?redirect=kosh'
             return redirect(forge_login_url)
 
-        logger.info(f"Auth passed, calling function {f.__name__}")
         # Check for ACI Dashboard SSO token in headers (optional)
         auth_token = request.headers.get('X-ACI-Auth-Token') or session.get('aci_auth_token')
         if auth_token:
@@ -2188,101 +2277,78 @@ db_manager = DatabaseManager()
 user_manager = UserManager(db_manager)
 expiration_manager = ExpirationManager()
 
-# Create tblActivityLog table if it doesn't exist
-try:
-    _conn = db_manager.get_connection()
-    _cur = _conn.cursor()
-    _cur.execute('''
-        CREATE TABLE IF NOT EXISTS pcb_inventory."tblActivityLog" (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER,
-            username VARCHAR(100),
-            full_name VARCHAR(200),
-            action_type VARCHAR(50) NOT NULL,
-            description TEXT,
-            details TEXT,
-            created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'),
-            seen BOOLEAN DEFAULT FALSE,
-            seen_at TIMESTAMP
-        )
-    ''')
-    _cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_created ON pcb_inventory."tblActivityLog" (created_at DESC)')
-    _cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_seen ON pcb_inventory."tblActivityLog" (seen)')
-    # Migrate old login notifications into activity log (one-time)
-    _cur.execute("""
-        INSERT INTO pcb_inventory."tblActivityLog" (user_id, username, full_name, action_type, description, created_at, seen, seen_at)
-        SELECT user_id, username, full_name, 'LOGIN', COALESCE(full_name, username) || ' logged in', login_time, seen, seen_at
-        FROM pcb_inventory."tblLoginNotifications" ln
-        WHERE NOT EXISTS (
-            SELECT 1 FROM pcb_inventory."tblActivityLog" al
-            WHERE al.username = ln.username AND al.action_type = 'LOGIN' AND al.created_at = ln.login_time
-        )
-    """)
-    _migrated_logins = _cur.rowcount
+# Keep Neon database warm - ping every 4 minutes to prevent cold starts
+import threading
 
-    # Migrate old transaction history into activity log (one-time, last 30 days)
-    _cur.execute("""
-        INSERT INTO pcb_inventory."tblActivityLog" (username, action_type, description, details, created_at, seen)
-        SELECT
-            t.userid,
-            CASE
-                WHEN t.trantype ILIKE '%%stock%%' AND t.trantype NOT ILIKE '%%restock%%' THEN 'STOCK'
-                WHEN t.trantype ILIKE '%%pick%%' THEN 'PICK'
-                WHEN t.trantype ILIKE '%%restock%%' THEN 'RESTOCK'
-                WHEN t.trantype ILIKE '%%pcn%%' THEN 'PCN_GENERATE'
-                WHEN t.trantype ILIKE '%%pn_change%%' THEN 'PART_NUMBER_CHANGE'
-                ELSE 'OTHER'
-            END,
-            t.trantype || ' - ' || COALESCE(t.item, '') || CASE WHEN t.pcn IS NOT NULL THEN ' (PCN: ' || t.pcn || ')' ELSE '' END,
-            'Qty: ' || COALESCE(t.tranqty, '0'),
-            CASE
-                WHEN t.tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}' THEN TO_TIMESTAMP(t.tran_time, 'MM/DD/YY HH24:MI:SS')
-                ELSE t.created_at
-            END,
-            TRUE
-        FROM pcb_inventory."tblTransaction" t
-        WHERE t.created_at > NOW() - INTERVAL '30 days'
-        AND t.userid IS NOT NULL AND t.userid != ''
-        AND NOT EXISTS (
-            SELECT 1 FROM pcb_inventory."tblActivityLog" al
-            WHERE al.username = t.userid AND al.description LIKE t.trantype || ' - %%'
-            AND al.created_at = CASE
-                WHEN t.tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}' THEN TO_TIMESTAMP(t.tran_time, 'MM/DD/YY HH24:MI:SS')
-                ELSE t.created_at
-            END
-        )
-    """)
-    _migrated_txns = _cur.rowcount
-    _conn.commit()
-    if _migrated_logins > 0:
-        logger.info(f"Migrated {_migrated_logins} old login notifications into tblActivityLog")
-    if _migrated_txns > 0:
-        logger.info(f"Migrated {_migrated_txns} old transactions into tblActivityLog")
-    logger.info("tblActivityLog table ready")
-except Exception as _e:
-    logger.error(f"Failed to create tblActivityLog: {_e}")
-finally:
-    try:
-        db_manager.return_connection(_conn)
-    except:
-        pass
+def _neon_keepalive():
+    """Background thread that pings Neon DB every 4 minutes to prevent cold starts."""
+    while True:
+        try:
+            conn = db_manager.get_connection()
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            db_manager.return_connection(conn)
+        except Exception as e:
+            logger.warning(f"Neon keepalive ping failed: {e}")
+        time.sleep(240)  # 4 minutes
 
+# Only start keepalive on long-running servers (Docker), not serverless (Vercel)
+if NEON_DATABASE_URL and not os.environ.get('VERCEL'):
+    _keepalive_thread = threading.Thread(target=_neon_keepalive, daemon=True)
+    _keepalive_thread.start()
+    logger.info("Neon DB keepalive thread started (ping every 4 minutes)")
 
-def log_user_activity(action_type, description, details=None):
-    """Log a user activity to tblActivityLog for admin notifications.
-
-    action_type: LOGIN, LOGOUT, STOCK, PICK, RESTOCK, PCN_GENERATE, SHORTAGE_REPORT, PART_NUMBER_CHANGE
-    """
+# Ensure tblActivityLog exists (lightweight check, skips migration on Vercel cold starts)
+def _ensure_activity_log_table():
+    """Create tblActivityLog if needed. Runs once per process."""
     conn = None
     try:
-        user_id = session.get('user_id')
-        username = session.get('username', 'system')
-        full_name = session.get('full_name', '')
+        conn = db_manager.get_connection()
+        cur = conn.cursor()
+        # Quick check if table already exists — avoids expensive CREATE IF NOT EXISTS on every cold start
+        cur.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'pcb_inventory' AND table_name = 'tblActivityLog'
+        """)
+        if cur.fetchone():
+            db_manager.return_connection(conn)
+            return  # Table exists, skip all migration work
 
-        # Skip logging for super admin
-        if username and username.lower() == 'kanav':
-            return
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS pcb_inventory."tblActivityLog" (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER,
+                username VARCHAR(100),
+                full_name VARCHAR(200),
+                action_type VARCHAR(50) NOT NULL,
+                description TEXT,
+                details TEXT,
+                created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'),
+                seen BOOLEAN DEFAULT FALSE,
+                seen_at TIMESTAMP
+            )
+        ''')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_created ON pcb_inventory."tblActivityLog" (created_at DESC)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_seen ON pcb_inventory."tblActivityLog" (seen)')
+        conn.commit()
+        logger.info("tblActivityLog table created")
+    except Exception as e:
+        logger.error(f"Failed to ensure tblActivityLog: {e}")
+    finally:
+        if conn:
+            try:
+                db_manager.return_connection(conn)
+            except:
+                pass
 
+# Run in background thread so it doesn't block app startup
+threading.Thread(target=_ensure_activity_log_table, daemon=True).start()
+
+
+def _do_log_activity(user_id, username, full_name, action_type, description, details):
+    """Background worker that inserts a row into tblActivityLog."""
+    conn = None
+    try:
         conn = db_manager.get_connection()
         cur = conn.cursor()
         cur.execute("""
@@ -2304,6 +2370,27 @@ def log_user_activity(action_type, description, details=None):
                 db_manager.return_connection(conn)
             except:
                 pass
+
+
+def log_user_activity(action_type, description, details=None):
+    """Log a user activity to tblActivityLog in a background thread (non-blocking).
+
+    action_type: LOGIN, LOGOUT, STOCK, PICK, RESTOCK, PCN_GENERATE, SHORTAGE_REPORT, PART_NUMBER_CHANGE
+    """
+    user_id = session.get('user_id')
+    username = session.get('username', 'system')
+    full_name = session.get('full_name', '')
+
+    # Skip logging for super admin
+    if username and username.lower() == 'kanav':
+        return
+
+    t = threading.Thread(
+        target=_do_log_activity,
+        args=(user_id, username, full_name, action_type, description, details),
+        daemon=True
+    )
+    t.start()
 
 
 @app.route('/health')
@@ -2515,54 +2602,84 @@ def logout():
 def index():
     """Main dashboard page - optimized for fast loading with accurate stats."""
     try:
-        # Get ACCURATE stats efficiently (no data loading, just aggregates)
-        stats_data = db_manager.get_inventory_stats()
+        # Serve cached dashboard data if available (60s TTL)
+        dashboard_cache_key = "dashboard_data_v1"
+        cached_dashboard = cache.get(dashboard_cache_key)
 
-        # Get top 100 items for display (sorted by quantity)
-        summary = db_manager.get_inventory_summary(limit=100)
-        recent_activity = db_manager.get_audit_log(10)
+        if cached_dashboard:
+            stats = cached_dashboard['stats']
+            enhanced_summary = cached_dashboard['enhanced_summary']
+            recent_activity = cached_dashboard['recent_activity']
+            low_stock_items = cached_dashboard['low_stock_items']
+            most_active_jobs = cached_dashboard['most_active_jobs']
+            pcb_type_data = cached_dashboard['pcb_type_data']
+            LOW_STOCK_THRESHOLD = cached_dashboard['low_stock_threshold']
+        else:
+            LOW_STOCK_THRESHOLD = 10
 
-        # Use accurate stats from database
-        total_jobs = stats_data.get('total_jobs', 0)
-        total_quantity = stats_data.get('total_quantity', 0) or 0
-        total_items = stats_data.get('total_items', 0)
+            # Single DB connection for all dashboard queries
+            dashboard = db_manager.get_dashboard_data(
+                summary_limit=100, activity_limit=10,
+                low_stock_threshold=LOW_STOCK_THRESHOLD, low_stock_limit=50
+            )
 
-        # Get low stock items from entire database
-        LOW_STOCK_THRESHOLD = 10
-        low_stock_items = db_manager.get_low_stock_items(threshold=LOW_STOCK_THRESHOLD, limit=50)
+            if dashboard:
+                stats_data = dashboard['stats']
+                summary = dashboard['summary']
+                recent_activity = dashboard['activity']
+                low_stock_items = dashboard['low_stock']
+            else:
+                stats_data = {'total_jobs': 0, 'total_quantity': 0, 'total_items': 0, 'unique_mpns': 0}
+                summary = []
+                recent_activity = []
+                low_stock_items = []
 
-        # Most active jobs from summary (top 5)
-        most_active_jobs = sorted(
-            [(item.get('pcb_type', 'Unknown'), item.get('total_qty', 0)) for item in summary],
-            key=lambda x: x[1],
-            reverse=True
-        )[:5]
+            total_jobs = stats_data.get('total_jobs', 0)
+            total_quantity = stats_data.get('total_quantity', 0) or 0
+            total_items = stats_data.get('total_items', 0)
 
-        # PCB type distribution for chart - use summary data
-        pcb_type_data = {}
-        for item in summary:
-            pcb_type = item.get('pcb_type') or 'Unknown'
-            qty = item.get('total_qty') or 0
-            pcb_type_data[pcb_type] = pcb_type_data.get(pcb_type, 0) + qty
+            # Most active jobs from summary (top 5)
+            most_active_jobs = sorted(
+                [(item.get('pcb_type', 'Unknown'), item.get('total_qty', 0)) for item in summary],
+                key=lambda x: x[1],
+                reverse=True
+            )[:5]
 
-        stats = {
-            'total_jobs': total_jobs,
-            'total_quantity': total_quantity,
-            'total_items': total_items,
-            'pcb_types': stats_data.get('unique_mpns', 0),  # Accurate count from database
-            'low_stock_count': len(low_stock_items)
-        }
-
-        # Enhanced summary with safe formatting
-        enhanced_summary = []
-        if summary:
+            # PCB type distribution for chart
+            pcb_type_data = {}
             for item in summary:
-                enhanced_item = dict(item)
-                # Add safe default values
-                enhanced_item['job_count'] = enhanced_item.get('job_count', 1)
-                enhanced_item['total_quantity'] = enhanced_item.get('total_qty', 0)
-                enhanced_item['average_quantity'] = enhanced_item.get('total_qty', 0) / max(enhanced_item.get('job_count', 1), 1)
-                enhanced_summary.append(enhanced_item)
+                pcb_type = item.get('pcb_type') or 'Unknown'
+                qty = item.get('total_qty') or 0
+                pcb_type_data[pcb_type] = pcb_type_data.get(pcb_type, 0) + qty
+
+            stats = {
+                'total_jobs': total_jobs,
+                'total_quantity': total_quantity,
+                'total_items': total_items,
+                'pcb_types': stats_data.get('unique_mpns', 0),
+                'low_stock_count': len(low_stock_items)
+            }
+
+            # Enhanced summary with safe formatting
+            enhanced_summary = []
+            if summary:
+                for item in summary:
+                    enhanced_item = dict(item)
+                    enhanced_item['job_count'] = enhanced_item.get('job_count', 1)
+                    enhanced_item['total_quantity'] = enhanced_item.get('total_qty', 0)
+                    enhanced_item['average_quantity'] = enhanced_item.get('total_qty', 0) / max(enhanced_item.get('job_count', 1), 1)
+                    enhanced_summary.append(enhanced_item)
+
+            # Cache all dashboard data for 60 seconds
+            cache.set(dashboard_cache_key, {
+                'stats': stats,
+                'enhanced_summary': enhanced_summary,
+                'recent_activity': recent_activity,
+                'low_stock_items': low_stock_items,
+                'low_stock_threshold': LOW_STOCK_THRESHOLD,
+                'most_active_jobs': most_active_jobs,
+                'pcb_type_data': pcb_type_data,
+            }, timeout=60)
 
         return render_template('index.html',
                              stats=stats,
