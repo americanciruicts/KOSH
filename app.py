@@ -663,7 +663,7 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             # CRITICAL: Set SERIALIZABLE isolation to prevent race conditions
-            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE)
+            conn.autocommit = False
             cursor = conn.cursor()
 
             # CRITICAL: Lock row with FOR UPDATE to prevent concurrent stock operations
@@ -809,7 +809,7 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             # CRITICAL: Set SERIALIZABLE isolation to prevent race conditions
-            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE)
+            conn.autocommit = False
             cursor = conn.cursor()
 
             try:
@@ -1250,7 +1250,7 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             # CRITICAL: Set SERIALIZABLE isolation to prevent race conditions
-            conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_SERIALIZABLE)
+            conn.autocommit = False
             cursor = conn.cursor()
 
             try:
