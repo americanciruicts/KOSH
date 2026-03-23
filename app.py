@@ -32,9 +32,6 @@ import time
 
 # Cache buster - changes on every app restart so browsers get fresh assets
 APP_START_TIME = str(int(time.time()))
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils import get_column_letter
 from io import BytesIO
 
 # Configure logging
@@ -473,23 +470,33 @@ class RestockForm(FlaskForm):
 
 # User authentication now handled by ACI Dashboard
 
+_IS_VERCEL = bool(os.environ.get('VERCEL'))
+
 class DatabaseManager:
     """Handle database operations using PostgreSQL with connection pooling and failover."""
 
     def __init__(self):
         self.db_config = DB_CONFIG
         self.using_fallback = False
-        # Initialize connection pool with optimized settings
+        self.pool = None
+
+        if _IS_VERCEL:
+            # Serverless: skip pool creation (avoids 2 SSL handshakes on cold start)
+            logger.info("Serverless mode: using on-demand DB connections")
+        else:
+            # Long-running server (Docker): use connection pool
+            self._init_pool()
+
+    def _init_pool(self):
         try:
             self.pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=2,     # Reduced for Neon compatibility
-                maxconn=15,    # Reduced for Neon pooler limits
+                minconn=2,
+                maxconn=15,
                 **self.db_config
             )
             logger.info(f"Database connection pool initialized (primary)")
         except Exception as e:
             logger.error(f"Failed to create primary connection pool: {e}")
-            # Try fallback to local DB if primary was Neon
             if NEON_DATABASE_URL and LOCAL_DB_CONFIG != self.db_config:
                 logger.warning("Falling back to local database...")
                 try:
@@ -508,25 +515,30 @@ class DatabaseManager:
                 raise
 
     def get_connection(self):
-        """Get a database connection from the pool."""
+        """Get a database connection from the pool or create one directly (serverless)."""
         try:
-            return self.pool.getconn()
+            if self.pool:
+                return self.pool.getconn()
+            return psycopg2.connect(**self.db_config)
         except Exception as e:
-            logger.error(f"Failed to get connection from pool: {e}")
+            logger.error(f"Failed to get connection: {e}")
             raise
 
     def return_connection(self, conn):
-        """Return a connection to the pool."""
+        """Return a connection to the pool or close it (serverless)."""
         try:
-            self.pool.putconn(conn)
+            if self.pool:
+                self.pool.putconn(conn)
+            else:
+                conn.close()
         except Exception as e:
-            logger.error(f"Failed to return connection to pool: {e}")
+            logger.error(f"Failed to return/close connection: {e}")
 
     def get_pool_stats(self):
         """Get connection pool statistics for monitoring."""
+        if not self.pool:
+            return {'mode': 'serverless', 'pool': False}
         try:
-            # Access private _used and _pool attributes for monitoring
-            # Note: This uses private attributes which is not ideal but psycopg2 doesn't expose pool stats
             return {
                 'minconn': self.pool.minconn,
                 'maxconn': self.pool.maxconn,
@@ -3927,6 +3939,9 @@ def view_shortage_report(report_id):
 @require_auth
 def export_shortage_report(report_id):
     """Export shortage report to Excel with optional column customization."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
     conn = None
     try:
         # Parse column config from POST body, or use defaults
@@ -6845,6 +6860,9 @@ def job_generate_shortage(job_number):
 @require_auth
 def job_export(job_number):
     """Export job report to Excel with optional column customization."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
     conn = None
     try:
         # Parse column config from POST body, or use defaults
