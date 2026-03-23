@@ -39,7 +39,7 @@ services:
       - POSTGRES_USER=stockpick_user
       - POSTGRES_PASSWORD=stockpick_pass
       - DATABASE_URL=postgresql://stockpick_user:stockpick_pass@aci-database:5432/kosh
-      - NEON_DATABASE_URL=postgresql://neondb_owner:npg_rDiAmTp5bv9J@ep-late-wildflower-ad4p3dpq-pooler.c-2.us-east-1.aws.neon.tech/kosh?sslmode=require
+      - NEON_DATABASE_URL=postgresql://neondb_owner:npg_rDiAmTp5bv9J@ep-late-wildflower-ad4p3dpq.c-2.us-east-1.aws.neon.tech/kosh?sslmode=require
       - FLASK_RUN_PORT=5000
       - SSO_SECRET_KEY=D4T_WY71xsF0_UB4QjIzlAjVlj-M5kEG0jsIws6isvPn5NNK4s5-_E_--WI6C6YT6jkerJ3EHncBEuG3tK5Rlg
     expose:
