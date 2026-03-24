@@ -46,7 +46,7 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'kosh-pcb-inventory-secr
 
 # Session Configuration
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=14)  # 14 hour session timeout
-app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['SESSION_COOKIE_SECURE'] = bool(os.environ.get('VERCEL')) or os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() == 'true'
 app.config['SESSION_COOKIE_HTTPONLY'] = True  # Prevent JavaScript access to session cookie
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # CSRF protection
 
@@ -709,14 +709,7 @@ class DatabaseManager:
                 VALUES ('STOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s)
             """, (job, str(pcn) if pcn else None, mpn, dc, msd, quantity, location_from, location_to, work_order, work_order, username))
 
-            conn.commit()
-            logger.info(f"Stock operation completed: {quantity} units of {job} (PCN: {pcn}) moved from {location_from} to {location_to}")
-
-            # Clear cache after successful update
-            cache.delete_memoized(self.get_current_inventory)
-            cache.delete('stats_summary')
-
-            # Get the updated quantity after stocking
+            # Get the updated quantity before commit (within same transaction)
             cursor.execute("""
                 SELECT COALESCE(SUM(onhandqty), 0) as total_qty
                 FROM pcb_inventory."tblWhse_Inventory"
@@ -724,6 +717,13 @@ class DatabaseManager:
             """, (job,))
             total_result = cursor.fetchone()
             new_qty = int(total_result[0]) if total_result and total_result[0] else 0
+
+            conn.commit()
+            logger.info(f"Stock operation completed: {quantity} units of {job} (PCN: {pcn}) moved from {location_from} to {location_to}")
+
+            # Clear cache after successful update
+            cache.delete_memoized(self.get_current_inventory)
+            cache.delete('stats_summary')
 
             return {
                 'success': True,
@@ -1245,11 +1245,17 @@ class DatabaseManager:
                 'error': 'Either PCN or Item number is required'
             }
 
+        # Validate destination location exists
+        if location_to and not self.validate_location(location_to):
+            return {
+                'success': False,
+                'error': f'Location "{location_to}" does not exist. Please verify the location code and try again.'
+            }
+
         conn = None
         cursor = None
         try:
             conn = self.get_connection()
-            # CRITICAL: Set SERIALIZABLE isolation to prevent race conditions
             conn.autocommit = False
             cursor = conn.cursor()
 
@@ -2713,7 +2719,7 @@ def index():
             'pcb_types': len(PCB_TYPES),
             'low_stock_count': 0
         }
-        flash(f"Error loading dashboard: {e}", 'error')
+        flash('Error loading dashboard. Please try again.', 'error')
         return render_template('index.html', stats=safe_stats, summary=[], recent_activity=[],
                              low_stock_items=[], low_stock_threshold=10, most_active_jobs=[], pcb_type_data={}, inventory_with_trends=[])
 
@@ -2768,7 +2774,7 @@ def stock():
                 
         except Exception as e:
             logger.error(f"Stock operation error: {e}")
-            flash(f"Stock operation failed: {e}", 'error')
+            flash('Stock operation failed. Please try again.', 'error')
     else:
         if form.errors:
             logger.error(f"Stock form validation failed - Errors: {form.errors}")
@@ -2829,7 +2835,7 @@ def pick():
                 
         except Exception as e:
             logger.error(f"Pick operation error: {e}")
-            flash(f"Pick operation failed: {e}", 'error')
+            flash('Pick operation failed. Please try again.', 'error')
     else:
         if form.errors:
             logger.error(f"Pick form validation failed - Errors: {form.errors}")
@@ -2885,7 +2891,7 @@ def restock():
 
         except Exception as e:
             logger.error(f"Restock operation error: {e}")
-            flash(f"Restock operation failed: {e}", 'error')
+            flash('Restock operation failed. Please try again.', 'error')
     else:
         if form.errors:
             logger.error(f"Restock form validation failed - Errors: {form.errors}")
@@ -3269,7 +3275,7 @@ def pcb_inventory():
         import traceback
         logger.error(f"Error loading inventory: {e}")
         logger.error(traceback.format_exc())
-        flash(f"Error loading inventory: {e}", 'error')
+        flash('Error loading inventory. Please try again.', 'error')
         return render_template('inventory.html', inventory=[], pagination={'total': 0},
                              pcb_types=PCB_TYPES, locations=[], search_job='', search_pcb_type='',
                              search_location='', search_pcn='', search_date_from='', search_date_to='',
@@ -3377,7 +3383,7 @@ def warehouse_inventory():
 
     except Exception as e:
         logger.error(f"Error loading warehouse inventory: {e}")
-        flash(f"Error loading warehouse inventory: {e}", 'error')
+        flash('Error loading warehouse inventory. Please try again.', 'error')
         return render_template('warehouse_inventory.html', inventory=[],
                              pagination={'total': 0, 'page': 1, 'total_pages': 1, 'per_page': 10},
                              total_records=0)
@@ -3523,6 +3529,7 @@ def update_warehouse_item():
                 return jsonify({'success': False, 'message': f'{field} is required'}), 400
 
         conn = db_manager.get_connection()
+        conn.autocommit = False
         cursor = conn.cursor()
 
         try:
@@ -3552,6 +3559,18 @@ def update_warehouse_item():
 
             if mfg_qty is not None and mfg_qty < 0:
                 return jsonify({'success': False, 'message': 'MFG quantity cannot be negative'}), 400
+
+            # Lock row before updating to prevent concurrent overwrites
+            cursor.execute("""
+                SELECT id FROM pcb_inventory."tblWhse_Inventory"
+                WHERE item::text = %s AND pcn::text = %s
+                  AND (mpn::text = %s OR (mpn IS NULL AND %s IS NULL))
+                FOR UPDATE
+            """, (data.get('item'), data.get('pcn'), data.get('mpn') or None, data.get('mpn') or None))
+
+            if not cursor.fetchone():
+                conn.rollback()
+                return jsonify({'success': False, 'message': 'Item not found'}), 404
 
             # Update warehouse inventory record
             cursor.execute("""
@@ -3669,7 +3688,7 @@ def reports():
                              audit_log=audit_log)
     except Exception as e:
         logger.error(f"Error loading reports: {e}")
-        flash(f"Error loading reports: {e}", 'error')
+        flash('Error loading reports. Please try again.', 'error')
         return render_template('reports.html', summary=[], audit_log=[])
 
 # ============================================================================
@@ -3709,7 +3728,7 @@ def shortage_report():
                              column_definitions=SHORTAGE_EXPORT_COLUMNS)
     except Exception as e:
         logger.error(f"Error loading shortage report page: {e}")
-        flash(f"Error loading page: {e}", 'error')
+        flash('Error loading page. Please try again.', 'error')
         return render_template('shortage_report.html', saved_reports=[], available_jobs=[],
                              column_definitions=SHORTAGE_EXPORT_COLUMNS)
     finally:
@@ -3884,7 +3903,7 @@ def generate_shortage_report():
         if conn:
             conn.rollback()
         logger.error(f"Error generating shortage report: {e}")
-        flash(f"Error generating report: {e}", 'danger')
+        flash('Error generating report. Please try again.', 'danger')
         return redirect(url_for('shortage_report'))
     finally:
         if conn:
@@ -3929,7 +3948,7 @@ def view_shortage_report(report_id):
 
     except Exception as e:
         logger.error(f"Error viewing shortage report: {e}")
-        flash(f"Error loading report: {e}", 'danger')
+        flash('Error loading report. Please try again.', 'danger')
         return redirect(url_for('shortage_report'))
     finally:
         if conn:
@@ -4065,7 +4084,7 @@ def export_shortage_report(report_id):
         logger.error(f"Error exporting shortage report: {e}")
         if request.method == 'POST':
             return jsonify({'success': False, 'error': str(e)}), 500
-        flash(f"Error exporting report: {e}", 'danger')
+        flash('Error exporting report. Please try again.', 'danger')
         return redirect(url_for('view_shortage_report', report_id=report_id))
     finally:
         if conn:
@@ -4091,7 +4110,7 @@ def delete_shortage_report(report_id):
         if conn:
             conn.rollback()
         logger.error(f"Error deleting shortage report: {e}")
-        flash(f"Error deleting report: {e}", 'danger')
+        flash('Error deleting report. Please try again.', 'danger')
         return redirect(url_for('shortage_report'))
     finally:
         if conn:
@@ -4210,13 +4229,13 @@ def sources():
                 })
         
         cursor.close()
-        conn.close()
-        
+        db_manager.return_connection(conn)
+
         return render_template('sources.html', tables=table_info)
         
     except Exception as e:
         logger.error(f"Error loading sources: {e}")
-        flash(f"Error loading sources: {e}", 'error')
+        flash('Error loading sources. Please try again.', 'error')
         return render_template('sources.html', tables=[])
 
 @app.route('/sources/<table_name>')
@@ -4274,9 +4293,9 @@ def view_source_table(table_name):
         }
         
         cursor.close()
-        conn.close()
-        
-        return render_template('source_table.html', 
+        db_manager.return_connection(conn)
+
+        return render_template('source_table.html',
                              table_name=table_name,
                              records=records,
                              columns=columns,
@@ -4284,7 +4303,7 @@ def view_source_table(table_name):
         
     except Exception as e:
         logger.error(f"Error viewing table {table_name}: {e}")
-        flash(f"Error viewing table: {e}", 'error')
+        flash('Error viewing table. Please try again.', 'error')
         return redirect(url_for('sources'))
 
 @app.route('/stats')
@@ -4889,11 +4908,11 @@ def po_history():
                                  search_date_to=search_date_to)
     except Exception as e:
         logger.error(f"Error loading PO history: {e}")
-        flash(f"Error loading PO history: {e}", 'error')
+        flash('Error loading PO history. Please try again.', 'error')
         return render_template('po_history.html', receipts=[], pagination={'total': 0})
     finally:
         if conn:
-            conn.close()
+            db_manager.return_connection(conn)
 
 @app.route('/pcn-history')
 @require_auth
@@ -4935,6 +4954,7 @@ def pcn_history():
                     FROM pcb_inventory."tblTransaction"
                     WHERE pcn::text = %s
                     ORDER BY sort_time DESC NULLS LAST, id DESC
+                    LIMIT 500
                 """
                 cur.execute(query, (search_pcn,))
                 transactions = [dict(row) for row in cur.fetchall()]
@@ -4963,11 +4983,11 @@ def pcn_history():
 
     except Exception as e:
         logger.error(f"Error loading PCN history: {e}")
-        flash(f"Error loading PCN history: {e}", 'error')
+        flash('Error loading PCN history. Please try again.', 'error')
         return render_template('pcn_history.html', transactions=[], pcn_info=None, search_pcn=search_pcn)
     finally:
         if conn:
-            conn.close()
+            db_manager.return_connection(conn)
 
 @app.route('/stock-alerts')
 @require_auth
@@ -5031,7 +5051,7 @@ def stock_alerts():
 
     except Exception as e:
         logger.error(f"Error loading stock alerts: {e}")
-        flash(f"Error loading stock alerts: {e}", 'error')
+        flash('Error loading stock alerts. Please try again.', 'error')
         return render_template('stock_alerts.html',
                              low_stock_items=[],
                              low_stock_threshold=10,
@@ -5074,7 +5094,9 @@ def api_generate_pcn():
                 except (ValueError, TypeError):
                     return jsonify({'error': 'Quantity must be a number'}), 400
 
-            # Generate new PCN using MAX+1 (ORIGINAL LOGIC RESTORED)
+            # Generate new PCN using MAX+1 with advisory lock to prevent duplicates
+            # Lock key 73746 = arbitrary constant for PCN generation
+            cursor.execute("SELECT pg_advisory_xact_lock(73746)")
             cursor.execute("""
                 SELECT COALESCE(MAX(pcn::integer), 0) + 1 as next_pcn
                 FROM pcb_inventory."tblTransaction"
@@ -5083,7 +5105,7 @@ def api_generate_pcn():
             result = cursor.fetchone()
             pcn_number = str(result['next_pcn'])
 
-            logger.info(f"Generated new PCN: {pcn_number} (using MAX+1)")
+            logger.info(f"Generated new PCN: {pcn_number} (using MAX+1 with advisory lock)")
 
             # Insert into tblTransaction
             cursor.execute("""
@@ -5638,17 +5660,9 @@ def print_label(pcn_number):
             return response
 
         finally:
-
-
             if cursor:
-
-
                 cursor.close()
-
-
             if conn:
-
-
                 db_manager.return_connection(conn)
 
     except Exception as e:
@@ -6439,7 +6453,7 @@ def jobs_list():
 
     except Exception as e:
         logger.error(f"Error loading jobs list: {e}")
-        flash(f"Error loading jobs: {e}", 'danger')
+        flash('Error loading jobs. Please try again.', 'danger')
         return render_template('jobs.html', jobs=[], search_query=search_query)
     finally:
         if conn:
@@ -6631,7 +6645,7 @@ def job_detail(job_number):
 
     except Exception as e:
         logger.error(f"Error loading job detail: {e}")
-        flash(f"Error loading job: {e}", 'danger')
+        flash('Error loading job. Please try again.', 'danger')
         return redirect(url_for('jobs_list'))
     finally:
         if conn:
@@ -6849,7 +6863,7 @@ def job_generate_shortage(job_number):
         if conn:
             conn.rollback()
         logger.error(f"Error generating shortage report from job: {e}")
-        flash(f"Error generating report: {e}", 'danger')
+        flash('Error generating report. Please try again.', 'danger')
         return redirect(url_for('job_detail', job_number=job_number))
     finally:
         if conn:
@@ -7047,7 +7061,7 @@ def job_export(job_number):
         logger.error(f"Error exporting job: {e}")
         if request.method == 'POST':
             return jsonify({'success': False, 'error': str(e)}), 500
-        flash(f"Error exporting job: {e}", 'danger')
+        flash('Error exporting job. Please try again.', 'danger')
         return redirect(url_for('job_detail', job_number=job_number))
     finally:
         if conn:
@@ -7076,7 +7090,7 @@ def job_delete(job_number):
         if conn:
             conn.rollback()
         logger.error(f"Error deleting job: {e}")
-        flash(f"Error deleting job: {e}", 'danger')
+        flash('Error deleting job. Please try again.', 'danger')
         return redirect(url_for('jobs_list'))
     finally:
         if conn:
