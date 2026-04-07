@@ -121,3 +121,13 @@ KOSH uses the `kosh` database on the shared `aci-database` PostgreSQL container.
 - The `static_files` Docker volume persists `/app/static`. To deploy CSS/JS changes, remove the volume: `docker volume rm kosh_static_files` then recreate containers.
 - Flask runs in production mode (debug=False) behind Gunicorn and Nginx.
 - All database operations use connection pooling with automatic failover.
+
+## Owner
+
+**American Circuits Inc.**
+
+Deployed and maintained by **Preet Raval**
+
+## License
+
+Proprietary — American Circuits Inc. Internal use only.
