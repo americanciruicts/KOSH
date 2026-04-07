@@ -127,7 +127,7 @@ KOSH uses the `kosh` database on the shared `aci-database` PostgreSQL container.
 **American Circuits Inc.**
 
 Developed by **Kanav Sharma**
-**Sub Maintained by Preet Raval**
+
 ## License
 
 Proprietary — American Circuits Inc. Internal use only.
