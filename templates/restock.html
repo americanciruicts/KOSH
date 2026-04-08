@@ -376,7 +376,7 @@ function clearForm() {
     itemInput.value = '';
     if (poInput) { poInput.removeAttribute('readonly'); poInput.value = ''; poInput.setAttribute('readonly', 'readonly'); }
     if (qtyInput) qtyInput.value = '';
-    if (locToInput) locToInput.value = '';
+    // Keep location fields as-is — user entered them, don't wipe
     partDetailsCard.style.display = 'none';
     document.getElementById('no-mfg-warning').style.display = 'none';
     document.getElementById('mfg-available').style.display = 'none';

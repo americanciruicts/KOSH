@@ -46,10 +46,54 @@
                 <span style="font-weight: 800 !important; font-size: 2.5rem !important; letter-spacing: 6px !important; color: #ffffff !important; text-shadow: 2px 2px 5px rgba(0,0,0,0.4) !important;">KOSH</span>
             </a>
             
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <!-- User menu + bell: stays visible when navbar collapses -->
+            <div class="d-flex align-items-center gap-2 order-lg-last ms-auto ms-lg-0">
+                {% if is_admin %}
+                <a href="{{ url_for('admin_notifications') }}" class="notification-bell" id="adminNotificationBell" title="Login Notifications">
+                    <i class="bi bi-bell-fill"></i>
+                    <span class="notification-badge" id="notificationBadge" style="display: none;">0</span>
+                </a>
+                {% endif %}
+                <div class="dropdown">
+                    <button class="btn btn-light dropdown-toggle user-profile-btn" type="button" id="userMenu" data-bs-toggle="dropdown" aria-expanded="false">
+                        <div class="user-avatar">
+                            {{ session.get('full_name', session.get('username', 'U'))[0]|upper }}
+                        </div>
+                        <span class="user-name">{{ session.get('full_name', session.get('username', 'User')) }}</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end user-dropdown" aria-labelledby="userMenu">
+                        <li class="user-dropdown-header">
+                            <div class="user-avatar-large">
+                                {{ session.get('full_name', session.get('username', 'U'))[0]|upper }}
+                            </div>
+                            <div class="user-info">
+                                <div class="user-full-name">{{ session.get('full_name', session.get('username', 'User')) }}</div>
+                                <div class="user-role">
+                                    <i class="bi bi-shield-check me-1"></i>{{ session.get('role', 'USER') }}
+                                </div>
+                            </div>
+                        </li>
+                        {% if is_admin %}
+                        <li>
+                            <a class="dropdown-item" href="{{ url_for('admin_users') }}">
+                                <i class="bi bi-people me-2"></i> Manage Users
+                            </a>
+                        </li>
+                        {% endif %}
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <a class="dropdown-item logout-btn" href="{{ url_for('logout') }}">
+                                <i class="bi bi-box-arrow-right me-2"></i> Sign Out
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <button class="navbar-toggler ms-2" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
-            
+
             <div class="collapse navbar-collapse justify-content-center" id="navbarNav">
                 <ul class="navbar-nav">
                     <li class="nav-item">
@@ -57,15 +101,22 @@
                             <i class="bi bi-speedometer2"></i> Dashboard
                         </a>
                     </li>
-                    <li class="nav-item">
-                        <a class="modern-nav-link {% if request.endpoint == 'bom_loader' or (request.endpoint and request.endpoint.startswith('job')) %}active{% endif %}" href="{{ url_for('jobs_list') }}">
+                    <li class="nav-item dropdown">
+                        <a class="modern-nav-link dropdown-toggle {% if request.endpoint == 'bom_loader' or (request.endpoint and request.endpoint.startswith('job')) or (request.endpoint and request.endpoint.startswith('shortage')) %}active{% endif %}" href="#" id="jobsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="bi bi-briefcase-fill"></i> Jobs
                         </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="modern-nav-link {% if request.endpoint and request.endpoint.startswith('shortage') %}active{% endif %}" href="{{ url_for('shortage_report') }}">
-                            <i class="bi bi-clipboard-data"></i> Shortage
-                        </a>
+                        <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="jobsDropdown">
+                            <li>
+                                <a class="dropdown-item {% if request.endpoint == 'bom_loader' or (request.endpoint and request.endpoint.startswith('job')) %}active{% endif %}" href="{{ url_for('jobs_list') }}">
+                                    <i class="bi bi-briefcase-fill me-2"></i> Jobs
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('shortage') %}active{% endif %}" href="{{ url_for('shortage_report') }}">
+                                    <i class="bi bi-clipboard-data me-2"></i> Shortage Report
+                                </a>
+                            </li>
+                        </ul>
                     </li>
                     <li class="nav-item">
                         <a class="modern-nav-link {% if request.endpoint == 'generate_pcn' %}active{% endif %}" href="{{ url_for('generate_pcn') }}">
@@ -118,11 +169,6 @@
                         </ul>
                     </li>
                     <li class="nav-item">
-                        <a class="modern-nav-link {% if request.endpoint == 'reports' %}active{% endif %}" href="{{ url_for('reports') }}">
-                            <i class="bi bi-bar-chart-fill"></i> Reports
-                        </a>
-                    </li>
-                    <li class="nav-item">
                         <a class="modern-nav-link" href="#" onclick="openPrintLabelModal(); return false;">
                             <i class="bi bi-printer-fill"></i> Print Label
                         </a>
@@ -144,6 +190,28 @@
                             </li>
                         </ul>
                     </li>
+                    <li class="nav-item dropdown">
+                        <a class="modern-nav-link dropdown-toggle {% if request.endpoint in ['aci_numbers', 'admin_locations'] %}active{% endif %}" href="#" id="manageDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-gear-fill"></i> Manage
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="manageDropdown">
+                            <li>
+                                <a class="dropdown-item {% if request.endpoint == 'aci_numbers' %}active{% endif %}" href="{{ url_for('aci_numbers') }}">
+                                    <i class="bi bi-plus-square-fill me-2"></i> ACI Numbers
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item {% if request.endpoint == 'admin_locations' %}active{% endif %}" href="{{ url_for('admin_locations') }}">
+                                    <i class="bi bi-geo-alt-fill me-2"></i> Locations
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
+                    <li class="nav-item">
+                        <a class="modern-nav-link {% if request.endpoint == 'reports' %}active{% endif %}" href="{{ url_for('reports') }}">
+                            <i class="bi bi-bar-chart-fill"></i> Reports
+                        </a>
+                    </li>
                     {% if session.get('role') == 'ADMIN' %}
                     <li class="nav-item">
                         <a class="modern-nav-link {% if request.endpoint and request.endpoint.startswith('sources') %}active{% endif %}" href="{{ url_for('sources') }}">
@@ -156,49 +224,7 @@
         </div>
     </nav>
 
-    <!-- Admin Notification Bell & User Menu -->
-    <div style="position: fixed; top: 0; right: 16px; z-index: 9999; display: flex; align-items: center; gap: 8px; height: 56px;">
-        {% if is_admin %}
-        <a href="{{ url_for('admin_notifications') }}" class="notification-bell" id="adminNotificationBell" title="Login Notifications">
-            <i class="bi bi-bell-fill"></i>
-            <span class="notification-badge" id="notificationBadge" style="display: none;">0</span>
-        </a>
-        {% endif %}
-        <div class="dropdown">
-            <button class="btn btn-light dropdown-toggle user-profile-btn" type="button" id="userMenu" data-bs-toggle="dropdown" aria-expanded="false">
-                <div class="user-avatar">
-                    {{ session.get('full_name', session.get('username', 'U'))[0]|upper }}
-                </div>
-                <span class="user-name">{{ session.get('full_name', session.get('username', 'User')) }}</span>
-            </button>
-            <ul class="dropdown-menu dropdown-menu-end user-dropdown" aria-labelledby="userMenu">
-                <li class="user-dropdown-header">
-                    <div class="user-avatar-large">
-                        {{ session.get('full_name', session.get('username', 'U'))[0]|upper }}
-                    </div>
-                    <div class="user-info">
-                        <div class="user-full-name">{{ session.get('full_name', session.get('username', 'User')) }}</div>
-                        <div class="user-role">
-                            <i class="bi bi-shield-check me-1"></i>{{ session.get('role', 'USER') }}
-                        </div>
-                    </div>
-                </li>
-                {% if is_admin %}
-                <li>
-                    <a class="dropdown-item" href="{{ url_for('admin_users') }}">
-                        <i class="bi bi-people me-2"></i> Manage Users
-                    </a>
-                </li>
-                {% endif %}
-                <li><hr class="dropdown-divider"></li>
-                <li>
-                    <a class="dropdown-item logout-btn" href="{{ url_for('logout') }}">
-                        <i class="bi bi-box-arrow-right me-2"></i> Sign Out
-                    </a>
-                </li>
-            </ul>
-        </div>
-    </div>
+    <!-- User menu is now inside the navbar above -->
 
 
     <!-- Floating Dark Mode Toggle -->
@@ -208,7 +234,7 @@
     </button>
 
     <!-- Main Content -->
-    <div class="container-fluid px-4" style="margin-top: 3.5rem;">
+    <div class="container-fluid px-4" style="margin-top: 4rem;">
         <!-- Modern Toast Notifications -->
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -726,10 +752,10 @@
                             </div>
                             <div class="modal-body">
                                 <div class="row g-2 mb-3">
-                                    <div class="col-6"><strong>Item:</strong> ${item}</div>
-                                    <div class="col-6"><strong>QTY:</strong> ${qty}</div>
-                                    <div class="col-6"><strong>MPN:</strong> ${mpn || '-'}</div>
-                                    <div class="col-6"><strong>Location:</strong> ${location || '-'}</div>
+                                    <div class="col-sm-6 col-12"><strong>Item:</strong> ${item}</div>
+                                    <div class="col-sm-6 col-12"><strong>QTY:</strong> ${qty}</div>
+                                    <div class="col-sm-6 col-12"><strong>MPN:</strong> ${mpn || '-'}</div>
+                                    <div class="col-sm-6 col-12"><strong>Location:</strong> ${location || '-'}</div>
                                 </div>
                                 <hr>
                                 <p class="text-muted small mb-0">Choose an action for this PCN:</p>
