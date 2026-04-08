@@ -551,6 +551,14 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing...';
     document.getElementById('restockSuccessBanner').classList.add('d-none');
 
+    // Safety timeout — always re-enable button after 8 seconds
+    var safetyTimer = setTimeout(function() {
+        isSubmitting = false;
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = submitBtnOriginal;
+        alert('Request timed out. Please try again.');
+    }, 8000);
+
     fetch('/api/restock', {
         method: 'POST',
         headers: {
@@ -565,7 +573,15 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
             location_to: locTo
         })
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+        clearTimeout(safetyTimer);
+        if (!r.ok) {
+            return r.text().then(function(txt) {
+                try { return JSON.parse(txt); } catch(e) { return {success: false, error: 'Server error: ' + r.status}; }
+            });
+        }
+        return r.json();
+    })
     .then(function(data) {
         if (data.success) {
             showRestockSuccess(data.pcn, data.item, data.quantity, data.location_to);
@@ -577,6 +593,7 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
         }
     })
     .catch(function(err) {
+        clearTimeout(safetyTimer);
         alert('Network error: ' + err.message);
         isSubmitting = false;
         submitBtn.disabled = false;
