@@ -1,20 +1,25 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white;">
-    <div class="col-md-8">
-        <h1 class="h2 mb-2">
-            <i class="bi bi-dash-circle-fill me-2"></i> Pick Electronic Parts
-        </h1>
-        <p class="mb-0 fs-6">Remove components from inventory • Safety validated • Audit tracked</p>
-    </div>
-    <div class="col-md-4 text-end">
-        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
-            <i class="bi bi-table"></i> View Inventory
-        </a>
-        <a href="{{ url_for('stock') }}" class="btn btn-light btn-lg fw-bold">
-            <i class="bi bi-plus-circle"></i> Stock Parts
-        </a>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-dash-circle-fill" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Pick Electronic Parts</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Remove components from inventory • Safety validated • Audit tracked</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
+                <i class="bi bi-table"></i> View Inventory
+            </a>
+            <a href="{{ url_for('stock') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-plus-circle" style="color: white !important;"></i> Stock Parts
+            </a>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -80,6 +85,25 @@
                 <form method="POST" id="pickForm">
                     {{ form.hidden_tag() }}
                     
+                    <!-- Work Order Section -->
+                    <div class="mb-4">
+                        {{ form.work_order.label(class="form-label fw-bold") }}
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text"><i class="bi bi-clipboard-check"></i></span>
+                            {{ form.work_order(class="form-control", placeholder="e.g., 6846-028", id="workOrderInput") }}
+                        </div>
+                        {% if form.work_order.errors %}
+                            <div class="text-danger small mt-1">
+                                {% for error in form.work_order.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+                        <div class="form-text">
+                            <i class="bi bi-info-circle"></i> Work Order # for this pick operation (optional)
+                        </div>
+                    </div>
+
                     <!-- Part Identification Section -->
                     <div class="row mb-4">
                         <div class="col-12">
@@ -205,24 +229,6 @@
                         </div>
                     </div>
 
-                    <div class="mb-3">
-                        {{ form.work_order.label(class="form-label fw-bold") }}
-                        <div class="input-group input-group-lg">
-                            <span class="input-group-text"><i class="bi bi-clipboard-check"></i></span>
-                            {{ form.work_order(class="form-control", placeholder="e.g., 6846-028", id="workOrderInput") }}
-                        </div>
-                        {% if form.work_order.errors %}
-                            <div class="text-danger small mt-1">
-                                {% for error in form.work_order.errors %}
-                                    <div>{{ error }}</div>
-                                {% endfor %}
-                            </div>
-                        {% endif %}
-                        <div class="form-text">
-                            <i class="bi bi-info-circle"></i> Work Order # for this pick operation (optional)
-                        </div>
-                    </div>
-
                     <div class="d-grid gap-2">
                         {{ form.submit(class="btn btn-primary btn-lg", id="pickSubmitBtn") }}
                         <a href="{{ url_for('index') }}" class="btn btn-outline-secondary">
@@ -301,6 +307,136 @@
         </div>
     </div>
 </div>
+
+<!-- ==================== Recent Picks - Reverse Panel ==================== -->
+<div class="card border-0 shadow-sm mt-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <h5 class="mb-0">
+            <i class="bi bi-arrow-counterclockwise me-2 text-warning"></i>Recent Picks — Reverse Operations
+        </h5>
+        <div class="d-flex gap-2 align-items-center">
+            <input type="text" class="form-control form-control-sm" id="pickSearch" placeholder="Search PCN, Item, WO..." style="width: 200px;">
+            <span class="badge bg-secondary">{{ recent_picks|length if recent_picks else 0 }} picks</span>
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: 450px; overflow-y: auto;">
+            <table class="table table-hover table-sm mb-0" id="recentPicksTable">
+                <thead class="table-dark sticky-top">
+                    <tr>
+                        <th>ID</th>
+                        <th>Item</th>
+                        <th>PCN</th>
+                        <th>Qty</th>
+                        <th>From</th>
+                        <th>Work Order</th>
+                        <th>User</th>
+                        <th>Time</th>
+                        <th>Status</th>
+                        <th style="width: 100px;">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% if recent_picks %}
+                    {% for pick in recent_picks %}
+                    <tr data-search="{{ pick.item or '' }} {{ pick.pcn or '' }} {{ pick.wo or '' }} {{ pick.userid or '' }}"
+                        class="{% if pick.reversed %}table-secondary{% elif pick.wo and not pick.wo.replace('-','').replace(' ','').isdigit() %}table-warning{% endif %}">
+                        <td><code>{{ pick.id }}</code></td>
+                        <td><strong>{{ pick.item or '-' }}</strong></td>
+                        <td><code>{{ pick.pcn or '-' }}</code></td>
+                        <td>{{ pick.tranqty or 0 }}</td>
+                        <td><code>{{ pick.loc_from or '-' }}</code></td>
+                        <td>
+                            {% if pick.wo and not pick.wo.replace('-','').replace(' ','').isdigit() %}
+                                <span class="badge bg-warning text-dark">{{ pick.wo }}</span>
+                            {% else %}
+                                {{ pick.wo or '-' }}
+                            {% endif %}
+                        </td>
+                        <td>{{ pick.userid or '-' }}</td>
+                        <td><small>{{ pick.tran_time or '-' }}</small></td>
+                        <td>
+                            {% if pick.reversed %}
+                                <span class="badge bg-secondary"><i class="bi bi-check-circle"></i> Reversed</span>
+                            {% else %}
+                                <span class="badge bg-success"><i class="bi bi-check"></i> Active</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if not pick.reversed %}
+                            <button type="button" class="btn btn-outline-warning btn-sm reverse-btn"
+                                    data-txn-id="{{ pick.id }}"
+                                    data-item="{{ pick.item or '' }}"
+                                    data-pcn="{{ pick.pcn or '' }}"
+                                    data-qty="{{ pick.tranqty or 0 }}"
+                                    data-loc="{{ pick.loc_from or 'Warehouse' }}"
+                                    data-wo="{{ pick.wo or '' }}"
+                                    onclick="reversePick(this)">
+                                <i class="bi bi-arrow-counterclockwise"></i> Reverse
+                            </button>
+                            {% else %}
+                            <span class="text-muted"><i class="bi bi-dash"></i></span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
+                    <tr>
+                        <td colspan="10" class="text-center text-muted py-4">
+                            <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                            No pick transactions found
+                        </td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="card-footer bg-light">
+        <small class="text-muted">
+            <i class="bi bi-info-circle me-1"></i>
+            <span class="text-warning"><i class="bi bi-square-fill"></i></span> = Text work order (Purge, Sample, Not Found, etc.) — likely needs reversal
+            &nbsp;|&nbsp;
+            <span class="text-secondary"><i class="bi bi-square-fill"></i></span> = Already reversed
+        </small>
+    </div>
+</div>
+
+<!-- Reverse Confirmation Modal -->
+<div class="modal fade" id="reversePickModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-warning text-dark border-0">
+                <h5 class="modal-title">
+                    <i class="bi bi-arrow-counterclockwise me-2"></i> Reverse Pick
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to reverse this pick?</p>
+                <table class="table table-sm mb-0">
+                    <tr><th>Transaction #</th><td id="rev_txn_id"></td></tr>
+                    <tr><th>Item</th><td id="rev_item"></td></tr>
+                    <tr><th>PCN</th><td id="rev_pcn"></td></tr>
+                    <tr><th>Quantity</th><td id="rev_qty"></td></tr>
+                    <tr><th>Restore To</th><td id="rev_loc"></td></tr>
+                    <tr><th>Work Order</th><td id="rev_wo"></td></tr>
+                </table>
+                <div class="alert alert-info mt-3 mb-0">
+                    <i class="bi bi-info-circle me-1"></i>
+                    This will restore <strong id="rev_qty2"></strong> units back to location <strong id="rev_loc2"></strong> and reduce the MFG Floor count.
+                </div>
+            </div>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="confirmReverseBtn" onclick="confirmReverse()">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i> Confirm Reverse
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -396,6 +532,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // Clear form on page load/refresh to prevent stale data
     console.log('🔄 Resetting form on page load');
     form.reset();
+
+    // Restore persisted Work Order from localStorage
+    const savedWorkOrder = localStorage.getItem('kosh_work_order');
+    if (savedWorkOrder) {
+        document.getElementById('workOrderInput').value = savedWorkOrder;
+    }
+
+    // Persist Work Order on change so it survives form resets
+    document.getElementById('workOrderInput').addEventListener('input', function() {
+        const val = this.value.trim();
+        if (val) {
+            localStorage.setItem('kosh_work_order', val);
+        } else {
+            localStorage.removeItem('kosh_work_order');
+        }
+    });
     // Clear any cached inventory check data
     currentInventoryCheck = null;
     hideAvailableQuantity();
@@ -1415,5 +1567,75 @@ function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
             document.body.appendChild(notification);
             setTimeout(() => notification.remove(), 4000);
 }
+
+// ==================== REVERSE PICK FUNCTIONALITY ====================
+let pendingReverseId = null;
+
+function reversePick(btn) {
+    pendingReverseId = btn.getAttribute('data-txn-id');
+    document.getElementById('rev_txn_id').textContent = '#' + pendingReverseId;
+    document.getElementById('rev_item').textContent = btn.getAttribute('data-item');
+    document.getElementById('rev_pcn').textContent = btn.getAttribute('data-pcn');
+    document.getElementById('rev_qty').textContent = btn.getAttribute('data-qty');
+    document.getElementById('rev_qty2').textContent = btn.getAttribute('data-qty');
+    document.getElementById('rev_loc').textContent = btn.getAttribute('data-loc');
+    document.getElementById('rev_loc2').textContent = btn.getAttribute('data-loc');
+    document.getElementById('rev_wo').textContent = btn.getAttribute('data-wo') || 'N/A';
+
+    var modal = new bootstrap.Modal(document.getElementById('reversePickModal'));
+    modal.show();
+}
+
+function confirmReverse() {
+    if (!pendingReverseId) return;
+
+    const btn = document.getElementById('confirmReverseBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Reversing...';
+
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+    fetch('/api/reverse-pick/' + pendingReverseId, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        credentials: 'same-origin'
+    })
+    .then(r => r.json())
+    .then(data => {
+        bootstrap.Modal.getInstance(document.getElementById('reversePickModal')).hide();
+        if (data.success) {
+            showToast('Pick #' + pendingReverseId + ' reversed! ' + data.quantity + ' units of ' + data.item + ' restored to ' + data.restored_location, 'success');
+            // Update the row in the table
+            const row = document.querySelector(`button[data-txn-id="${pendingReverseId}"]`).closest('tr');
+            row.classList.remove('table-warning');
+            row.classList.add('table-secondary');
+            row.querySelector('td:nth-child(9)').innerHTML = '<span class="badge bg-secondary"><i class="bi bi-check-circle"></i> Reversed</span>';
+            row.querySelector('td:nth-child(10)').innerHTML = '<span class="text-muted"><i class="bi bi-dash"></i></span>';
+        } else {
+            showToast('Reverse failed: ' + data.error, 'error');
+        }
+    })
+    .catch(err => {
+        bootstrap.Modal.getInstance(document.getElementById('reversePickModal')).hide();
+        showToast('Error: ' + err.message, 'error');
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-1"></i> Confirm Reverse';
+        pendingReverseId = null;
+    });
+}
+
+// Search/filter recent picks
+document.getElementById('pickSearch').addEventListener('input', function() {
+    const search = this.value.toLowerCase();
+    document.querySelectorAll('#recentPicksTable tbody tr').forEach(function(row) {
+        const data = (row.getAttribute('data-search') || '').toLowerCase();
+        row.style.display = (!search || data.includes(search)) ? '' : 'none';
+    });
+});
 </script>
 {% endblock %}

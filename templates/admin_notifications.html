@@ -38,8 +38,8 @@
             <div class="card-body">
                 {% if notifications %}
                 <div class="table-responsive">
-                    <table class="table table-hover table-striped">
-                        <thead class="table-light">
+                    <table class="table table-hover table-striped notif-table">
+                        <thead>
                             <tr>
                                 <th style="width: 40px;"></th>
                                 <th>Activity</th>
@@ -127,29 +127,29 @@
 <!-- Statistics Cards -->
 <div class="row mt-4">
     <div class="col-md-4">
-        <div class="card">
+        <div class="card notif-stat-card">
             <div class="card-body text-center">
                 <i class="bi bi-activity display-4 text-primary mb-2"></i>
                 <h3>{{ notifications|length }}</h3>
-                <p class="text-muted mb-0">Total Notifications</p>
+                <p class="mb-0">Total Notifications</p>
             </div>
         </div>
     </div>
     <div class="col-md-4">
-        <div class="card">
+        <div class="card notif-stat-card">
             <div class="card-body text-center">
                 <i class="bi bi-bell-fill display-4 text-danger mb-2"></i>
                 <h3>{{ unseen_count }}</h3>
-                <p class="text-muted mb-0">Unseen Notifications</p>
+                <p class="mb-0">Unseen Notifications</p>
             </div>
         </div>
     </div>
     <div class="col-md-4">
-        <div class="card">
+        <div class="card notif-stat-card">
             <div class="card-body text-center">
                 <i class="bi bi-check-circle-fill display-4 text-success mb-2"></i>
                 <h3>{{ notifications|length - unseen_count }}</h3>
-                <p class="text-muted mb-0">Reviewed</p>
+                <p class="mb-0">Reviewed</p>
             </div>
         </div>
     </div>
@@ -163,6 +163,89 @@
 .bg-teal {
     background-color: #14b8a6 !important;
     color: white !important;
+}
+
+/* Notification stat cards */
+.notif-stat-card .card-body {
+    background-color: #ffffff;
+}
+.notif-stat-card .card-body h3 {
+    color: #1e293b;
+    font-weight: 700;
+    font-size: 2rem;
+}
+.notif-stat-card .card-body p {
+    color: #64748b;
+}
+.notif-stat-card .card-body i {
+    opacity: 1;
+}
+
+/* Notification table */
+.notif-table thead th {
+    background-color: #f1f5f9;
+    color: #334155;
+    font-weight: 600;
+    border-bottom: 2px solid #e2e8f0;
+}
+.notif-table tbody td {
+    color: #1e293b;
+    vertical-align: middle;
+}
+.notif-table tbody td strong {
+    color: #1e293b;
+}
+.notif-table tbody td small.text-muted {
+    color: #64748b !important;
+}
+.notif-table tr.table-info td {
+    background-color: #ede9fe;
+    color: #1e293b;
+}
+
+/* Dark mode overrides for notifications */
+[data-theme="dark"] .notif-stat-card .card-body {
+    background-color: #1e293b;
+}
+[data-theme="dark"] .notif-stat-card .card-body h3 {
+    color: #f8fafc;
+}
+[data-theme="dark"] .notif-stat-card .card-body p {
+    color: #94a3b8;
+}
+[data-theme="dark"] .notif-stat-card .card-body i.text-primary {
+    color: #a78bfa !important;
+}
+[data-theme="dark"] .notif-stat-card .card-body i.text-danger {
+    color: #fca5a5 !important;
+}
+[data-theme="dark"] .notif-stat-card .card-body i.text-success {
+    color: #6ee7b7 !important;
+}
+
+[data-theme="dark"] .notif-table thead th {
+    background-color: #4c1d95 !important;
+    color: #ffffff !important;
+    border-bottom-color: #8b5cf6 !important;
+}
+[data-theme="dark"] .notif-table tbody td {
+    background-color: #1e293b;
+    color: #f8fafc;
+    border-color: #334155;
+}
+[data-theme="dark"] .notif-table tbody td strong {
+    color: #f8fafc;
+}
+[data-theme="dark"] .notif-table tbody td small.text-muted,
+[data-theme="dark"] .notif-table tbody td .text-muted {
+    color: #94a3b8 !important;
+}
+[data-theme="dark"] .notif-table tr.table-info td {
+    background-color: rgba(139, 92, 246, 0.15) !important;
+    color: #f8fafc !important;
+}
+[data-theme="dark"] .notif-table .badge {
+    opacity: 1;
 }
 </style>
 {% endblock %}

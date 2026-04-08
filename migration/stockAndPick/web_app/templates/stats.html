@@ -1,50 +1,27 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="professional-header mb-5" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 25px; margin: 0;">
-    <div class="d-flex justify-content-between align-items-start">
-        <div>
-            <div class="d-flex align-items-center gap-3 mb-2">
-                <div class="header-icon">
-                    <i class="bi bi-pie-chart"></i>
-                </div>
-                <div>
-                    <h1 class="mb-1" style="font-size: 2rem; font-weight: 600; color: white !important;">Analytics & Statistics</h1>
-                    <p class="mb-0" style="color: rgba(255,255,255,0.85) !important;" style="font-size: 0.95rem;">Database insights and migration verification</p>
-                </div>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-pie-chart" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Analytics & Statistics</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Database insights and migration verification</p>
             </div>
         </div>
-        <div class="d-flex gap-2">
-            <a href="{{ url_for('index') }}" class="btn btn-outline-primary btn-lg">
-                <i class="bi bi-house me-1"></i> Dashboard
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('index') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-house" style="color: white !important;"></i> Dashboard
             </a>
-            <a href="{{ url_for('reports') }}" class="btn btn-primary btn-lg shadow-sm">
-                <i class="bi bi-file-earmark-text me-1"></i> Reports
+            <a href="{{ url_for('reports') }}" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
+                <i class="bi bi-file-earmark-text"></i> Reports
             </a>
         </div>
     </div>
 </div>
-
-<style>
-.professional-header {
-    padding-bottom: 0;
-    border-bottom: none;
-}
-
-.header-icon {
-    color: white !important;
-    width: 60px;
-    height: 60px;
-    background: linear-gradient(135deg, var(--brand-primary), var(--card-accent-2));
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 1.75rem;
-    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
-}
-</style>
 {% endblock %}
 
 {% block content %}

@@ -160,8 +160,25 @@
 </style>
 
 <script>
+    // After successful part number change, auto-open print label modal with PCN pre-filled
+    {% if show_print and item %}
+    document.addEventListener('DOMContentLoaded', function() {
+        setTimeout(function() {
+            var pcnInput = document.getElementById('printLabelPcn');
+            if (pcnInput) {
+                pcnInput.value = '{{ item.pcn }}';
+            }
+            if (typeof openPrintLabelModal === 'function') {
+                var modal = _getPrintLabelModal();
+                if (modal) {
+                    modal.show();
+                    // Don't clear the value since we pre-filled it
+                }
+            }
+        }, 500);
+    });
+    {% elif item %}
     // Auto-focus on new part number field if item is loaded
-    {% if item %}
     document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('new_part_number').focus();
     });

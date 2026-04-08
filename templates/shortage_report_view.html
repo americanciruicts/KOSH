@@ -203,8 +203,12 @@
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0"><i class="bi bi-table me-2"></i>Shortage Details ({{ items|length }} items)</h5>
-        <div class="no-print">
+        <div class="no-print d-flex align-items-center gap-2">
             <span class="badge bg-danger me-2">Red = On Hand &lt; REQ (Shortage)</span>
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="hideZeroToggle" checked>
+                <label class="form-check-label small" for="hideZeroToggle">Hide 0 On Hand</label>
+            </div>
             <input type="text" class="form-control form-control-sm d-inline-block" style="width: 200px;"
                    id="searchInput" placeholder="Search parts...">
         </div>
@@ -227,7 +231,7 @@
                 </thead>
                 <tbody>
                     {% for item in items %}
-                    <tr class="{% if (item.qty_on_hand or 0) < (item.req or (item.qty_required * (item.order_qty or 1))) %}shortage-row{% endif %}">
+                    <tr class="{% if (item.qty_on_hand or 0) < (item.req or (item.qty_required * (item.order_qty or 1))) %}shortage-row{% endif %}" data-onhand="{{ item.qty_on_hand or 0 }}">
                         <td><strong>{{ item.aci_pn or '-' }}</strong></td>
                         <td>{{ item.pcn or '-' }}</td>
                         <td>
@@ -308,16 +312,26 @@
 
 {% block extra_js %}
 <script>
-    // Search functionality
-    document.getElementById('searchInput').addEventListener('keyup', function() {
-        const searchText = this.value.toLowerCase();
+    // Hide zero on-hand rows by default and on toggle
+    function applyFilters() {
+        const hideZero = document.getElementById('hideZeroToggle').checked;
+        const searchText = document.getElementById('searchInput').value.toLowerCase();
         const rows = document.querySelectorAll('#shortageTable tbody tr');
 
         rows.forEach(row => {
+            const onhand = parseInt(row.dataset.onhand) || 0;
             const text = row.textContent.toLowerCase();
-            row.style.display = text.includes(searchText) ? '' : 'none';
+            const hiddenByZero = hideZero && onhand === 0;
+            const hiddenBySearch = searchText && !text.includes(searchText);
+            row.style.display = (hiddenByZero || hiddenBySearch) ? 'none' : '';
         });
-    });
+    }
+
+    document.getElementById('hideZeroToggle').addEventListener('change', applyFilters);
+    document.getElementById('searchInput').addEventListener('keyup', applyFilters);
+
+    // Apply on page load (hide zeros by default since toggle is checked)
+    document.addEventListener('DOMContentLoaded', applyFilters);
 
     // Export column configuration
     const AVAILABLE_COLUMNS = {{ column_definitions | tojson }};
@@ -406,7 +420,8 @@
             body: JSON.stringify({
                 columns: columns,
                 highlighted: highlighted,
-                filter: document.querySelector('input[name="exportFilter"]:checked').value
+                filter: document.querySelector('input[name="exportFilter"]:checked').value,
+                hide_zero: document.getElementById('hideZeroToggle').checked
             })
         })
         .then(resp => {

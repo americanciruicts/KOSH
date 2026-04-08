@@ -225,7 +225,7 @@
                                     <span class="input-group-text bg-primary text-white">
                                         <i class="bi bi-geo-alt-fill"></i>
                                     </span>
-                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999") }}
+                                    {{ form.location_to(class="form-control form-control-lg border-2 location-input", placeholder="e.g., 1101101", inputmode="numeric") }}
                                 </div>
                                 {% if form.location_to.errors %}
                                     <div class="invalid-feedback d-block">
@@ -235,7 +235,7 @@
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-geo-alt"></i> Destination location
+                                    <i class="bi bi-geo-alt"></i> Destination location (7-digit code)
                                 </div>
                             </div>
                         </div>
@@ -1141,5 +1141,38 @@ function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
             document.body.appendChild(notification);
             setTimeout(() => notification.remove(), 4000);
 }
+
+// ==================== LOCATION 7-DIGIT ENFORCEMENT ====================
+(function() {
+    const stdLocs = ['receiving area', 'rec area', 'count area', 'stock room', 'mfg floor'];
+    document.querySelectorAll('.location-input, #location').forEach(function(input) {
+        input.addEventListener('input', function() {
+            let val = this.value;
+            // If user is typing digits only, enforce max 7
+            if (/^\d+$/.test(val) && val.length > 7) {
+                this.value = val.slice(0, 7);
+            }
+        });
+    });
+
+    // Also validate on form submit
+    const form = document.querySelector('form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const locInputs = form.querySelectorAll('.location-input');
+            for (const input of locInputs) {
+                const val = input.value.trim();
+                if (!val) continue;
+                if (stdLocs.includes(val.toLowerCase())) continue;
+                if (!/^\d{7}$/.test(val)) {
+                    e.preventDefault();
+                    alert('Location must be exactly 7 digits (e.g. 1101101) or a standard location (Receiving Area, Count Area, Stock Room, MFG Floor, Rec Area).');
+                    input.focus();
+                    return;
+                }
+            }
+        });
+    }
+})();
 </script>
 {% endblock %}

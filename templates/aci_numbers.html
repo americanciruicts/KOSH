@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+
+{% block title %}ACI Number Creator - KOSH{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="row">
+        <div class="col-12">
+            <h2><i class="bi bi-plus-square-fill"></i> ACI Number Creator</h2>
+            <p class="text-muted">Create consecutive ACI part numbers for non-BOM parts to be placed in stock</p>
+        </div>
+    </div>
+
+    <div class="row mt-2">
+        <!-- Create Form -->
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-pencil-square me-2"></i>New Parts</h5>
+                    <div>
+                        <span class="badge bg-primary me-2" id="nextAciBadge">Loading...</span>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="addRowBtn">
+                            <i class="bi bi-plus-lg"></i> Add Row
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger ms-1" id="clearAllBtn">
+                            <i class="bi bi-trash"></i> Clear All
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0" id="partsTable">
+                            <thead>
+                                <tr>
+                                    <th style="width:50px">#</th>
+                                    <th style="width:140px">ACI Number</th>
+                                    <th>Manufacturer</th>
+                                    <th>MPN</th>
+                                    <th>Description</th>
+                                    <th>Comment</th>
+                                    <th style="width:100px">Loaded</th>
+                                    <th style="width:50px"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="partsBody">
+                                <!-- Rows added by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <button type="button" class="btn btn-success btn-lg" id="createBtn" disabled>
+                        <i class="bi bi-check-circle-fill"></i> Create ACI Numbers
+                    </button>
+                    <span class="text-muted ms-2" id="rowCount">0 parts</span>
+                </div>
+            </div>
+
+            <!-- Results -->
+            <div class="card mt-3" id="resultsCard" style="display:none;">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0"><i class="bi bi-check-circle-fill me-2"></i>Created Successfully</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>ACI Number</th>
+                                    <th>Manufacturer</th>
+                                    <th>MPN</th>
+                                    <th>Description</th>
+                                    <th>Loaded</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>How It Works</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-1-circle-fill me-2"></i>Add Parts</h6>
+                        <p class="text-muted small mb-2">Enter manufacturer, MPN, and description for each part. ACI numbers are assigned automatically in sequence.</p>
+                    </div>
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-2-circle-fill me-2"></i>Review</h6>
+                        <p class="text-muted small mb-2">Verify all details before creating. Numbers are consecutive and cannot be duplicated.</p>
+                    </div>
+                    <div class="mb-3">
+                        <h6 class="text-primary"><i class="bi bi-3-circle-fill me-2"></i>Create</h6>
+                        <p class="text-muted small mb-2">Click "Create ACI Numbers" to assign and save. Parts will be available for stock operations.</p>
+                    </div>
+                    <hr>
+                    <div class="small text-muted">
+                        <i class="bi bi-lightbulb me-1"></i> These ACI numbers are for parts <strong>not part of a BOM</strong>. They allow parts to be placed in stock and used on future builds.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent History -->
+            <div class="card mt-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Recent</h5>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshHistoryBtn">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+                <div class="card-body p-0" style="max-height:400px; overflow-y:auto;">
+                    <table class="table table-sm table-hover mb-0" id="historyTable">
+                        <thead>
+                            <tr>
+                                <th>ACI #</th>
+                                <th>MPN</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyBody">
+                            <tr><td colspan="3" class="text-center text-muted py-3">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Status toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 9999">
+    <div id="statusToast" class="toast align-items-center text-bg-success border-0" role="alert">
+        <div class="d-flex">
+            <div class="toast-body" id="toastMsg"></div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const csrfToken = '{{ csrf_token() }}';
+    let nextNumber = null;
+    let rowIndex = 0;
+
+    // ── Helpers ──
+    function showToast(msg, type) {
+        const toast = document.getElementById('statusToast');
+        const body = document.getElementById('toastMsg');
+        toast.className = 'toast align-items-center border-0 text-bg-' + (type || 'success');
+        body.textContent = msg;
+        new bootstrap.Toast(toast, {delay: 3000}).show();
+    }
+
+    function updateRowCount() {
+        const rows = document.querySelectorAll('#partsBody tr');
+        const count = rows.length;
+        document.getElementById('rowCount').textContent = count + ' part' + (count !== 1 ? 's' : '');
+        document.getElementById('createBtn').disabled = count === 0;
+        // Update ACI number previews
+        if (nextNumber !== null) {
+            rows.forEach(function(row, i) {
+                const input = row.querySelector('.aci-preview');
+                if (input) input.value = 'ACI-' + (nextNumber + i);
+            });
+        }
+    }
+
+    // ── Fetch next ACI number ──
+    function fetchNextNumber() {
+        fetch('/api/aci-numbers/next', {
+            headers: {'X-CSRFToken': csrfToken}
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                nextNumber = data.next_number;
+                document.getElementById('nextAciBadge').textContent = 'Next: ACI-' + nextNumber;
+                document.getElementById('nextAciBadge').className = 'badge bg-primary me-2';
+                updateRowCount();
+            } else {
+                document.getElementById('nextAciBadge').textContent = 'Error loading';
+                document.getElementById('nextAciBadge').className = 'badge bg-danger me-2';
+            }
+        })
+        .catch(function() {
+            document.getElementById('nextAciBadge').textContent = 'Error';
+            document.getElementById('nextAciBadge').className = 'badge bg-danger me-2';
+        });
+    }
+
+    // ── Add row ──
+    function addRow(manufacturer, mpn, description, comment) {
+        rowIndex++;
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td class="text-center align-middle">' + rowIndex + '</td>' +
+            '<td><input type="text" class="form-control form-control-sm part-aci fw-bold text-primary aci-preview" value="" readonly style="background:#f0f0f0; cursor:default;"></td>' +
+            '<td><input type="text" class="form-control form-control-sm part-man" placeholder="Manufacturer" value="' + escapeHtml(manufacturer || '') + '"></td>' +
+            '<td><input type="text" class="form-control form-control-sm part-mpn" placeholder="MPN" value="' + escapeHtml(mpn || '') + '"></td>' +
+            '<td><input type="text" class="form-control form-control-sm part-desc" placeholder="Description" value="' + escapeHtml(description || '') + '"></td>' +
+            '<td><input type="text" class="form-control form-control-sm part-comment" placeholder="Comment" value="' + escapeHtml(comment || '') + '"></td>' +
+            '<td><select class="form-select form-select-sm part-loaded"><option value="N">N</option><option value="Y">Y</option></select></td>' +
+            '<td><button type="button" class="btn btn-sm btn-outline-danger remove-row-btn"><i class="bi bi-x-lg"></i></button></td>';
+        document.getElementById('partsBody').appendChild(tr);
+        updateRowCount();
+        // Focus manufacturer field
+        tr.querySelector('.part-man').focus();
+    }
+
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // ── Remove row ──
+    document.getElementById('partsBody').addEventListener('click', function(e) {
+        var btn = e.target.closest('.remove-row-btn');
+        if (btn) {
+            btn.closest('tr').remove();
+            // Re-number rows
+            rowIndex = 0;
+            document.querySelectorAll('#partsBody tr').forEach(function(tr) {
+                rowIndex++;
+                tr.querySelector('td').textContent = rowIndex;
+            });
+            updateRowCount();
+        }
+    });
+
+    // ── Tab through rows: Enter on last input adds a new row ──
+    document.getElementById('partsBody').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            var inputs = Array.from(document.querySelectorAll('#partsBody input'));
+            var idx = inputs.indexOf(e.target);
+            if (idx === inputs.length - 1) {
+                // Last input in last row - add new row
+                addRow();
+            } else {
+                // Move to next input
+                inputs[idx + 1].focus();
+            }
+        }
+    });
+
+    // ── Create ACI Numbers ──
+    document.getElementById('createBtn').addEventListener('click', function() {
+        var rows = document.querySelectorAll('#partsBody tr');
+        if (rows.length === 0) return;
+
+        var parts = [];
+        rows.forEach(function(tr) {
+            parts.push({
+                manufacturer: tr.querySelector('.part-man').value.trim(),
+                mpn: tr.querySelector('.part-mpn').value.trim(),
+                description: tr.querySelector('.part-desc').value.trim(),
+                comment: tr.querySelector('.part-comment').value.trim(),
+                loaded: tr.querySelector('.part-loaded').value
+            });
+        });
+
+        // Validate at least one row has data
+        var hasData = parts.some(function(p) {
+            return p.manufacturer || p.mpn || p.description;
+        });
+        if (!hasData) {
+            showToast('Please fill in at least one part', 'warning');
+            return;
+        }
+
+        var btn = document.getElementById('createBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creating...';
+
+        fetch('/api/aci-numbers/create', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({parts: parts})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success && data.created && data.created.length > 0) {
+                showToast('Created ' + data.created.length + ' ACI number(s)', 'success');
+
+                // Show results
+                var resultsBody = document.getElementById('resultsBody');
+                resultsBody.innerHTML = '';
+                data.created.forEach(function(p) {
+                    var tr = document.createElement('tr');
+                    tr.innerHTML =
+                        '<td><strong>' + escapeHtml(p.aci_pn) + '</strong></td>' +
+                        '<td>' + escapeHtml(p.manufacturer) + '</td>' +
+                        '<td>' + escapeHtml(p.mpn) + '</td>' +
+                        '<td>' + escapeHtml(p.description) + '</td>' +
+                        '<td><span class="badge ' + (p.loaded === 'Y' ? 'bg-success' : 'bg-secondary') + '">' + escapeHtml(p.loaded || 'N') + '</span></td>';
+                    resultsBody.appendChild(tr);
+                });
+                document.getElementById('resultsCard').style.display = 'block';
+
+                // Clear the form
+                document.getElementById('partsBody').innerHTML = '';
+                rowIndex = 0;
+                updateRowCount();
+
+                // Refresh next number and history
+                fetchNextNumber();
+                fetchHistory();
+            } else {
+                showToast(data.error || 'Failed to create ACI numbers', 'danger');
+            }
+        })
+        .catch(function(err) {
+            showToast('Network error: ' + err.message, 'danger');
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Create ACI Numbers';
+            updateRowCount();
+        });
+    });
+
+    // ── History ──
+    function fetchHistory() {
+        fetch('/api/aci-numbers/history', {
+            headers: {'X-CSRFToken': csrfToken}
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var tbody = document.getElementById('historyBody');
+            if (data.success && data.history && data.history.length > 0) {
+                tbody.innerHTML = '';
+                data.history.forEach(function(h) {
+                    var tr = document.createElement('tr');
+                    tr.innerHTML =
+                        '<td><strong>' + escapeHtml(h.aci_pn) + '</strong></td>' +
+                        '<td class="text-truncate" style="max-width:120px" title="' + escapeHtml(h.mpn || '') + '">' + escapeHtml(h.mpn || '-') + '</td>' +
+                        '<td class="small text-muted">' + escapeHtml(h.created_at_fmt || '') + '</td>';
+                    tbody.appendChild(tr);
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-3">No ACI numbers created yet</td></tr>';
+            }
+        })
+        .catch(function() {
+            document.getElementById('historyBody').innerHTML =
+                '<tr><td colspan="3" class="text-center text-danger py-3">Failed to load history</td></tr>';
+        });
+    }
+
+    // ── Button handlers ──
+    document.getElementById('addRowBtn').addEventListener('click', function() { addRow(); });
+    document.getElementById('clearAllBtn').addEventListener('click', function() {
+        document.getElementById('partsBody').innerHTML = '';
+        rowIndex = 0;
+        updateRowCount();
+    });
+    document.getElementById('refreshHistoryBtn').addEventListener('click', fetchHistory);
+
+    // ── Init ──
+    fetchNextNumber();
+    fetchHistory();
+    addRow(); // Start with one empty row
+})();
+</script>
+{% endblock %}

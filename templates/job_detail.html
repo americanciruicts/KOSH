@@ -23,22 +23,26 @@
 {% endblock %}
 
 {% block page_header %}
-<div class="row mb-2" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 15px 20px; margin: 0;">
-    <div class="col-md-8">
-        <h4 class="mb-1">
-            <i class="bi bi-briefcase-fill me-2"></i>
-            Job {{ job.job_number }}
-        </h1>
-        <p class="mb-0">
-            Customer: <strong>{{ job.customer or 'N/A' }}</strong> |
-            Customer P/N: <strong>{{ job.cust_pn or 'N/A' }}</strong>
-            {% if job_rev %} | Rev: <strong>{{ job_rev }}</strong>{% endif %}
-        </p>
-    </div>
-    <div class="col-md-4 text-end no-print">
-        <a href="{{ url_for('jobs_list') }}" class="btn btn-light">
-            <i class="bi bi-arrow-left me-1"></i>Back to Jobs
-        </a>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-briefcase-fill" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Job {{ job.job_number }}</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">
+                    Customer: <strong>{{ job.customer or 'N/A' }}</strong> |
+                    Customer P/N: <strong>{{ job.cust_pn or 'N/A' }}</strong>
+                    {% if job_rev %} | Rev: <strong>{{ job_rev }}</strong>{% endif %}
+                </p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;" class="no-print">
+            <a href="{{ url_for('jobs_list') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-arrow-left" style="color: white !important;"></i> Back to Jobs
+            </a>
+        </div>
     </div>
 </div>
 {% endblock %}

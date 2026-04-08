@@ -1,16 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Jobs - KOSH{% endblock %}
 
+{% block extra_css %}
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+var BACKEND_URL = '';
+{% if config.get('KOSH_BACKEND_URL') %}
+if (window.location.hostname.indexOf('vercel.app') >= 0) {
+    BACKEND_URL = '{{ config.get("KOSH_BACKEND_URL", "") }}';
+}
+{% endif %}
+</script>
+{% endblock %}
+
 {% block page_header %}
-<div class="row mb-3" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 18px 24px; margin: 0;">
-    <div class="col-md-8">
-        <h3 class="mb-1">
-            <i class="bi bi-briefcase-fill me-2"></i>Jobs
-        </h3>
-        <p class="mb-0">Manage jobs, view BOM line items, and track pick/shortage status</p>
-    </div>
-    <div class="col-md-4 text-end d-flex align-items-center justify-content-end">
-        <span class="badge bg-primary fs-6 px-3 py-2" style="font-weight: 700;">{{ jobs|length }} Jobs</span>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-briefcase-fill" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Jobs</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Manage jobs, view BOM line items, and track pick/shortage status</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <span class="badge px-3 py-2" style="background: rgba(255,255,255,0.2); color: white !important; font-size: 0.9rem; font-weight: 700;">{{ jobs|length }} Jobs</span>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -280,7 +297,7 @@
         const loadBtn = document.getElementById('loadBtn');
         const bomResetBtn = document.getElementById('bomResetBtn');
 
-        bomUploadForm.addEventListener('submit', async function(e) {
+        bomUploadForm.addEventListener('submit', function(e) {
             e.preventDefault();
 
             const fileInput = document.getElementById('bomFile');
@@ -296,61 +313,178 @@
             uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
             if (previewSection) previewSection.style.display = 'none';
 
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
+            // Client-side Excel parsing with SheetJS (no file upload to server)
+            var file = fileInput.files[0];
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                try {
+                    var data = new Uint8Array(ev.target.result);
+                    var workbook = XLSX.read(data, { type: 'array', cellDates: true });
 
-            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                    if (workbook.SheetNames.indexOf('BOM to Load') === -1) {
+                        showStatus('File must contain a sheet named "BOM to Load". Found: ' + workbook.SheetNames.join(', '), 'danger');
+                        uploadBtn.disabled = false;
+                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
+                        return;
+                    }
 
-            try {
-                const response = await fetch('/api/bom/parse', {
-                    method: 'POST',
-                    headers: { 'X-CSRFToken': csrfToken },
-                    body: formData
-                });
+                    var ws = workbook.Sheets['BOM to Load'];
+                    var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-                const result = await response.json();
+                    if (rows.length < 2) {
+                        showStatus('BOM sheet is empty or has no data rows.', 'danger');
+                        uploadBtn.disabled = false;
+                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
+                        return;
+                    }
 
-                if (!response.ok) {
-                    throw new Error(result.error || `Server error: ${response.status}`);
-                }
+                    // Row 0 = headers
+                    var headers = rows[0].map(function(h) { return String(h || '').trim().toUpperCase(); });
+                    var headersNorm = headers.map(function(h) { return h.replace(/\s+/g, ' '); });
 
-                if (result.success) {
+                    // Build column map
+                    var col = {};
+                    for (var i = 0; i < headersNorm.length; i++) {
+                        var h = headersNorm[i];
+                        if (h === 'LINE' || h === 'LINE #' || h === 'LINE NO') col.line = i;
+                        else if (h.indexOf('DESC') >= 0) col.desc = i;
+                        else if (h === 'MAN' || h === 'MANUFACTURER' || h === 'MFG' || h === 'MFR') col.man = i;
+                        else if (h === 'MPN' || h === 'MFG PN' || h === 'MFG P/N' || h === 'MANUFACTURER PN') col.mpn = i;
+                        else if (h.indexOf('ACI') >= 0) col.aci_pn = i;
+                        else if (h.indexOf('QTY') >= 0 || h === 'QUANTITY') col.qty = i;
+                        else if (h.indexOf('POU') >= 0) col.pou = i;
+                        else if (h.indexOf('LOC') >= 0 && h.indexOf('LAST') < 0) col.loc = i;
+                        else if (h.indexOf('COST') >= 0 || h.indexOf('PRICE') >= 0) col.cost = i;
+                        else if (h.indexOf('JOB REV') >= 0 || h === 'JOBREV' || h === 'JOB REVISION') col.job_rev = i;
+                        else if (h.indexOf('LAST REV') >= 0 || h === 'LASTREV' || h === 'LAST REVISION') col.last_rev = i;
+                        else if (h.indexOf('CUST REV') >= 0 || h === 'CUSTREV' || h === 'CUSTOMER REV') col.cust_rev = i;
+                        else if (h.indexOf('CUST PN') >= 0 || h.indexOf('CUST P/N') >= 0 || h === 'CUSTOMER PN' || h === 'CUSTOMER P/N') col.cust_pn = i;
+                        else if ((h === 'CUST' || h === 'CUSTOMER') && col.cust === undefined) col.cust = i;
+                        else if (h === 'JOB' && col.job === undefined) col.job = i;
+                        else if (h === 'REV' && col.job_rev === undefined) col.job_rev = i;
+                    }
+
+                    // Parse rows
+                    var metadata = {};
+                    var bomItems = [];
+                    var metaFields = { job: 'job', job_rev: 'job_rev', last_rev: 'last_rev', cust: 'customer', cust_pn: 'cust_pn', cust_rev: 'cust_rev' };
+
+                    for (var r = 1; r < rows.length; r++) {
+                        var row = rows[r];
+                        if (!row || row.length === 0) continue;
+
+                        var lineVal = col.line !== undefined ? row[col.line] : null;
+                        if (!lineVal) continue;
+                        var lineNum = parseInt(lineVal);
+                        if (isNaN(lineNum)) continue;
+
+                        var mpn = col.mpn !== undefined ? String(row[col.mpn] || '').trim() : '';
+                        if (!mpn) continue;
+
+                        // Extract metadata from first rows
+                        for (var mk in metaFields) {
+                            var metaKey = metaFields[mk];
+                            if (!metadata[metaKey] && col[mk] !== undefined && row[col[mk]]) {
+                                var val = row[col[mk]];
+                                if (val instanceof Date) {
+                                    metadata[metaKey] = val.toISOString().split('T')[0];
+                                } else {
+                                    metadata[metaKey] = String(val).trim();
+                                }
+                            }
+                        }
+
+                        var qtyVal = col.qty !== undefined ? row[col.qty] : 0;
+                        var qty = parseInt(qtyVal) || 0;
+                        var costVal = col.cost !== undefined ? row[col.cost] : 0;
+                        var cost = parseFloat(costVal) || 0;
+
+                        var rowLastRev = col.last_rev !== undefined ? row[col.last_rev] : '';
+                        if (rowLastRev instanceof Date) {
+                            rowLastRev = rowLastRev.toISOString().split('T')[0];
+                        } else {
+                            rowLastRev = String(rowLastRev || '').trim();
+                        }
+
+                        bomItems.push({
+                            line: lineNum,
+                            desc: col.desc !== undefined ? String(row[col.desc] || '').trim() : '',
+                            man: col.man !== undefined ? String(row[col.man] || '').trim() : '',
+                            mpn: mpn,
+                            aci_pn: col.aci_pn !== undefined ? String(row[col.aci_pn] || '').trim() : '',
+                            qty: qty,
+                            pou: col.pou !== undefined ? String(row[col.pou] || '').trim() : '',
+                            loc: col.loc !== undefined ? String(row[col.loc] || '').trim() : '',
+                            cost: cost,
+                            job: col.job !== undefined ? String(row[col.job] || '').trim() : '',
+                            job_rev: col.job_rev !== undefined ? String(row[col.job_rev] || '').trim() : '',
+                            last_rev: rowLastRev,
+                            cust: col.cust !== undefined ? String(row[col.cust] || '').trim() : '',
+                            cust_pn: col.cust_pn !== undefined ? String(row[col.cust_pn] || '').trim() : '',
+                            cust_rev: col.cust_rev !== undefined ? String(row[col.cust_rev] || '').trim() : ''
+                        });
+                    }
+
+                    // Clean job number
+                    if (metadata.job && metadata.job.endsWith('.0')) {
+                        metadata.job = metadata.job.slice(0, -2);
+                    }
+
+                    if (bomItems.length === 0) {
+                        showStatus('No BOM items found. Check that the sheet has Line # and MPN columns with data.', 'danger');
+                        uploadBtn.disabled = false;
+                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
+                        return;
+                    }
+
+                    var result = {
+                        success: true,
+                        metadata: metadata,
+                        bom_items: bomItems,
+                        total_items: bomItems.length
+                    };
+
                     parsedBomData = result;
                     displayPreview(result);
                     bomResetBtn.style.display = 'inline-block';
 
-                    const jobNum = result.metadata.job;
+                    // Check if job exists
+                    var jobNum = result.metadata.job;
                     if (jobNum) {
-                        try {
-                            const checkResp = await fetch(`/api/bom/job-check/${encodeURIComponent(jobNum)}`, {
-                                headers: { 'X-CSRFToken': csrfToken }
-                            });
-                            const checkResult = await checkResp.json();
+                        var csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                        fetch(BACKEND_URL + '/api/bom/job-check/' + encodeURIComponent(jobNum), {
+                            headers: { 'X-CSRFToken': csrfToken },
+                            credentials: BACKEND_URL ? 'include' : 'same-origin'
+                        })
+                        .then(function(resp) { return resp.json(); })
+                        .then(function(checkResult) {
                             if (checkResult.exists) {
                                 document.getElementById('existingJobNumber').textContent = jobNum;
                                 document.getElementById('existingJobStatus').textContent = checkResult.job.status || 'New';
                                 document.getElementById('existingJobCustomer').textContent = checkResult.job.customer || '-';
-                                document.getElementById('viewJobLink').href = `/jobs/${encodeURIComponent(jobNum)}`;
-                                const modal = new bootstrap.Modal(document.getElementById('jobExistsModal'));
+                                document.getElementById('viewJobLink').href = '/jobs/' + encodeURIComponent(jobNum);
+                                var modal = new bootstrap.Modal(document.getElementById('jobExistsModal'));
                                 modal.show();
                             }
-                        } catch (e) {
-                            console.warn('Job check failed (non-critical):', e);
-                        }
+                        })
+                        .catch(function(e) { console.warn('Job check failed (non-critical):', e); });
                     }
 
-                    showStatus(`Successfully parsed ${result.total_items} items from BOM`, 'success');
-                } else {
-                    showStatus('Error: ' + result.error, 'danger');
+                    showStatus('Successfully parsed ' + result.total_items + ' items from BOM', 'success');
+
+                } catch (ex) {
+                    showStatus('Failed to parse Excel: ' + ex.message, 'danger');
                     resetBomForm();
                 }
-            } catch (error) {
-                showStatus('Upload failed: ' + error.message, 'danger');
-                resetBomForm();
-            } finally {
                 uploadBtn.disabled = false;
                 uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
-            }
+            };
+            reader.onerror = function() {
+                showStatus('Failed to read file', 'danger');
+                uploadBtn.disabled = false;
+                uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
+            };
+            reader.readAsArrayBuffer(file);
         });
 
         loadBtn.addEventListener('click', async function() {
@@ -369,12 +503,13 @@
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
             try {
-                const response = await fetch('/api/bom/load', {
+                const response = await fetch(BACKEND_URL + '/api/bom/load', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-CSRFToken': csrfToken
                     },
+                    credentials: BACKEND_URL ? 'include' : 'same-origin',
                     body: JSON.stringify(parsedBomData)
                 });
 

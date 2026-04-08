@@ -1,36 +1,39 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="d-flex justify-content-between align-items-center mb-4" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 25px;">
-    <div>
-        <h1 class="h2 mb-0 text-white">
-            <i class="bi bi-table text-primary"></i> {{ table_name }}
-        </h1>
-        <p class="text-muted">
-            Showing {{ pagination.total_records }} records from Access database table
-        </p>
-    </div>
-    <div>
-        <a href="{{ url_for('source_access') }}" class="btn btn-outline-secondary me-2">
-            <i class="bi bi-arrow-left"></i> Back to Tables
-        </a>
-        <button class="btn btn-success me-2" onclick="loadTableData('{{ table_name }}')">
-            <i class="bi bi-database"></i> Show All Data
-        </button>
-        {% if table_name == 'tblPCB_Inventory' %}
-        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-info me-2" target="_blank">
-            <i class="bi bi-box-arrow-up-right"></i> View in PostgreSQL
-        </a>
-        {% elif table_name == 'tblTransaction' %}
-        <a href="{{ url_for('reports') }}" class="btn btn-info me-2" target="_blank">
-            <i class="bi bi-box-arrow-up-right"></i> View Audit Trail
-        </a>
-        {% elif table_name in ['tblUser', 'TranCode'] %}
-        <span class="badge bg-secondary me-2">No PostgreSQL equivalent</span>
-        {% endif %}
-        <a href="{{ url_for('source_query') }}" class="btn btn-outline-primary">
-            <i class="bi bi-search"></i> Query Tool
-        </a>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-table" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">{{ table_name }}</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Showing {{ pagination.total_records }} records from Access database table</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('source_access') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-arrow-left" style="color: white !important;"></i> Back to Tables
+            </a>
+            <button class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;" onclick="loadTableData('{{ table_name }}')">
+                <i class="bi bi-database" style="color: white !important;"></i> Show All Data
+            </button>
+            {% if table_name == 'tblPCB_Inventory' %}
+            <a href="{{ url_for('pcb_inventory') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;" target="_blank">
+                <i class="bi bi-box-arrow-up-right" style="color: white !important;"></i> View in PostgreSQL
+            </a>
+            {% elif table_name == 'tblTransaction' %}
+            <a href="{{ url_for('reports') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;" target="_blank">
+                <i class="bi bi-box-arrow-up-right" style="color: white !important;"></i> View Audit Trail
+            </a>
+            {% elif table_name in ['tblUser', 'TranCode'] %}
+            <span class="badge px-3 py-2" style="background: rgba(255,255,255,0.2); color: white !important; font-size: 0.9rem; font-weight: 700;">No PostgreSQL equivalent</span>
+            {% endif %}
+            <a href="{{ url_for('source_query') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-search" style="color: white !important;"></i> Query Tool
+            </a>
+        </div>
     </div>
 </div>
 {% endblock %}

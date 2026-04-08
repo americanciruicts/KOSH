@@ -1,20 +1,25 @@
 {% extends "base.html" %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white;">
-    <div class="col-md-8">
-        <h1 class="h2 mb-2">
-            <i class="bi bi-plus-circle-fill me-2"></i> Stock Electronic Parts
-        </h1>
-        <p class="mb-0 fs-6">Add components to inventory • Manage stock levels • Track locations</p>
-    </div>
-    <div class="col-md-4 text-end">
-        <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-lg me-2 fw-bold">
-            <i class="bi bi-table"></i> View Inventory
-        </a>
-        <a href="{{ url_for('pick') }}" class="btn btn-light btn-lg fw-bold">
-            <i class="bi bi-dash-circle"></i> Pick Parts
-        </a>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-plus-circle-fill" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Stock Electronic Parts</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Add components to inventory • Manage stock levels • Track locations</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
+                <i class="bi bi-table"></i> View Inventory
+            </a>
+            <a href="{{ url_for('pick') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-dash-circle" style="color: white !important;"></i> Pick Parts
+            </a>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -220,7 +225,7 @@
                                     <span class="input-group-text bg-primary text-white">
                                         <i class="bi bi-geo-alt-fill"></i>
                                     </span>
-                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="e.g., 8000-8999") }}
+                                    {{ form.location_to(class="form-control form-control-lg border-2 location-input", placeholder="e.g., 1101101", inputmode="numeric") }}
                                 </div>
                                 {% if form.location_to.errors %}
                                     <div class="invalid-feedback d-block">
@@ -230,7 +235,7 @@
                                     </div>
                                 {% endif %}
                                 <div class="form-text text-muted">
-                                    <i class="bi bi-geo-alt"></i> Destination location
+                                    <i class="bi bi-geo-alt"></i> Destination location (7-digit code)
                                 </div>
                             </div>
                         </div>
@@ -1136,5 +1141,38 @@ function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
             document.body.appendChild(notification);
             setTimeout(() => notification.remove(), 4000);
 }
+
+// ==================== LOCATION 7-DIGIT ENFORCEMENT ====================
+(function() {
+    const stdLocs = ['receiving area', 'rec area', 'count area', 'stock room', 'mfg floor'];
+    document.querySelectorAll('.location-input, #location').forEach(function(input) {
+        input.addEventListener('input', function() {
+            let val = this.value;
+            // If user is typing digits only, enforce max 7
+            if (/^\d+$/.test(val) && val.length > 7) {
+                this.value = val.slice(0, 7);
+            }
+        });
+    });
+
+    // Also validate on form submit
+    const form = document.querySelector('form');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const locInputs = form.querySelectorAll('.location-input');
+            for (const input of locInputs) {
+                const val = input.value.trim();
+                if (!val) continue;
+                if (stdLocs.includes(val.toLowerCase())) continue;
+                if (!/^\d{7}$/.test(val)) {
+                    e.preventDefault();
+                    alert('Location must be exactly 7 digits (e.g. 1101101) or a standard location (Receiving Area, Count Area, Stock Room, MFG Floor, Rec Area).');
+                    input.focus();
+                    return;
+                }
+            }
+        });
+    }
+})();
 </script>
 {% endblock %}

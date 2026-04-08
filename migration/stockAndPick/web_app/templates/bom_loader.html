@@ -3,16 +3,37 @@
 {% block title %}BOM Loader - KOSH{% endblock %}
 
 {% block content %}
+<!-- SheetJS for client-side Excel parsing (avoids 413 on Vercel) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- Backend URL: use tunnel when on Vercel, same-origin when local -->
+<script>
+var BACKEND_URL = '';
+{% if config.get('KOSH_BACKEND_URL') %}
+if (window.location.hostname.indexOf('vercel.app') >= 0) {
+    BACKEND_URL = '{{ config.get("KOSH_BACKEND_URL", "") }}';
+}
+{% endif %}
+</script>
+
 <div class="container-fluid py-4">
     <div class="row">
         <div class="col-12">
             <h2><i class="bi bi-file-earmark-arrow-up-fill"></i> BOM Loader</h2>
-            <p class="text-muted">Upload and load Bill of Materials from Excel files <span class="badge bg-success">v5.0</span></p>
+            <p class="text-muted">Upload and load Bill of Materials from Excel files <span class="badge bg-danger" style="font-size:14px">v7.1</span></p>
+        </div>
+    </div>
+
+    <!-- Debug Log -->
+    <div class="row">
+        <div class="col-12">
+            <div id="debugLog" style="background:#111;color:#0f0;font-family:monospace;font-size:12px;padding:8px;max-height:120px;overflow-y:auto;border-radius:4px;margin-bottom:10px;">
+                <div>BOM Loader v7.1 - Client-side Excel parse</div>
+            </div>
         </div>
     </div>
 
     <!-- Upload Section -->
-    <div class="row mt-4">
+    <div class="row mt-2">
         <div class="col-md-6">
             <div class="card">
                 <div class="card-header">
@@ -30,6 +51,9 @@
 
                         <button type="submit" class="btn btn-primary" id="uploadBtn">
                             <i class="bi bi-upload"></i> Upload and Parse
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm ms-2" id="resetBtn" style="display:none;">
+                            <i class="bi bi-arrow-counterclockwise"></i> Start Over
                         </button>
                     </form>
 
@@ -67,46 +91,28 @@
         </div>
     </div>
 
-    <!-- Job Exists Modal -->
-    <div class="modal fade" id="jobExistsModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header bg-warning">
-                    <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Job Already Exists</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <p>Job <strong id="existingJobNumber"></strong> already exists in the system.</p>
-                    <div class="mb-2">
-                        <small class="text-muted">Status: <span id="existingJobStatus" class="badge bg-primary"></span></small><br>
-                        <small class="text-muted">Customer: <span id="existingJobCustomer"></span></small>
-                    </div>
-                    <p>Would you like to <strong>reload the BOM</strong> (replace existing data) or <strong>view the job</strong>?</p>
-                </div>
-                <div class="modal-footer">
-                    <a id="viewJobLink" href="#" class="btn btn-primary">
-                        <i class="bi bi-eye me-1"></i>View Job
-                    </a>
-                    <button type="button" class="btn btn-warning" data-bs-dismiss="modal">
-                        <i class="bi bi-arrow-repeat me-1"></i>Reload BOM
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- BOM Preview Section -->
     <div class="row mt-4" id="previewSection" style="display: none;">
         <div class="col-12">
+            <div id="jobExistsBanner" class="alert alert-warning d-flex align-items-center mb-3" style="display:none !important;">
+                <i class="bi bi-exclamation-triangle-fill me-2 fs-5"></i>
+                <div>
+                    <strong>Job <span id="existingJobNumber"></span> already exists.</strong>
+                    Current Rev: <span id="existingJobRev" class="badge bg-secondary"></span>
+                    <span id="revChangeIndicator" class="ms-2"></span>
+                    <span class="ms-2">—</span>
+                    <a id="viewJobLink" href="#" class="ms-2">View existing job</a>
+                </div>
+            </div>
+
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5 class="mb-0">BOM Preview</h5>
-                    <button class="btn btn-sm btn-success" id="loadBtn">
+                    <button class="btn btn-success" id="loadBtn">
                         <i class="bi bi-database-add"></i> Load to Database
                     </button>
                 </div>
                 <div class="card-body">
-                    <!-- Metadata -->
                     <div class="row mb-3">
                         <div class="col-md-3">
                             <strong>Job Number:</strong><br>
@@ -127,12 +133,13 @@
                     </div>
                     <div class="row mb-3">
                         <div class="col-md-3">
-                            <strong>Job Rev:</strong><br>
-                            <span id="metaJobRev">-</span>
+                            <label for="metaJobRevInput" class="form-label fw-bold mb-1">Job Rev:</label>
+                            <input type="text" class="form-control form-control-sm border-primary" id="metaJobRevInput" placeholder="Enter revision">
+                            <small class="text-muted">Override if Excel has wrong rev</small>
                         </div>
                         <div class="col-md-3">
-                            <strong>Cust Rev:</strong><br>
-                            <span id="metaCustRev">-</span>
+                            <label for="metaCustRevInput" class="form-label fw-bold mb-1">Cust Rev:</label>
+                            <input type="text" class="form-control form-control-sm" id="metaCustRevInput" placeholder="Customer revision">
                         </div>
                         <div class="col-md-3">
                             <strong>Last Rev Date:</strong><br>
@@ -152,7 +159,6 @@
 
                     <hr>
 
-                    <!-- BOM Items Table -->
                     <div class="table-responsive">
                         <table class="table table-sm table-bordered">
                             <thead class="table-dark">
@@ -175,7 +181,6 @@
                                 </tr>
                             </thead>
                             <tbody id="bomTableBody">
-                                <!-- Will be populated by JavaScript -->
                             </tbody>
                         </table>
                     </div>
@@ -188,291 +193,449 @@
 </div>
 
 <script>
-// BOM Loader JavaScript - v4.0 - AUTO-RECOVERY VERSION - January 27, 2026
-console.log('✓ BOM Loader v4.0 - Automatic error recovery enabled');
-console.log('✓ No manual refresh needed - system auto-resets on errors');
-let parsedBomData = null;
+// ====== v7.1 - CLIENT-SIDE Excel parsing with SheetJS ======
+// The Excel file is parsed in the browser, NOT uploaded to the server.
+// Only the small JSON data gets sent to /api/bom/load.
+// This fixes the Vercel 413 "Content Too Large" error.
 
-document.addEventListener('DOMContentLoaded', function() {
-    const bomUploadForm = document.getElementById('bomUploadForm');
-    const loadBtn = document.getElementById('loadBtn');
+var parsedBomData = null;
 
-    bomUploadForm.addEventListener('submit', async function(e) {
-        e.preventDefault();
-
-        const fileInput = document.getElementById('bomFile');
-        const uploadBtn = document.getElementById('uploadBtn');
-        const previewSection = document.getElementById('previewSection');
-
-        console.log('Form submitted - starting BOM upload');
-
-        if (!fileInput.files[0]) {
-            showStatus('Please select a file', 'danger');
-            return;
+function dbg(msg) {
+    try {
+        console.log('[BOM]', msg);
+        var log = document.getElementById('debugLog');
+        if (log) {
+            var d = document.createElement('div');
+            d.textContent = new Date().toLocaleTimeString() + ' - ' + msg;
+            log.appendChild(d);
+            log.scrollTop = log.scrollHeight;
         }
+    } catch(e) {}
+}
 
-        // Show loading
-        uploadBtn.disabled = true;
-        uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+dbg('v7.1 script loaded, XLSX lib: ' + (typeof XLSX !== 'undefined' ? 'YES' : 'NO'));
+dbg('Backend: ' + (BACKEND_URL || 'same-origin (local)'));
 
-        if (previewSection) {
-            previewSection.style.display = 'none';
-        }
+window.onerror = function(msg, url, line) {
+    dbg('GLOBAL ERROR: ' + msg + ' (line ' + line + ')');
+    alert('JS Error: ' + msg);
+};
 
-        // Prepare form data
-        const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
+function showStatus(message, type) {
+    dbg('Status [' + type + ']: ' + message);
+    var el = document.getElementById('statusMsg');
+    if (!el) return;
+    el.className = 'alert alert-' + type + ' mt-3';
+    el.style.display = 'block';
+    if (type === 'danger') {
+        el.innerHTML = '<h5 style="color:red"><b>ERROR</b></h5><p style="font-size:16px;margin:0">' + message + '</p>';
+        window.scrollTo(0, 0);
+        try { alert('ERROR: ' + message); } catch(e) {}
+    } else {
+        el.innerHTML = message;
+    }
+}
 
-        // Get CSRF token
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+function resetForm() {
+    parsedBomData = null;
+    var f = document.getElementById('bomFile'); if (f) f.value = '';
+    document.getElementById('previewSection').style.display = 'none';
+    document.getElementById('jobExistsBanner').style.cssText = 'display:none !important';
+    document.getElementById('resetBtn').style.display = 'none';
+    var lb = document.getElementById('loadBtn');
+    if (lb) { lb.disabled = false; lb.innerHTML = '<i class="bi bi-database-add"></i> Load to Database'; }
+}
 
+function displayPreview(data) {
+    dbg('displayPreview: ' + data.bom_items.length + ' items');
+    var m = data.metadata;
+    document.getElementById('metaJob').textContent = m.job || '-';
+    document.getElementById('metaJobRevInput').value = m.job_rev || '';
+    document.getElementById('metaCustomer').textContent = m.customer || '-';
+    document.getElementById('metaCustPN').textContent = m.cust_pn || '-';
+    document.getElementById('metaBuildQty').textContent = m.build_qty || '-';
+    document.getElementById('metaCustRevInput').value = m.cust_rev || '';
+    document.getElementById('metaLastRev').textContent = m.last_rev || '-';
+    document.getElementById('metaWONumber').textContent = m.wo_number || '-';
+
+    if (m.notes) {
+        document.getElementById('metaNotes').textContent = m.notes;
+        document.getElementById('notesRow').style.display = 'block';
+    } else {
+        document.getElementById('notesRow').style.display = 'none';
+    }
+
+    document.getElementById('itemCount').textContent = data.bom_items.length;
+
+    var tbody = document.getElementById('bomTableBody');
+    tbody.innerHTML = '';
+    data.bom_items.forEach(function(item) {
+        var row = document.createElement('tr');
+        row.innerHTML =
+            '<td>' + item.line + '</td>' +
+            '<td>' + (item.desc || '') + '</td>' +
+            '<td>' + (item.man || '') + '</td>' +
+            '<td class="font-monospace">' + (item.mpn || '') + '</td>' +
+            '<td>' + (item.aci_pn || '') + '</td>' +
+            '<td class="text-end">' + (item.qty || 0) + '</td>' +
+            '<td>' + (item.pou || '') + '</td>' +
+            '<td>' + (item.loc || '') + '</td>' +
+            '<td class="text-end">$' + (item.cost ? Number(item.cost).toFixed(2) : '0.00') + '</td>' +
+            '<td>' + (item.job || '') + '</td>' +
+            '<td>' + (item.job_rev || '') + '</td>' +
+            '<td>' + (item.last_rev || '') + '</td>' +
+            '<td>' + (item.cust || '') + '</td>' +
+            '<td>' + (item.cust_pn || '') + '</td>' +
+            '<td>' + (item.cust_rev || '') + '</td>';
+        tbody.appendChild(row);
+    });
+
+    document.getElementById('previewSection').style.display = 'block';
+    document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ====== CLIENT-SIDE Excel Parsing ======
+function parseExcelLocally(file) {
+    dbg('Reading file: ' + file.name + ' (' + Math.round(file.size/1024) + ' KB)');
+    showStatus('Reading Excel file...', 'info');
+
+    var reader = new FileReader();
+    reader.onload = function(e) {
         try {
-            const response = await fetch('/api/bom/parse', {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': csrfToken
-                },
-                body: formData
-            });
+            dbg('File read complete, parsing with SheetJS...');
+            showStatus('Parsing Excel...', 'info');
 
-            const result = await response.json();
-            console.log('Parse response:', result);
+            var data = new Uint8Array(e.target.result);
+            var workbook = XLSX.read(data, { type: 'array', cellDates: true });
 
-            if (!response.ok) {
-                // Show the actual error message from the server
-                const errorMsg = result.error || `Server error: ${response.status}`;
-                console.error('Parse error from server:', errorMsg);
-                throw new Error(errorMsg);
+            dbg('Sheets found: ' + workbook.SheetNames.join(', '));
+
+            // Find "BOM to Load" sheet
+            if (workbook.SheetNames.indexOf('BOM to Load') === -1) {
+                showStatus('File must contain a sheet named "BOM to Load". Found: ' + workbook.SheetNames.join(', '), 'danger');
+                resetUploadBtn();
+                return;
             }
 
-            if (result.success) {
-                parsedBomData = result;
-                displayPreview(result);
+            var ws = workbook.Sheets['BOM to Load'];
+            var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+            dbg('Total rows in sheet: ' + rows.length);
 
-                // Check if job already exists
-                const jobNum = result.metadata.job;
-                if (jobNum) {
-                    try {
-                        const checkResp = await fetch(`/api/bom/job-check/${encodeURIComponent(jobNum)}`, {
-                            headers: { 'X-CSRFToken': csrfToken }
-                        });
-                        const checkResult = await checkResp.json();
-                        if (checkResult.exists) {
-                            document.getElementById('existingJobNumber').textContent = jobNum;
-                            document.getElementById('existingJobStatus').textContent = checkResult.job.status || 'New';
-                            document.getElementById('existingJobCustomer').textContent = checkResult.job.customer || '-';
-                            document.getElementById('viewJobLink').href = `/jobs/${encodeURIComponent(jobNum)}`;
-                            const modal = new bootstrap.Modal(document.getElementById('jobExistsModal'));
-                            modal.show();
+            if (rows.length < 2) {
+                showStatus('BOM sheet is empty or has no data rows.', 'danger');
+                resetUploadBtn();
+                return;
+            }
+
+            // Row 0 = headers
+            var headers = rows[0].map(function(h) { return String(h || '').trim().toUpperCase(); });
+            var headersNorm = headers.map(function(h) { return h.replace(/\s+/g, ' '); });
+            dbg('Headers: ' + headers.join(', '));
+
+            // Build column map
+            var col = {};
+            for (var i = 0; i < headersNorm.length; i++) {
+                var h = headersNorm[i];
+                if (h === 'LINE' || h === 'LINE #' || h === 'LINE NO') col.line = i;
+                else if (h.indexOf('DESC') >= 0) col.desc = i;
+                else if (h === 'MAN' || h === 'MANUFACTURER' || h === 'MFG' || h === 'MFR') col.man = i;
+                else if (h === 'MPN' || h === 'MFG PN' || h === 'MFG P/N' || h === 'MANUFACTURER PN') col.mpn = i;
+                else if (h.indexOf('ACI') >= 0) col.aci_pn = i;
+                else if (h.indexOf('QTY') >= 0 || h === 'QUANTITY') col.qty = i;
+                else if (h.indexOf('POU') >= 0) col.pou = i;
+                else if (h.indexOf('LOC') >= 0 && h.indexOf('LAST') < 0) col.loc = i;
+                else if (h.indexOf('COST') >= 0 || h.indexOf('PRICE') >= 0) col.cost = i;
+                else if (h.indexOf('JOB REV') >= 0 || h === 'JOBREV' || h === 'JOB REVISION') col.job_rev = i;
+                else if (h.indexOf('LAST REV') >= 0 || h === 'LASTREV' || h === 'LAST REVISION') col.last_rev = i;
+                else if (h.indexOf('CUST REV') >= 0 || h === 'CUSTREV' || h === 'CUSTOMER REV') col.cust_rev = i;
+                else if (h.indexOf('CUST PN') >= 0 || h.indexOf('CUST P/N') >= 0 || h === 'CUSTOMER PN' || h === 'CUSTOMER P/N') col.cust_pn = i;
+                else if ((h === 'CUST' || h === 'CUSTOMER') && col.cust === undefined) col.cust = i;
+                else if (h === 'JOB' && col.job === undefined) col.job = i;
+                else if (h === 'REV' && col.job_rev === undefined) col.job_rev = i;
+            }
+            dbg('Column map: ' + JSON.stringify(col));
+
+            // Parse rows
+            var metadata = {};
+            var bomItems = [];
+            var metaFields = { job: 'job', job_rev: 'job_rev', last_rev: 'last_rev', cust: 'customer', cust_pn: 'cust_pn', cust_rev: 'cust_rev' };
+
+            for (var r = 1; r < rows.length; r++) {
+                var row = rows[r];
+                if (!row || row.length === 0) continue;
+
+                var lineVal = col.line !== undefined ? row[col.line] : null;
+                if (!lineVal) continue;
+
+                var lineNum = parseInt(lineVal);
+                if (isNaN(lineNum)) continue;
+
+                var mpn = col.mpn !== undefined ? String(row[col.mpn] || '').trim() : '';
+                if (!mpn) continue;
+
+                // Extract metadata from first rows that have values
+                for (var mk in metaFields) {
+                    var metaKey = metaFields[mk];
+                    if (!metadata[metaKey] && col[mk] !== undefined && row[col[mk]]) {
+                        var val = row[col[mk]];
+                        if (val instanceof Date) {
+                            metadata[metaKey] = val.toISOString().split('T')[0];
+                        } else {
+                            metadata[metaKey] = String(val).trim();
                         }
-                    } catch (e) {
-                        console.warn('Job check failed (non-critical):', e);
                     }
                 }
 
-                showStatus(`Successfully parsed ${result.total_items} items from BOM`, 'success');
-            } else {
-                showStatus('Error: ' + result.error, 'danger');
-                resetForm();
+                // Parse cost and qty
+                var qtyVal = col.qty !== undefined ? row[col.qty] : 0;
+                var qty = parseInt(qtyVal) || 0;
+                var costVal = col.cost !== undefined ? row[col.cost] : 0;
+                var cost = parseFloat(costVal) || 0;
+
+                // Format last_rev for each row
+                var rowLastRev = col.last_rev !== undefined ? row[col.last_rev] : '';
+                if (rowLastRev instanceof Date) {
+                    rowLastRev = rowLastRev.toISOString().split('T')[0];
+                } else {
+                    rowLastRev = String(rowLastRev || '').trim();
+                }
+
+                bomItems.push({
+                    line: lineNum,
+                    desc: col.desc !== undefined ? String(row[col.desc] || '').trim() : '',
+                    man: col.man !== undefined ? String(row[col.man] || '').trim() : '',
+                    mpn: mpn,
+                    aci_pn: col.aci_pn !== undefined ? String(row[col.aci_pn] || '').trim() : '',
+                    qty: qty,
+                    pou: col.pou !== undefined ? String(row[col.pou] || '').trim() : '',
+                    loc: col.loc !== undefined ? String(row[col.loc] || '').trim() : '',
+                    cost: cost,
+                    job: col.job !== undefined ? String(row[col.job] || '').trim() : '',
+                    job_rev: col.job_rev !== undefined ? String(row[col.job_rev] || '').trim() : '',
+                    last_rev: rowLastRev,
+                    cust: col.cust !== undefined ? String(row[col.cust] || '').trim() : '',
+                    cust_pn: col.cust_pn !== undefined ? String(row[col.cust_pn] || '').trim() : '',
+                    cust_rev: col.cust_rev !== undefined ? String(row[col.cust_rev] || '').trim() : ''
+                });
             }
-        } catch (error) {
-            console.error('Upload error:', error);
-            showStatus('Upload failed: ' + error.message + '. Please try again.', 'danger');
-            resetForm();
-        } finally {
-            uploadBtn.disabled = false;
-            uploadBtn.innerHTML = '<i class="bi bi-upload"></i> Upload and Parse';
+
+            // Clean job number (strip .0 from numeric)
+            if (metadata.job && metadata.job.endsWith('.0')) {
+                metadata.job = metadata.job.slice(0, -2);
+            }
+
+            dbg('Parsed: Job=' + metadata.job + ' Rev=' + metadata.job_rev + ' Items=' + bomItems.length);
+
+            if (bomItems.length === 0) {
+                showStatus('No BOM items found. Check that the sheet has Line # and MPN columns with data.', 'danger');
+                resetUploadBtn();
+                return;
+            }
+
+            // Build result in same format as server /api/bom/parse
+            var result = {
+                success: true,
+                metadata: metadata,
+                bom_items: bomItems,
+                total_items: bomItems.length
+            };
+
+            parsedBomData = result;
+            displayPreview(result);
+            document.getElementById('resetBtn').style.display = 'inline-block';
+
+            // Check if job exists in DB
+            checkJobExists(result);
+
+            showStatus('Parsed ' + bomItems.length + ' items from Excel. Review below and click Load to Database.', 'success');
+            resetUploadBtn();
+
+        } catch(ex) {
+            dbg('Parse error: ' + ex.message);
+            showStatus('Failed to parse Excel: ' + ex.message, 'danger');
+            resetUploadBtn();
         }
-    });
+    };
 
-    loadBtn.addEventListener('click', async function() {
-        if (!parsedBomData) {
-            showStatus('No data to load. Please upload a BOM file first.', 'danger');
-            return;
-        }
+    reader.onerror = function() {
+        dbg('FileReader error');
+        showStatus('Failed to read the file. Try again.', 'danger');
+        resetUploadBtn();
+    };
 
-        if (!confirm(`Load BOM for Job ${parsedBomData.metadata.job}?\n\nThis will DELETE existing BOM records for this job.`)) {
-            return;
-        }
+    reader.readAsArrayBuffer(file);
+}
 
-        loadBtn.disabled = true;
-        loadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Loading...';
+function resetUploadBtn() {
+    var btn = document.getElementById('uploadBtn');
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-upload"></i> Upload and Parse';
+    }
+}
 
-        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+function checkJobExists(result) {
+    var jobNum = result.metadata.job;
+    if (!jobNum) return;
 
+    var csrfToken = '';
+    var metaTag = document.querySelector('meta[name="csrf-token"]');
+    if (metaTag) csrfToken = metaTag.getAttribute('content') || '';
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', BACKEND_URL + '/api/bom/job-check/' + encodeURIComponent(jobNum), true);
+    xhr.setRequestHeader('X-CSRFToken', csrfToken);
+    xhr.onload = function() {
         try {
-            const response = await fetch('/api/bom/load', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken
-                },
-                body: JSON.stringify(parsedBomData)
-            });
+            var checkResult = JSON.parse(xhr.responseText);
+            if (checkResult.exists) {
+                dbg('Job ' + jobNum + ' exists, DB rev=' + (checkResult.job.job_rev || 'none'));
+                document.getElementById('existingJobNumber').textContent = jobNum;
+                document.getElementById('existingJobRev').textContent = checkResult.job.job_rev || 'None';
+                document.getElementById('viewJobLink').href = '/jobs/' + encodeURIComponent(jobNum);
 
-            console.log('Load response status:', response.status);
-            const result = await response.json();
-            console.log('Load response data:', result);
+                var currentDbRev = checkResult.job.job_rev || '';
+                var excelRev = result.metadata.job_rev || '';
+                var revIndicator = document.getElementById('revChangeIndicator');
+                var revInput = document.getElementById('metaJobRevInput');
 
-            if (!response.ok) {
-                // Show the actual error message from the server
-                const errorMsg = result.error || `Server error: ${response.status}`;
-                throw new Error(errorMsg);
+                if (currentDbRev && excelRev && currentDbRev === excelRev) {
+                    revIndicator.innerHTML = '<span class="badge bg-danger">Rev unchanged in Excel!</span>';
+                    revInput.classList.add('border-danger', 'border-2');
+                    revInput.style.backgroundColor = '#fff3cd';
+                    var rw = document.getElementById('revWarning');
+                    if (!rw) {
+                        rw = document.createElement('div');
+                        rw.id = 'revWarning';
+                        rw.className = 'text-danger small mt-1';
+                        rw.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i>Excel has same rev (<strong>' + currentDbRev + '</strong>) as DB. Change it above if needed.';
+                        revInput.parentNode.appendChild(rw);
+                    }
+                } else if (currentDbRev && excelRev) {
+                    revIndicator.innerHTML = '<span class="badge bg-success">' + currentDbRev + ' &rarr; ' + excelRev + '</span>';
+                }
+
+                document.getElementById('jobExistsBanner').style.cssText = 'display:flex !important';
             }
+        } catch(e) {
+            dbg('Job check error: ' + e.message);
+        }
+    };
+    xhr.send();
+}
 
-            if (result.success) {
-                showStatus(`Success! Loaded ${result.inserted_count} items for Job ${result.job}.`, 'success');
+// ====== LOAD TO DATABASE ======
+function doLoad() {
+    if (!parsedBomData) {
+        showStatus('No data to load. Upload a BOM file first.', 'danger');
+        return;
+    }
 
-                // Redirect to job detail page after 1.5 seconds
-                setTimeout(() => {
-                    window.location.href = `/jobs/${encodeURIComponent(result.job)}`;
+    if (!confirm('Load BOM for Job ' + parsedBomData.metadata.job + '?\n\nThis will REPLACE existing BOM records for this job.')) {
+        return;
+    }
+
+    // Apply rev overrides
+    var jobRev = document.getElementById('metaJobRevInput').value.trim();
+    var custRev = document.getElementById('metaCustRevInput').value.trim();
+    parsedBomData.metadata.job_rev = jobRev;
+    parsedBomData.metadata.cust_rev = custRev;
+    if (parsedBomData.bom_items) {
+        parsedBomData.bom_items.forEach(function(item) {
+            item.job_rev = jobRev;
+            item.cust_rev = custRev;
+        });
+    }
+
+    var loadBtn = document.getElementById('loadBtn');
+    loadBtn.disabled = true;
+    loadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Loading...';
+
+    var csrfToken = '';
+    var metaTag = document.querySelector('meta[name="csrf-token"]');
+    if (metaTag) csrfToken = metaTag.getAttribute('content') || '';
+
+    dbg('Sending load: job=' + parsedBomData.metadata.job + ' rev=' + jobRev + ' items=' + parsedBomData.bom_items.length);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', BACKEND_URL + '/api/bom/load', true);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('X-CSRFToken', csrfToken);
+    xhr.timeout = 60000;
+
+    xhr.onload = function() {
+        dbg('Load response: status=' + xhr.status);
+        try {
+            var result = JSON.parse(xhr.responseText);
+            if (xhr.status === 200 && result.success) {
+                showStatus('Loaded ' + result.inserted_count + ' items for Job ' + result.job + '. Redirecting to job page...', 'success');
+                setTimeout(function() {
+                    window.location.href = '/jobs/' + encodeURIComponent(result.job);
                 }, 1500);
             } else {
-                showStatus('Load failed: ' + result.error + '. Please try again.', 'danger');
+                showStatus('Load failed: ' + (result.error || 'Unknown error'), 'danger');
                 loadBtn.disabled = false;
                 loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
             }
-        } catch (error) {
-            console.error('Load error:', error);
-            showStatus('Load failed: ' + error.message + '. Please try again.', 'danger');
+        } catch(e) {
+            showStatus('Load failed: Invalid server response', 'danger');
             loadBtn.disabled = false;
             loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
         }
-    });
+    };
 
-    function displayPreview(data) {
-        const { metadata, bom_items } = data;
+    xhr.onerror = function() {
+        showStatus('Load failed: Network error', 'danger');
+        loadBtn.disabled = false;
+        loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
+    };
 
-        // Update metadata
-        document.getElementById('metaJob').textContent = metadata.job || '-';
-        document.getElementById('metaJobRev').textContent = metadata.job_rev || '-';
-        document.getElementById('metaCustomer').textContent = metadata.customer || '-';
-        document.getElementById('metaCustPN').textContent = metadata.cust_pn || '-';
-        document.getElementById('metaBuildQty').textContent = metadata.build_qty || '-';
-        document.getElementById('metaCustRev').textContent = metadata.cust_rev || '-';
-        document.getElementById('metaLastRev').textContent = metadata.last_rev || '-';
-        document.getElementById('metaWONumber').textContent = metadata.wo_number || '-';
+    xhr.send(JSON.stringify(parsedBomData));
+}
 
-        // Show notes if available
-        if (metadata.notes) {
-            document.getElementById('metaNotes').textContent = metadata.notes;
-            document.getElementById('notesRow').style.display = 'block';
-        } else {
-            document.getElementById('notesRow').style.display = 'none';
-        }
+// ====== Wire up events ======
+document.addEventListener('DOMContentLoaded', function() {
+    dbg('DOMContentLoaded - XLSX available: ' + (typeof XLSX !== 'undefined'));
 
-        document.getElementById('itemCount').textContent = bom_items.length;
-
-        // Update table
-        const tbody = document.getElementById('bomTableBody');
-        tbody.innerHTML = '';
-
-        bom_items.forEach(item => {
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${item.line}</td>
-                <td>${item.desc || ''}</td>
-                <td>${item.man || ''}</td>
-                <td class="font-monospace">${item.mpn || ''}</td>
-                <td>${item.aci_pn || ''}</td>
-                <td class="text-end">${item.qty || 0}</td>
-                <td>${item.pou || ''}</td>
-                <td>${item.loc || ''}</td>
-                <td class="text-end">${item.cost ? '$' + Number(item.cost).toFixed(2) : '$0.00'}</td>
-                <td>${item.job || ''}</td>
-                <td>${item.job_rev || ''}</td>
-                <td>${item.last_rev || ''}</td>
-                <td>${item.cust || ''}</td>
-                <td>${item.cust_pn || ''}</td>
-                <td>${item.cust_rev || ''}</td>
-            `;
-            tbody.appendChild(row);
-        });
-
-        // Show preview section
-        document.getElementById('previewSection').style.display = 'block';
-
-        // Scroll to preview
-        document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (typeof XLSX === 'undefined') {
+        showStatus('SheetJS library failed to load. Please hard refresh (Ctrl+Shift+R).', 'danger');
+        return;
     }
 
-    function resetForm() {
-        console.log('Resetting form state');
+    document.getElementById('bomUploadForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        dbg('Form submitted');
 
-        // Clear parsed data
-        parsedBomData = null;
-
-        // Reset file input
-        const fileInput = document.getElementById('bomFile');
-        if (fileInput) {
-            fileInput.value = '';
-        }
-
-        // Hide preview section
-        const previewSection = document.getElementById('previewSection');
-        if (previewSection) {
-            previewSection.style.display = 'none';
-        }
-
-        // Reset upload button
-        const uploadBtn = document.getElementById('uploadBtn');
-        if (uploadBtn) {
-            uploadBtn.disabled = false;
-            uploadBtn.innerHTML = '<i class="bi bi-upload"></i> Upload and Parse';
-        }
-
-        // Reset load button
-        if (loadBtn) {
-            loadBtn.disabled = false;
-            loadBtn.innerHTML = '<i class="bi bi-database-add"></i> Load to Database';
-            loadBtn.style.display = 'inline-block';
-        }
-
-        console.log('Form reset complete - ready for new upload');
-    }
-
-    function showStatus(message, type) {
-        console.log('showStatus called:', message, 'Type:', type);
-
-        // Always show alert for important messages
-        if (type === 'success') {
-            alert('✓ ' + message);
-        } else if (type === 'danger') {
-            alert('✗ Error: ' + message);
-        }
-
-        const statusMsg = document.getElementById('statusMsg');
-
-        if (!statusMsg) {
-            console.error('statusMsg element not found in DOM!');
+        var fileInput = document.getElementById('bomFile');
+        if (!fileInput.files || !fileInput.files[0]) {
+            showStatus('Please select a file first', 'danger');
             return;
         }
 
-        statusMsg.className = `alert alert-${type} mt-3`;
-        statusMsg.textContent = message;
-        statusMsg.style.display = 'block';
+        var uploadBtn = document.getElementById('uploadBtn');
+        uploadBtn.disabled = true;
+        uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+        document.getElementById('previewSection').style.display = 'none';
+        document.getElementById('jobExistsBanner').style.cssText = 'display:none !important';
 
-        // Try to scroll to it if it exists
-        try {
-            statusMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } catch (e) {
-            console.warn('Could not scroll to status message:', e);
-        }
+        // Parse Excel CLIENT-SIDE - no server upload needed!
+        parseExcelLocally(fileInput.files[0]);
+    });
 
-        console.log('Status shown successfully');
+    document.getElementById('loadBtn').addEventListener('click', function() { doLoad(); });
+    document.getElementById('resetBtn').addEventListener('click', function() { resetForm(); });
+
+    var revInput = document.getElementById('metaJobRevInput');
+    if (revInput) {
+        revInput.addEventListener('input', function() {
+            this.classList.remove('border-danger', 'border-2');
+            this.style.backgroundColor = '';
+            var w = document.getElementById('revWarning');
+            if (w) w.remove();
+        });
     }
 
-    // Add manual reset button to page
-    const uploadCard = document.querySelector('.card-body');
-    if (uploadCard) {
-        const resetBtn = document.createElement('button');
-        resetBtn.type = 'button';
-        resetBtn.className = 'btn btn-outline-secondary btn-sm mt-2';
-        resetBtn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Start Over';
-        resetBtn.onclick = resetForm;
-        uploadCard.appendChild(resetBtn);
-    }
-
-}); // End DOMContentLoaded
+    dbg('Ready. Excel will be parsed in browser (no upload to server).');
+});
 </script>
 {% endblock %}

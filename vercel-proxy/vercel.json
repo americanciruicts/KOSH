@@ -2,7 +2,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "https://aci-kosh.vercel.app/$1"
+      "dest": "https://limited-economics-api-normal.trycloudflare.com/$1"
     }
   ]
 }

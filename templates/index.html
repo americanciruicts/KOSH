@@ -890,14 +890,14 @@ document.addEventListener('DOMContentLoaded', function() {
         return new bootstrap.Tooltip(tooltipTriggerEl);
     });
 
-    // Auto-reload dashboard every 60 seconds for real-time updates
+    // Auto-reload dashboard every 60 seconds for real-time updates (hard refresh)
     let autoReloadInterval = setInterval(function() {
         // Save scroll position
         const scrollPos = window.scrollY;
         sessionStorage.setItem('dashboardScrollPos', scrollPos);
 
-        // Reload page
-        window.location.reload();
+        // Hard reload - bypass cache to get all latest changes
+        window.location.href = window.location.pathname + '?_t=' + Date.now();
     }, 60000); // 60 seconds
 
     // Restore scroll position after reload

@@ -163,12 +163,20 @@
 {% endblock %}
 
 {% block page_header %}
-<div class="row align-items-center mb-4 p-3 bg-gradient rounded-3 shadow-sm" style="background: linear-gradient(135deg, #8b5cf6 0%, #5b21b6 100%); color: white;">
-    <div class="col-12">
-        <h1 class="h2 mb-2">
-            <i class="bi bi-upc-scan me-2"></i> Generate PCN
-        </h1>
-        <p class="mb-0 fs-6">Create Part Control Number with auto-assigned 5-digit identifier and printable barcode label</p>
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-upc-scan" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Generate PCN</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Create Part Control Number with auto-assigned 5-digit identifier and printable barcode label</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <!-- No buttons -->
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -227,7 +235,7 @@
                         </div>
 
                         <div class="row">
-                            <div class="col-md-12">
+                            <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="poNumberInput" class="form-label">
                                         <i class="bi bi-receipt-cutoff me-1"></i> PO Number
@@ -236,6 +244,18 @@
                                            placeholder="e.g., PO-2024-001">
                                     <div class="form-text text-muted">
                                         <i class="bi bi-arrow-right"></i> Purchase Order Number
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="vendorNameInput" class="form-label">
+                                        <i class="bi bi-building me-1"></i> Vendor Name
+                                    </label>
+                                    <input type="text" class="form-control" id="vendorNameInput" name="vendor_name"
+                                           placeholder="e.g., Acme Corp">
+                                    <div class="form-text text-muted">
+                                        <i class="bi bi-arrow-right"></i> Supplier / Vendor Name
                                     </div>
                                 </div>
                             </div>
@@ -809,7 +829,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div><strong>Job:</strong> ${data.item || '-'}</div>
                     <div style="grid-column: span 2;"><strong>MPN:</strong> ${data.mpn || '-'}</div>
                     <div><strong>DCC:</strong> ${data.date_code || '-'}</div>
-                    <div style="grid-column: span 2;"><strong>PO:</strong> ${data.po_number || '-'}</div>
+                    <div><strong>PO:</strong> ${data.po_number || '-'}</div>
+                    <div><strong>Vendor:</strong> ${data.vendor_name || '-'}</div>
                     <div><strong>MSD:</strong> ${data.msd ? data.msd.replace('Level ', '') : '-'}</div>
                 </div>
             </div>
@@ -836,40 +857,40 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 100);
     }
 
-    // Generate printable label (matching bats.png physical label format EXACTLY)
+    // Generate printable label (v5.0 - compact scannable layout)
     function generatePrintableLabel(data, barcodeData) {
         printableLabel.innerHTML = `
-            <div style="width: 3in; height: 1in; padding: 0.04in 0.08in; font-family: Arial, sans-serif; border: 2px solid #000; box-sizing: border-box; background: white; display: flex; flex-direction: column;">
-                <!-- Top row: PCN | Barcode | QTY -->
-                <div style="display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 2px; padding-bottom: 1px; border-bottom: 1.5px solid #000; flex-shrink: 0;">
-                    <div style="font-weight: bold; font-size: 12px; white-space: nowrap;">PCN: ${data.pcn_number}</div>
-                    <div style="flex: 1; text-align: center;"><svg id="topBarcode" style="height: 18px;"></svg></div>
-                    <div style="text-align: right; white-space: nowrap;">
-                        <div style="font-weight: bold; font-size: 7px;">QTY</div>
-                        <div style="font-weight: bold; font-size: 13px;">${data.quantity || '0'}</div>
+            <div style="width: 3in; height: 1in; padding: 0.03in 0.06in 0.03in 0.14in; font-family: Arial, sans-serif; border: 2px solid #000; box-sizing: border-box; background: white; display: flex; flex-direction: column;">
+                <!-- Top row: PCN+QTY left | Barcode right -->
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1px; padding-bottom: 1px; border-bottom: 1.5px solid #000; flex-shrink: 0;">
+                    <div style="display: flex; flex-direction: column; justify-content: center; flex-shrink: 0; line-height: 1.15;">
+                        <div style="font-weight: bold; font-size: 12px; white-space: nowrap;">PCN: ${data.pcn_number}</div>
+                        <div style="font-weight: bold; font-size: 12px; white-space: nowrap;">QTY: ${data.quantity || '0'}</div>
                     </div>
+                    <div style="flex: 1; display: flex; justify-content: center; align-items: center; padding: 0 4px;"><svg id="topBarcode"></svg></div>
                 </div>
 
-                <!-- Details: 4-column, 2-row grid -->
-                <div style="display: grid; grid-template-columns: auto auto auto auto; gap: 0px 10px; font-size: 9px; line-height: 1.3; flex: 1; align-content: center; justify-content: start;">
-                    <div><strong>Job:</strong> ${data.item || '-'}</div>
-                    <div style="grid-column: span 2;"><strong>MPN:</strong> ${data.mpn || '-'}</div>
-                    <div><strong>DCC:</strong> ${data.date_code || '-'}</div>
-                    <div style="grid-column: span 2;"><strong>PO:</strong> ${data.po_number || '-'}</div>
-                    <div><strong>MSD:</strong> ${data.msd ? data.msd.replace('Level ', '') : '-'}</div>
+                <!-- Details: 2-column, 3-row grid -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1px 8px; font-size: 10px; line-height: 1.35; flex: 1; align-content: space-evenly; padding-top: 2px;">
+                    <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>Item No:</strong> ${data.item || '-'}</div>
+                    <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>DCC:</strong> ${data.date_code || '-'}</div>
+                    <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>MPN:</strong> ${data.mpn || '-'}</div>
+                    <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>MSD:</strong> ${data.msd ? data.msd.replace('Level ', '') : '-'}</div>
+                    <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>PO:</strong> ${data.po_number || '-'}</div>
+                    <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><strong>Vendor:</strong> ${data.vendor_name || '-'}</div>
                 </div>
             </div>
         `;
 
-        // Generate small top barcode with error handling - THICK SCANNABLE BARS
+        // Generate barcode - thicker bars + taller for reliable scanning
         setTimeout(() => {
             try {
                 JsBarcode("#topBarcode", barcodeData, {
                     format: "CODE128",
-                    width: 1,
-                    height: 18,
+                    width: 1.5,
+                    height: 25,
                     displayValue: false,
-                    margin: 0,
+                    margin: 2,
                     background: "#ffffff",
                     lineColor: "#000000"
                 });
@@ -1473,6 +1494,7 @@ function generateZPL(data) {
     const item = data.item || data.job || data.part_number || '';
     const mpn = data.mpn || '';
     const po = data.po_number || '';
+    const vendor = data.vendor_name || '';
     const qty = data.quantity || '0';
     const dc = data.date_code || '';
     const msd = data.msd || data.msd_level || '';
@@ -1494,6 +1516,7 @@ ${msd ? `^FO440,65^A0N,22,22^FDMSD: ${msd}^FS` : ''}
 
 ${mpn ? `^FO20,92^A0N,22,22^FDMPN: ${mpn}^FS` : ''}
 ${po ? `^FO440,92^A0N,22,22^FDPO: ${po}^FS` : ''}
+${vendor ? `^FO20,119^A0N,22,22^FDVendor: ${vendor}^FS` : ''}
 
 ^XZ`;
     return zpl;
