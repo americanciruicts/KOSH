@@ -46,31 +46,21 @@
         </div>
     </div>
 
-    <!-- Print Label Modal (populated dynamically by JS after successful restock) -->
-    <div class="modal fade" id="printLabelModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content border-0 shadow-lg">
-                <div class="modal-header bg-success text-white border-0">
-                    <h5 class="modal-title">
-                        <i class="bi bi-check-circle-fill me-2"></i> Restock Complete!
-                    </h5>
-                </div>
-                <div class="modal-body text-center py-4">
-                    <div class="mb-3">
-                        <i class="bi bi-printer-fill text-success" style="font-size: 3rem;"></i>
-                    </div>
-                    <h5 class="mb-2">PCN <strong id="modalPcnNumber"></strong> restocked successfully</h5>
-                    <p class="text-muted mb-1" id="modalRestockDetails"></p>
-                    <p class="text-muted mb-0">Would you like to print a label?</p>
-                </div>
-                <div class="modal-footer border-0 justify-content-center gap-2 pb-4">
-                    <button type="button" class="btn btn-outline-secondary btn-lg px-4" id="skipPrintBtn">
-                        <i class="bi bi-x-lg me-1"></i> Skip
-                    </button>
-                    <button type="button" class="btn btn-success btn-lg px-4 shadow-sm" id="printLabelBtn">
-                        <i class="bi bi-printer-fill me-2"></i> Print Label
-                    </button>
-                </div>
+    <!-- Success banner (shown inline after AJAX restock, no modal blocking) -->
+    <div id="restockSuccessBanner" class="alert alert-success border-0 shadow-sm d-none" role="alert">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+                <i class="bi bi-check-circle-fill me-2 fs-5"></i>
+                <strong>Restock Complete!</strong>
+                <span id="bannerDetails"></span>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-success btn-sm" id="bannerPrintBtn">
+                    <i class="bi bi-printer-fill me-1"></i> Print Label
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="bannerDismissBtn">
+                    <i class="bi bi-x-lg"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -389,30 +379,26 @@ function clearForm() {
 }
 
 // ── Show print label modal after successful restock ──
-function showPrintModal(pcn, item, qty, location) {
-    document.getElementById('modalPcnNumber').textContent = pcn;
-    document.getElementById('modalRestockDetails').textContent =
-        qty + ' units of ' + item + ' → ' + (location || 'original location');
+function showRestockSuccess(pcn, item, qty, location) {
+    var banner = document.getElementById('restockSuccessBanner');
+    document.getElementById('bannerDetails').textContent =
+        ' — PCN ' + pcn + ': ' + qty + ' units of ' + item + ' → ' + (location || 'original location');
 
-    var modalEl = document.getElementById('printLabelModal');
-    var modal = new bootstrap.Modal(modalEl);
-
-    document.getElementById('skipPrintBtn').onclick = function() {
-        modal.hide();
-    };
-
-    document.getElementById('printLabelBtn').onclick = function() {
+    // Print button
+    document.getElementById('bannerPrintBtn').onclick = function() {
         window.open('/print-label/' + encodeURIComponent(pcn), 'PrintLabel', 'width=800,height=600,scrollbars=yes,resizable=yes');
-        modal.hide();
     };
 
-    // Always clear form when modal closes — whether Print, Skip, or any other dismissal
-    modalEl.addEventListener('hidden.bs.modal', function handler() {
-        modalEl.removeEventListener('hidden.bs.modal', handler);
-        clearForm();
-    });
+    // Dismiss button
+    document.getElementById('bannerDismissBtn').onclick = function() {
+        banner.classList.add('d-none');
+    };
 
-    modal.show();
+    // Show banner
+    banner.classList.remove('d-none');
+
+    // Clear form immediately — no waiting for user to click anything
+    clearForm();
 }
 
 // ── Autofill part details from PCN or Item lookup ──
@@ -559,6 +545,7 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
     isSubmitting = true;
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing...';
+    document.getElementById('restockSuccessBanner').classList.add('d-none');
 
     fetch('/api/restock', {
         method: 'POST',
@@ -577,7 +564,7 @@ document.getElementById('restockForm').addEventListener('submit', function(e) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
         if (data.success) {
-            showPrintModal(data.pcn, data.item, data.quantity, data.location_to);
+            showRestockSuccess(data.pcn, data.item, data.quantity, data.location_to);
         } else {
             alert('Restock failed: ' + (data.error || 'Unknown error'));
             isSubmitting = false;
