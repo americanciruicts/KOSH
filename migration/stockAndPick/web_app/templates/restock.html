@@ -46,26 +46,11 @@
         </div>
     </div>
 
-    <!-- Success banner with print label (shown after redirect from successful restock) -->
+    <!-- Auto-open print label preview after successful restock -->
     {% if request.args.get('restocked_pcn') %}
-    <div class="alert alert-success border-0 shadow-sm" role="alert" id="restockSuccessBanner">
-        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-            <div>
-                <i class="bi bi-check-circle-fill me-2 fs-5"></i>
-                <strong>Restock Complete!</strong> PCN {{ request.args.get('restocked_pcn') }}
-            </div>
-            <div class="d-flex gap-2">
-                <button type="button" class="btn btn-success btn-sm"
-                    onclick="window.open('/print-label/{{ request.args.get('restocked_pcn') }}', 'PrintLabel', 'width=800,height=600,scrollbars=yes,resizable=yes');">
-                    <i class="bi bi-printer-fill me-1"></i> Print Label
-                </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm"
-                    onclick="this.closest('.alert').remove();">
-                    <i class="bi bi-x-lg"></i>
-                </button>
-            </div>
-        </div>
-    </div>
+    <script>
+    window.open('/print-label/{{ request.args.get("restocked_pcn") }}', 'PrintLabel', 'width=800,height=600,scrollbars=yes,resizable=yes');
+    </script>
     {% endif %}
 
     <div class="row g-4">
