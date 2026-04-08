@@ -3126,6 +3126,7 @@ def restock():
 
 
 @app.route('/api/restock', methods=['POST'])
+@csrf.exempt
 @require_auth
 def api_restock():
     """AJAX endpoint for restock — returns JSON instead of redirect."""

@@ -375,7 +375,11 @@ function clearForm() {
     isAutoFilling = false;
     isSubmitting = false;
     if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = submitBtnOriginal; }
-    pcnInput.focus();
+    // Delay focus to ensure DOM updates are done and banner is rendered
+    setTimeout(function() {
+        pcnInput.focus();
+        pcnInput.click();
+    }, 200);
 }
 
 // ── Show print label modal after successful restock ──
