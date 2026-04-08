@@ -364,8 +364,7 @@ var lastFetchedItem = null;
 
 // ── Autofill part details ──
 function fetchPartDetails(pcn, item) {
-    if (pcn && pcn === lastFetchedPcn) return;
-    if (item && !pcn && item === lastFetchedItem) return;
+    // Always fetch fresh data — no caching
 
     if (currentFetchController) currentFetchController.abort();
     currentFetchController = new AbortController();
