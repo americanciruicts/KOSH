@@ -274,6 +274,7 @@ def inject_current_time():
         'current_user': g.get('current_user', {}),
         'user_can_see_itar': g.get('user_can_see_itar', False),
         'is_admin': is_admin_user(),
+        'can_manage': can_manage_parts(),
         'cache_version': APP_START_TIME
     }
 
@@ -394,6 +395,15 @@ def is_admin_user():
     if session.get('role') == 'Admin':
         return True
     return session.get('username', '').lower() in ADMIN_AUTHORIZED_USERS
+
+# Users allowed to access ACI Numbers and Locations (in addition to admins)
+MANAGE_AUTHORIZED_USERS = {'parts@americancircuits.com'}
+
+def can_manage_parts():
+    """Check if user can access ACI Numbers and Locations (admins + Theresa)."""
+    if is_admin_user():
+        return True
+    return session.get('username', '').lower() in MANAGE_AUTHORIZED_USERS
 
 LOCATION_RANGES = [
     ('1000-1999', '1000-1999'),
@@ -6653,8 +6663,10 @@ def inventory_history_page():
 @app.route('/admin/notifications')
 @require_auth
 def admin_notifications():
-    """Admin page to view login notifications - only accessible by Admin role or authorized users."""
-    if not is_admin_user():
+    """Admin page to view activity notifications.
+    Admins see all activity. Theresa sees only James's activity."""
+    is_theresa = session.get('username', '').lower() in MANAGE_AUTHORIZED_USERS
+    if not is_admin_user() and not is_theresa:
         flash('Access denied. Admin privileges required.', 'danger')
         return redirect(url_for('index'))
 
@@ -6663,19 +6675,34 @@ def admin_notifications():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Get all activity notifications, most recent first
-        cursor.execute("""
-            SELECT id, user_id, username, full_name, action_type, description, details, created_at, seen, seen_at
-            FROM pcb_inventory."tblActivityLog"
-            ORDER BY created_at DESC
-            LIMIT 200
-        """)
+        if is_theresa and not is_admin_user():
+            # Theresa only sees James's activity
+            cursor.execute("""
+                SELECT id, user_id, username, full_name, action_type, description, details, created_at, seen, seen_at
+                FROM pcb_inventory."tblActivityLog"
+                WHERE username = 'james@americancircuits.com'
+                ORDER BY created_at DESC
+                LIMIT 200
+            """)
+        else:
+            # Admins see all activity
+            cursor.execute("""
+                SELECT id, user_id, username, full_name, action_type, description, details, created_at, seen, seen_at
+                FROM pcb_inventory."tblActivityLog"
+                ORDER BY created_at DESC
+                LIMIT 200
+            """)
         notifications = cursor.fetchall()
 
-        # Count unseen notifications
-        cursor.execute("""
-            SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
-        """)
+        if is_theresa and not is_admin_user():
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog"
+                WHERE seen = FALSE AND username = 'james@americancircuits.com'
+            """)
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
+            """)
         unseen_count = cursor.fetchone()['count']
 
         return render_template('admin_notifications.html',
@@ -6753,8 +6780,9 @@ def clear_notifications():
 @app.route('/api/admin/notification-count')
 @require_auth
 def get_notification_count():
-    """Get count of unseen login notifications for admin."""
-    if not is_admin_user():
+    """Get count of unseen notifications. Theresa sees only James's count."""
+    is_theresa = session.get('username', '').lower() in MANAGE_AUTHORIZED_USERS
+    if not is_admin_user() and not is_theresa:
         return jsonify({'count': 0})
 
     conn = None
@@ -6762,9 +6790,15 @@ def get_notification_count():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        cursor.execute("""
-            SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
-        """)
+        if is_theresa and not is_admin_user():
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog"
+                WHERE seen = FALSE AND username = 'james@americancircuits.com'
+            """)
+        else:
+            cursor.execute("""
+                SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
+            """)
         result = cursor.fetchone()
 
         return jsonify({'count': result['count']})
@@ -7812,7 +7846,10 @@ def internal_error(error):
 @app.route('/admin/locations')
 @require_auth
 def admin_locations():
-    """Page to manage warehouse locations (tblLoc). Available to all users."""
+    """Page to manage warehouse locations (tblLoc). Admin + Theresa only."""
+    if not can_manage_parts():
+        flash('Access denied. You do not have permission to manage locations.', 'danger')
+        return redirect(url_for('index'))
 
     conn = None
     try:
@@ -7845,7 +7882,10 @@ def admin_locations():
 @app.route('/admin/locations/create', methods=['POST'])
 @require_auth
 def admin_create_location():
-    """Create a new location. Available to all users."""
+    """Create a new location. Admin + Theresa only."""
+    if not can_manage_parts():
+        flash('Access denied.', 'danger')
+        return redirect(url_for('index'))
 
     location = request.form.get('location', '').strip()
     area = request.form.get('area', '').strip()
@@ -7894,7 +7934,10 @@ def admin_create_location():
 @app.route('/admin/locations/delete/<int:location_id>', methods=['POST'])
 @require_auth
 def admin_delete_location(location_id):
-    """Delete a location. Available to all users."""
+    """Delete a location. Admin + Theresa only."""
+    if not can_manage_parts():
+        flash('Access denied.', 'danger')
+        return redirect(url_for('index'))
 
     conn = None
     try:
@@ -7931,6 +7974,9 @@ def admin_delete_location(location_id):
 @require_auth
 def aci_numbers():
     """ACI Number Creator page - create consecutive ACI part numbers for non-BOM parts."""
+    if not can_manage_parts():
+        flash('Access denied. You do not have permission to access ACI Numbers.', 'danger')
+        return redirect(url_for('index'))
     response = make_response(render_template('aci_numbers.html'))
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return response
@@ -7939,6 +7985,8 @@ def aci_numbers():
 @app.route('/api/aci-numbers/next', methods=['GET'])
 @require_auth
 def api_aci_next_number():
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
     """Get the next available ACI number by scanning tblPN_List and tblACI_PartNumbers."""
     conn = None
     try:
@@ -7972,6 +8020,8 @@ def api_aci_next_number():
 @require_auth
 def api_aci_create():
     """Create one or more ACI part numbers. Expects JSON array of parts."""
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
     conn = None
     try:
         data = request.get_json()
@@ -8083,6 +8133,8 @@ def api_aci_create():
 @require_auth
 def api_aci_history():
     """Get recently created ACI numbers."""
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
     conn = None
     try:
         conn = db_manager.get_connection()
