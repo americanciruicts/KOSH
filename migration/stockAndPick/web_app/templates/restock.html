@@ -46,24 +46,27 @@
         </div>
     </div>
 
-    <!-- Success banner (shown inline after AJAX restock, no modal blocking) -->
-    <div id="restockSuccessBanner" class="alert alert-success border-0 shadow-sm d-none" role="alert">
+    <!-- Success banner with print label (shown after redirect from successful restock) -->
+    {% if request.args.get('restocked_pcn') %}
+    <div class="alert alert-success border-0 shadow-sm" role="alert" id="restockSuccessBanner">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
             <div>
                 <i class="bi bi-check-circle-fill me-2 fs-5"></i>
-                <strong>Restock Complete!</strong>
-                <span id="bannerDetails"></span>
+                <strong>Restock Complete!</strong> PCN {{ request.args.get('restocked_pcn') }}
             </div>
             <div class="d-flex gap-2">
-                <button type="button" class="btn btn-success btn-sm" id="bannerPrintBtn">
+                <button type="button" class="btn btn-success btn-sm"
+                    onclick="window.open('/print-label/{{ request.args.get('restocked_pcn') }}', 'PrintLabel', 'width=800,height=600,scrollbars=yes,resizable=yes');">
                     <i class="bi bi-printer-fill me-1"></i> Print Label
                 </button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="bannerDismissBtn">
+                <button type="button" class="btn btn-outline-secondary btn-sm"
+                    onclick="this.closest('.alert').remove();">
                     <i class="bi bi-x-lg"></i>
                 </button>
             </div>
         </div>
     </div>
+    {% endif %}
 
     <div class="row g-4">
         <!-- Restock Form -->
@@ -342,70 +345,31 @@
 </style>
 
 <script>
-const csrfToken = '{{ csrf_token() }}';
-const pcnInput = document.getElementById('{{ form.pcn.id }}');
-const itemInput = document.getElementById('{{ form.item.id }}');
-const poInput = document.getElementById('{{ form.po.id }}');
-const qtyInput = document.getElementById('{{ form.quantity.id }}');
-const locToInput = document.getElementById('{{ form.location_to.id }}');
-const locFromInput = document.getElementById('{{ form.location_from.id }}');
-const partDetailsCard = document.getElementById('partDetailsCard');
-const submitBtn = document.querySelector('#restockForm [type="submit"]');
-const submitBtnOriginal = submitBtn ? submitBtn.innerHTML : '';
+var pcnInput = document.getElementById('pcn');
+var itemInput = document.getElementById('item');
+var poInput = document.getElementById('po');
+var partDetailsCard = document.getElementById('partDetailsCard');
+var autofillTimeout = null;
+var isAutoFilling = false;
+var currentFetchController = null;
+var lastFetchedPcn = null;
+var lastFetchedItem = null;
 
-let autofillTimeout = null;
-let isAutoFilling = false;
-let currentFetchController = null;
-let lastFetchedPcn = null;
-let lastFetchedItem = null;
-let isSubmitting = false;
-
-// ── Clear form and reset all state for next scan ──
-function clearForm() {
-    pcnInput.value = '';
-    itemInput.value = '';
+// ── On page load after successful restock: clear form fields, keep locations ──
+{% if request.args.get('restocked_pcn') %}
+(function() {
+    if (pcnInput) pcnInput.value = '';
+    if (itemInput) itemInput.value = '';
     if (poInput) { poInput.removeAttribute('readonly'); poInput.value = ''; poInput.setAttribute('readonly', 'readonly'); }
-    if (qtyInput) qtyInput.value = '';
-    // Keep location fields as-is — user entered them, don't wipe
-    partDetailsCard.style.display = 'none';
-    document.getElementById('no-mfg-warning').style.display = 'none';
-    document.getElementById('mfg-available').style.display = 'none';
-    lastFetchedPcn = null;
-    lastFetchedItem = null;
-    isAutoFilling = false;
-    isSubmitting = false;
-    if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = submitBtnOriginal; }
-    // Delay focus to ensure DOM updates are done and banner is rendered
-    setTimeout(function() {
-        pcnInput.focus();
-        pcnInput.click();
-    }, 200);
-}
+    var qtyEl = document.getElementById('quantity');
+    if (qtyEl) qtyEl.value = '';
+    if (partDetailsCard) partDetailsCard.style.display = 'none';
+    window.history.replaceState({}, '', '/restock');
+    setTimeout(function() { if (pcnInput) pcnInput.focus(); }, 300);
+})();
+{% endif %}
 
-// ── Show print label modal after successful restock ──
-function showRestockSuccess(pcn, item, qty, location) {
-    var banner = document.getElementById('restockSuccessBanner');
-    document.getElementById('bannerDetails').textContent =
-        ' — PCN ' + pcn + ': ' + qty + ' units of ' + item + ' → ' + (location || 'original location');
-
-    // Print button
-    document.getElementById('bannerPrintBtn').onclick = function() {
-        window.open('/print-label/' + encodeURIComponent(pcn), 'PrintLabel', 'width=800,height=600,scrollbars=yes,resizable=yes');
-    };
-
-    // Dismiss button
-    document.getElementById('bannerDismissBtn').onclick = function() {
-        banner.classList.add('d-none');
-    };
-
-    // Show banner
-    banner.classList.remove('d-none');
-
-    // Clear form immediately — no waiting for user to click anything
-    clearForm();
-}
-
-// ── Autofill part details from PCN or Item lookup ──
+// ── Autofill part details ──
 function fetchPartDetails(pcn, item) {
     if (pcn && pcn === lastFetchedPcn) return;
     if (item && !pcn && item === lastFetchedItem) return;
@@ -519,89 +483,33 @@ itemInput.addEventListener('blur', function() {
     if (v.length >= 3) fetchPartDetails(null, v);
 });
 
-// ── AJAX form submission (no page reload) ──
+// ── Form submit: standard POST with validation ──
 document.getElementById('restockForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    if (isSubmitting) return;
-
     var pcn = pcnInput.value.trim();
     var item = itemInput.value.trim();
-    var qty = qtyInput ? qtyInput.value.trim() : '';
-    var locTo = locToInput ? locToInput.value.trim() : '';
-    var locFrom = locFromInput ? locFromInput.value : 'Count Area';
+    var qty = document.getElementById('quantity').value.trim();
 
-    if (!pcn && !item) { alert('Please enter either a PCN Number or Item Number'); return; }
-    if (!qty || parseInt(qty) <= 0) { alert('Please enter a valid quantity'); return; }
-
-    // Location validation
-    if (locTo) {
-        var stdLocs = ['receiving area', 'rec area', 'count area', 'stock room', 'mfg floor'];
-        if (!stdLocs.includes(locTo.toLowerCase()) && !/^\d{7}$/.test(locTo)) {
-            alert('Location must be exactly 7 digits (e.g. 1101101) or a standard location.');
-            locToInput.focus();
-            return;
-        }
+    if (!pcn && !item) {
+        e.preventDefault();
+        alert('Please enter either a PCN Number or Item Number');
+        return;
+    }
+    if (!qty || parseInt(qty) <= 0) {
+        e.preventDefault();
+        alert('Please enter a valid quantity');
+        return;
     }
 
+    var locTo = document.getElementById('location_to').value.trim();
     var confirmMsg = 'Are you sure you want to restock ' + qty + ' units from Count Area to ' + (locTo || 'original location') + '?';
-    if (!confirm(confirmMsg)) return;
-
-    isSubmitting = true;
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing...';
-    document.getElementById('restockSuccessBanner').classList.add('d-none');
-
-    // Safety timeout — always re-enable button after 8 seconds
-    var safetyTimer = setTimeout(function() {
-        isSubmitting = false;
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = submitBtnOriginal;
-        alert('Request timed out. Please try again.');
-    }, 8000);
-
-    fetch('/api/restock', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrfToken
-        },
-        body: JSON.stringify({
-            pcn: pcn,
-            item: item,
-            quantity: parseInt(qty),
-            location_from: locFrom,
-            location_to: locTo
-        })
-    })
-    .then(function(r) {
-        clearTimeout(safetyTimer);
-        if (!r.ok) {
-            return r.text().then(function(txt) {
-                try { return JSON.parse(txt); } catch(e) { return {success: false, error: 'Server error: ' + r.status}; }
-            });
-        }
-        return r.json();
-    })
-    .then(function(data) {
-        if (data.success) {
-            showRestockSuccess(data.pcn, data.item, data.quantity, data.location_to);
-        } else {
-            alert('Restock failed: ' + (data.error || 'Unknown error'));
-            isSubmitting = false;
-            submitBtn.disabled = false;
-            submitBtn.innerHTML = submitBtnOriginal;
-        }
-    })
-    .catch(function(err) {
-        clearTimeout(safetyTimer);
-        alert('Network error: ' + err.message);
-        isSubmitting = false;
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = submitBtnOriginal;
-    });
+    if (!confirm(confirmMsg)) {
+        e.preventDefault();
+        return;
+    }
+    // Form submits normally via POST — Flask handles the rest
 });
 
-// ── Location 7-digit enforcement on typing ──
+// ── Location 7-digit enforcement ──
 document.querySelectorAll('.location-input').forEach(function(input) {
     input.addEventListener('input', function() {
         var val = this.value;
@@ -610,6 +518,8 @@ document.querySelectorAll('.location-input').forEach(function(input) {
 });
 
 // ── Focus PCN on page load ──
+{% if not request.args.get('restocked_pcn') %}
 pcnInput.focus();
+{% endif %}
 </script>
 {% endblock %}
