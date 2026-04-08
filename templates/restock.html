@@ -46,22 +46,34 @@
         </div>
     </div>
 
-    <!-- Print Label Button (shows after successful restock) -->
-    {% if request.args.get('restocked_pcn') %}
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="alert alert-success alert-persistent border-0 shadow-sm text-center py-3">
-                <i class="bi bi-check-circle-fill fs-4 me-2"></i>
-                <strong>Restock Complete!</strong> PCN <strong>{{ request.args.get('restocked_pcn') }}</strong>
-                <button type="button"
-                        onclick="window.open('{{ url_for('print_label', pcn_number=request.args.get('restocked_pcn')) }}', 'PrintLabel', 'width=800,height=600,scrollbars=yes,resizable=yes'); return false;"
-                        class="btn btn-success shadow-sm ms-3">
-                    <i class="bi bi-printer-fill me-2"></i> Print Label
-                </button>
+    <!-- Print Label Modal (populated dynamically by JS after successful restock) -->
+    <div class="modal fade" id="printLabelModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-success text-white border-0">
+                    <h5 class="modal-title">
+                        <i class="bi bi-check-circle-fill me-2"></i> Restock Complete!
+                    </h5>
+                </div>
+                <div class="modal-body text-center py-4">
+                    <div class="mb-3">
+                        <i class="bi bi-printer-fill text-success" style="font-size: 3rem;"></i>
+                    </div>
+                    <h5 class="mb-2">PCN <strong id="modalPcnNumber"></strong> restocked successfully</h5>
+                    <p class="text-muted mb-1" id="modalRestockDetails"></p>
+                    <p class="text-muted mb-0">Would you like to print a label?</p>
+                </div>
+                <div class="modal-footer border-0 justify-content-center gap-2 pb-4">
+                    <button type="button" class="btn btn-outline-secondary btn-lg px-4" id="skipPrintBtn">
+                        <i class="bi bi-x-lg me-1"></i> Skip
+                    </button>
+                    <button type="button" class="btn btn-success btn-lg px-4 shadow-sm" id="printLabelBtn">
+                        <i class="bi bi-printer-fill me-2"></i> Print Label
+                    </button>
+                </div>
             </div>
         </div>
     </div>
-    {% endif %}
 
     <div class="row g-4">
         <!-- Restock Form -->
@@ -184,7 +196,7 @@
                                     <span class="input-group-text bg-success text-white">
                                         <i class="bi bi-geo-alt-fill"></i>
                                     </span>
-                                    {{ form.location_to(class="form-control form-control-lg border-2", placeholder="Enter destination location") }}
+                                    {{ form.location_to(class="form-control form-control-lg border-2 location-input", placeholder="e.g., 1101101", inputmode="numeric") }}
                                 </div>
                                 {% if form.location_to.errors %}
                                     <div class="invalid-feedback d-block">
@@ -194,7 +206,7 @@
                                     </div>
                                 {% endif %}
                                 <small class="text-muted">
-                                    <i class="bi bi-geo-alt"></i> Type the destination location
+                                    <i class="bi bi-geo-alt"></i> 7-digit location code
                                 </small>
                             </div>
                         </div>
@@ -340,177 +352,170 @@
 </style>
 
 <script>
-// Auto-clear form after successful submission
-{% with messages = get_flashed_messages(with_categories=true) %}
-  {% if messages %}
-    {% for category, message in messages %}
-      {% if category == 'success' %}
-        // Form will be cleared automatically by redirect
-      {% endif %}
-    {% endfor %}
-  {% endif %}
-{% endwith %}
-
-// Autofill functionality
-let autofillTimeout = null;
-let isAutoFilling = false;
-let currentFetchController = null; // AbortController for cancelling stale requests
-let lastFetchedPcn = null; // Track what we already fetched to avoid duplicates
-let lastFetchedItem = null;
+const csrfToken = '{{ csrf_token() }}';
 const pcnInput = document.getElementById('{{ form.pcn.id }}');
 const itemInput = document.getElementById('{{ form.item.id }}');
 const poInput = document.getElementById('{{ form.po.id }}');
+const qtyInput = document.getElementById('{{ form.quantity.id }}');
+const locToInput = document.getElementById('{{ form.location_to.id }}');
+const locFromInput = document.getElementById('{{ form.location_from.id }}');
 const partDetailsCard = document.getElementById('partDetailsCard');
+const submitBtn = document.querySelector('#restockForm [type="submit"]');
+const submitBtnOriginal = submitBtn ? submitBtn.innerHTML : '';
 
-// Function to fetch and display part details
+let autofillTimeout = null;
+let isAutoFilling = false;
+let currentFetchController = null;
+let lastFetchedPcn = null;
+let lastFetchedItem = null;
+let isSubmitting = false;
+
+// ── Clear form and reset all state for next scan ──
+function clearForm() {
+    pcnInput.value = '';
+    itemInput.value = '';
+    if (poInput) { poInput.removeAttribute('readonly'); poInput.value = ''; poInput.setAttribute('readonly', 'readonly'); }
+    if (qtyInput) qtyInput.value = '';
+    if (locToInput) locToInput.value = '';
+    partDetailsCard.style.display = 'none';
+    document.getElementById('no-mfg-warning').style.display = 'none';
+    document.getElementById('mfg-available').style.display = 'none';
+    lastFetchedPcn = null;
+    lastFetchedItem = null;
+    isAutoFilling = false;
+    isSubmitting = false;
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = submitBtnOriginal; }
+    pcnInput.focus();
+}
+
+// ── Show print label modal after successful restock ──
+function showPrintModal(pcn, item, qty, location) {
+    document.getElementById('modalPcnNumber').textContent = pcn;
+    document.getElementById('modalRestockDetails').textContent =
+        qty + ' units of ' + item + ' → ' + (location || 'original location');
+
+    var modalEl = document.getElementById('printLabelModal');
+    var modal = new bootstrap.Modal(modalEl);
+
+    document.getElementById('skipPrintBtn').onclick = function() {
+        modal.hide();
+    };
+
+    document.getElementById('printLabelBtn').onclick = function() {
+        window.open('/print-label/' + encodeURIComponent(pcn), 'PrintLabel', 'width=800,height=600,scrollbars=yes,resizable=yes');
+        modal.hide();
+    };
+
+    // Always clear form when modal closes — whether Print, Skip, or any other dismissal
+    modalEl.addEventListener('hidden.bs.modal', function handler() {
+        modalEl.removeEventListener('hidden.bs.modal', handler);
+        clearForm();
+    });
+
+    modal.show();
+}
+
+// ── Autofill part details from PCN or Item lookup ──
 function fetchPartDetails(pcn, item) {
-    // Skip if we already fetched this exact combination
     if (pcn && pcn === lastFetchedPcn) return;
     if (item && !pcn && item === lastFetchedItem) return;
 
-    // Cancel any in-flight request
-    if (currentFetchController) {
-        currentFetchController.abort();
-    }
+    if (currentFetchController) currentFetchController.abort();
     currentFetchController = new AbortController();
 
-    if (!pcn && !item) {
-        partDetailsCard.style.display = 'none';
-        return;
-    }
+    if (!pcn && !item) { partDetailsCard.style.display = 'none'; return; }
 
-    // Build query parameters
-    const params = new URLSearchParams();
+    var params = new URLSearchParams();
     if (pcn) params.append('pcn', pcn);
     if (item) params.append('item', item);
 
-    // Show loading state
     partDetailsCard.style.display = 'block';
     document.getElementById('detail-pcn').textContent = 'Loading...';
 
-    // Fetch part details with cache-busting and abort signal
-    fetch(`/api/get-part-details?${params.toString()}&_t=${Date.now()}`, {
+    fetch('/api/get-part-details?' + params.toString() + '&_t=' + Date.now(), {
         signal: currentFetchController.signal
     })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                const partData = data.data;
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            var d = data.data;
+            if (pcn) lastFetchedPcn = pcn;
+            if (item && !pcn) lastFetchedItem = item;
 
-                // Track what we fetched
-                if (pcn) lastFetchedPcn = pcn;
-                if (item && !pcn) lastFetchedItem = item;
+            document.getElementById('detail-pcn').textContent = d.pcn;
+            document.getElementById('detail-item').textContent = d.item;
+            document.getElementById('detail-mpn').textContent = d.mpn || '-';
+            document.getElementById('detail-dc').textContent = d.dc || '-';
+            document.getElementById('detail-location').textContent = d.location_to || '-';
+            document.getElementById('detail-onhand').textContent = d.onhandqty.toLocaleString();
+            document.getElementById('detail-mfg').textContent = d.mfg_qty.toLocaleString();
+            document.getElementById('available-qty').textContent = d.mfg_qty.toLocaleString();
 
-                // Populate part details card
-                document.getElementById('detail-pcn').textContent = partData.pcn;
-                document.getElementById('detail-item').textContent = partData.item;
-                document.getElementById('detail-mpn').textContent = partData.mpn || '-';
-                document.getElementById('detail-dc').textContent = partData.dc || '-';
-                document.getElementById('detail-location').textContent = partData.location_to || '-';
-                document.getElementById('detail-onhand').textContent = partData.onhandqty.toLocaleString();
-                document.getElementById('detail-mfg').textContent = partData.mfg_qty.toLocaleString();
-                document.getElementById('available-qty').textContent = partData.mfg_qty.toLocaleString();
+            isAutoFilling = true;
+            if (pcn) itemInput.value = d.item || '';
+            else if (item) pcnInput.value = d.pcn || '';
+            if (poInput) { poInput.removeAttribute('readonly'); poInput.value = d.po || ''; poInput.setAttribute('readonly', 'readonly'); }
+            setTimeout(function() { isAutoFilling = false; }, 100);
 
-                // Auto-fill ALL form fields together
-                isAutoFilling = true;
-
-                // Fill item or pcn (whichever user didn't type)
-                if (pcn) {
-                    itemInput.value = partData.item || '';
-                } else if (item) {
-                    pcnInput.value = partData.pcn || '';
-                }
-
-                // Always fill PO number
-                if (poInput) {
-                    poInput.removeAttribute('readonly');
-                    poInput.value = partData.po || '';
-                    poInput.setAttribute('readonly', 'readonly');
-                }
-
-                setTimeout(() => { isAutoFilling = false; }, 100);
-
-                // Show/hide warnings
-                if (partData.has_mfg_qty) {
-                    document.getElementById('no-mfg-warning').style.display = 'none';
-                    document.getElementById('mfg-available').style.display = 'block';
-                } else {
-                    document.getElementById('no-mfg-warning').style.display = 'block';
-                    document.getElementById('mfg-available').style.display = 'none';
-                }
-
-                partDetailsCard.style.display = 'block';
+            if (d.has_mfg_qty) {
+                document.getElementById('no-mfg-warning').style.display = 'none';
+                document.getElementById('mfg-available').style.display = 'block';
             } else {
-                partDetailsCard.style.display = 'none';
-                // Clear auto-filled fields on error
-                if (pcn) itemInput.value = '';
-                if (poInput) {
-                    poInput.removeAttribute('readonly');
-                    poInput.value = '';
-                    poInput.setAttribute('readonly', 'readonly');
-                }
-                console.error('Error fetching part details:', data.error);
+                document.getElementById('no-mfg-warning').style.display = 'block';
+                document.getElementById('mfg-available').style.display = 'none';
             }
-        })
-        .catch(error => {
-            if (error.name === 'AbortError') return; // Ignore cancelled requests
-            console.error('Error fetching part details:', error);
+            partDetailsCard.style.display = 'block';
+        } else {
             partDetailsCard.style.display = 'none';
-        });
+            if (pcn) itemInput.value = '';
+            if (poInput) { poInput.removeAttribute('readonly'); poInput.value = ''; poInput.setAttribute('readonly', 'readonly'); }
+        }
+    })
+    .catch(function(err) {
+        if (err.name === 'AbortError') return;
+        partDetailsCard.style.display = 'none';
+    });
 }
 
-// PCN input - debounced typing
+// ── PCN input events ──
 pcnInput.addEventListener('input', function() {
     if (isAutoFilling) return;
     clearTimeout(autofillTimeout);
-    lastFetchedPcn = null; // Reset so blur/enter can re-fetch
-    const pcnValue = this.value.trim();
-
-    if (pcnValue.length >= 3) {
-        autofillTimeout = setTimeout(() => {
-            fetchPartDetails(pcnValue, null);
-        }, 300);
+    lastFetchedPcn = null;
+    var v = this.value.trim();
+    if (v.length >= 3) {
+        autofillTimeout = setTimeout(function() { fetchPartDetails(v, null); }, 300);
     } else {
         partDetailsCard.style.display = 'none';
-        // Clear dependent fields when PCN is cleared
         itemInput.value = '';
         if (poInput) { poInput.removeAttribute('readonly'); poInput.value = ''; poInput.setAttribute('readonly', 'readonly'); }
     }
 });
 
-// PCN blur - immediate fetch (barcode scanner fires input fast then moves focus)
 pcnInput.addEventListener('blur', function() {
     clearTimeout(autofillTimeout);
-    const pcnValue = this.value.trim();
-    if (pcnValue.length >= 3) {
-        fetchPartDetails(pcnValue, null);
-    }
+    var v = this.value.trim();
+    if (v.length >= 3) fetchPartDetails(v, null);
 });
 
-// PCN Enter key - immediate fetch (barcode scanners send Enter after data)
 pcnInput.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') {
         e.preventDefault();
         clearTimeout(autofillTimeout);
-        lastFetchedPcn = null; // Force re-fetch on explicit Enter
-        const pcnValue = this.value.trim();
-        if (pcnValue.length >= 3) {
-            fetchPartDetails(pcnValue, null);
-        }
+        lastFetchedPcn = null;
+        var v = this.value.trim();
+        if (v.length >= 3) fetchPartDetails(v, null);
     }
 });
 
-// Item input - debounced typing
+// ── Item input events ──
 itemInput.addEventListener('input', function() {
     if (isAutoFilling) return;
     clearTimeout(autofillTimeout);
     lastFetchedItem = null;
-    const itemValue = this.value.trim();
-
-    if (itemValue.length >= 3) {
-        autofillTimeout = setTimeout(() => {
-            fetchPartDetails(null, itemValue);
-        }, 300);
+    var v = this.value.trim();
+    if (v.length >= 3) {
+        autofillTimeout = setTimeout(function() { fetchPartDetails(null, v); }, 300);
     } else {
         partDetailsCard.style.display = 'none';
         pcnInput.value = '';
@@ -518,69 +523,85 @@ itemInput.addEventListener('input', function() {
     }
 });
 
-// Item blur - immediate fetch
 itemInput.addEventListener('blur', function() {
     clearTimeout(autofillTimeout);
-    const itemValue = this.value.trim();
-    if (itemValue.length >= 3) {
-        fetchPartDetails(null, itemValue);
-    }
+    var v = this.value.trim();
+    if (v.length >= 3) fetchPartDetails(null, v);
 });
 
-// CRITICAL: Prevent double-submission
-let isRestockSubmitting = false;
-
-// Form validation
+// ── AJAX form submission (no page reload) ──
 document.getElementById('restockForm').addEventListener('submit', function(e) {
-    // CRITICAL: Block duplicate submissions
-    if (isRestockSubmitting) {
-        e.preventDefault();
-        console.warn('Restock already submitting, ignoring duplicate submission');
-        return false;
+    e.preventDefault();
+    if (isSubmitting) return;
+
+    var pcn = pcnInput.value.trim();
+    var item = itemInput.value.trim();
+    var qty = qtyInput ? qtyInput.value.trim() : '';
+    var locTo = locToInput ? locToInput.value.trim() : '';
+    var locFrom = locFromInput ? locFromInput.value : 'Count Area';
+
+    if (!pcn && !item) { alert('Please enter either a PCN Number or Item Number'); return; }
+    if (!qty || parseInt(qty) <= 0) { alert('Please enter a valid quantity'); return; }
+
+    // Location validation
+    if (locTo) {
+        var stdLocs = ['receiving area', 'rec area', 'count area', 'stock room', 'mfg floor'];
+        if (!stdLocs.includes(locTo.toLowerCase()) && !/^\d{7}$/.test(locTo)) {
+            alert('Location must be exactly 7 digits (e.g. 1101101) or a standard location.');
+            locToInput.focus();
+            return;
+        }
     }
 
-    const pcn = document.getElementById('{{ form.pcn.id }}').value;
-    const item = document.getElementById('{{ form.item.id }}').value;
-    const quantity = document.getElementById('{{ form.quantity.id }}').value;
+    var confirmMsg = 'Are you sure you want to restock ' + qty + ' units from Count Area to ' + (locTo || 'original location') + '?';
+    if (!confirm(confirmMsg)) return;
 
-    if (!pcn && !item) {
-        e.preventDefault();
-        alert('Please enter either a PCN Number or Item Number');
-        return false;
-    }
+    isSubmitting = true;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing...';
 
-    if (!quantity || quantity <= 0) {
-        e.preventDefault();
-        alert('Please enter a valid quantity');
-        return false;
-    }
-
-    // Allow any quantity for physical count corrections
-    // No MFG quantity validation - users can adjust based on actual counts
-
-    // Confirmation dialog
-    const location = document.getElementById('{{ form.location_to.id }}').value || 'default location';
-    const confirmMsg = `Are you sure you want to restock ${quantity} units from Count Area to ${location}?`;
-    if (!confirm(confirmMsg)) {
-        e.preventDefault();
-        return false;
-    }
-
-    // CRITICAL: Mark as submitting and disable button
-    isRestockSubmitting = true;
-    const submitBtn = this.querySelector('[type="submit"]');
-    if (submitBtn) {
-        submitBtn.disabled = true;
-        const originalText = submitBtn.innerHTML;
-        submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
-
-        // Safety: Re-enable after 10 seconds in case redirect fails
-        setTimeout(() => {
-            isRestockSubmitting = false;
+    fetch('/api/restock', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+        },
+        body: JSON.stringify({
+            pcn: pcn,
+            item: item,
+            quantity: parseInt(qty),
+            location_from: locFrom,
+            location_to: locTo
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.success) {
+            showPrintModal(data.pcn, data.item, data.quantity, data.location_to);
+        } else {
+            alert('Restock failed: ' + (data.error || 'Unknown error'));
+            isSubmitting = false;
             submitBtn.disabled = false;
-            submitBtn.innerHTML = originalText;
-        }, 10000);
-    }
+            submitBtn.innerHTML = submitBtnOriginal;
+        }
+    })
+    .catch(function(err) {
+        alert('Network error: ' + err.message);
+        isSubmitting = false;
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = submitBtnOriginal;
+    });
 });
+
+// ── Location 7-digit enforcement on typing ──
+document.querySelectorAll('.location-input').forEach(function(input) {
+    input.addEventListener('input', function() {
+        var val = this.value;
+        if (/^\d+$/.test(val) && val.length > 7) this.value = val.slice(0, 7);
+    });
+});
+
+// ── Focus PCN on page load ──
+pcnInput.focus();
 </script>
 {% endblock %}
