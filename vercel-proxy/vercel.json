@@ -2,7 +2,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "https://limited-economics-api-normal.trycloudflare.com/$1"
+      "dest": "https://tale-organ-setup-walking.trycloudflare.com/$1"
     }
   ]
 }
