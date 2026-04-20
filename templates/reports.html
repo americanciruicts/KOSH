@@ -82,7 +82,7 @@
 
         /* Add report title */
         body::before {
-            content: "PCB Inventory Report";
+            content: "Warehouse Inventory Report";
             display: block;
             font-size: 24px;
             font-weight: bold;
@@ -229,7 +229,7 @@
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0">
-                    <i class="bi bi-bar-chart"></i> Inventory Summary by Type & Location
+                    <i class="bi bi-bar-chart"></i> Warehouse Inventory Summary by Location
                 </h5>
             </div>
             <div class="card-body">
@@ -238,11 +238,11 @@
                         <table class="table table-striped">
                             <thead class="table-dark">
                                 <tr>
-                                    <th>PCB Type</th>
                                     <th>Location</th>
-                                    <th>Jobs Count</th>
+                                    <th>Unique Items</th>
+                                    <th>Records</th>
                                     <th>Total Quantity</th>
-                                    <th>Average Qty/Job</th>
+                                    <th>Avg Qty/Record</th>
                                     <th>% of Total</th>
                                 </tr>
                             </thead>
@@ -250,26 +250,21 @@
                                 {% set total_qty = summary | sum(attribute='total_quantity') %}
                                 {% for item in summary %}
                                 <tr>
-                                    <td>
-                                        <span class="badge bg-{% if item.pcb_type == 'Bare' %}secondary{% elif item.pcb_type == 'Partial' %}warning{% elif item.pcb_type == 'Completed' %}info{% else %}success{% endif %} me-2">
-                                            {{ item.pcb_type }}
-                                        </span>
-                                    </td>
                                     <td><code>{{ item.location }}</code></td>
-                                    <td>{{ item.job_count }}</td>
+                                    <td>{{ item.item_count }}</td>
+                                    <td>{{ item.record_count }}</td>
                                     <td><strong>{{ '{:,}'.format(item.total_quantity) }}</strong></td>
                                     <td>{{ '{:.1f}'.format(item.average_quantity) }}</td>
                                     <td>
                                         <div class="d-flex align-items-center">
                                             <div class="progress me-2" style="width: 100px; height: 20px;">
-                                                {% set percentage = (item.total_quantity / total_qty * 100) if total_qty > 0 else 0 %}
-                                                <div class="progress-bar" role="progressbar" 
-                                                     style="width: {{ percentage }}%" 
-                                                     aria-valuenow="{{ percentage }}" 
+                                                <div class="progress-bar" role="progressbar"
+                                                     style="width: {{ item.percentage }}%"
+                                                     aria-valuenow="{{ item.percentage }}"
                                                      aria-valuemin="0" aria-valuemax="100">
                                                 </div>
                                             </div>
-                                            <span class="small">{{ '{:.1f}%'.format(percentage) }}</span>
+                                            <span class="small">{{ '{:.1f}%'.format(item.percentage) }}</span>
                                         </div>
                                     </td>
                                 </tr>
@@ -277,10 +272,11 @@
                             </tbody>
                             <tfoot class="table-light">
                                 <tr>
-                                    <td colspan="2"><strong>Total:</strong></td>
-                                    <td><strong>{{ summary | sum(attribute='job_count') }}</strong></td>
+                                    <td><strong>Total:</strong></td>
+                                    <td><strong>{{ summary | sum(attribute='item_count') }}</strong></td>
+                                    <td><strong>{{ summary | sum(attribute='record_count') }}</strong></td>
                                     <td><strong>{{ '{:,}'.format(total_qty) }}</strong></td>
-                                    <td><strong>{{ '{:.1f}'.format((summary | sum(attribute='total_quantity')) / (summary | sum(attribute='job_count')) if (summary | sum(attribute='job_count')) > 0 else 0) }}</strong></td>
+                                    <td></td>
                                     <td><strong>100.0%</strong></td>
                                 </tr>
                             </tfoot>
@@ -300,34 +296,25 @@
 <!-- Quick Stats Cards -->
 {% if summary %}
 <div class="row mb-4">
-    <div class="col-md-3">
+    <div class="col-md-4">
         <div class="card text-center bg-primary text-white">
             <div class="card-body">
-                <i class="bi bi-briefcase display-4"></i>
-                <h4 class="mt-2">{{ summary | map(attribute='job_count') | sum }}</h4>
-                <p class="card-text">Total Jobs</p>
+                <i class="bi bi-box-seam display-4"></i>
+                <h4 class="mt-2">{{ summary | map(attribute='item_count') | sum }}</h4>
+                <p class="card-text">Total Items</p>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-4">
         <div class="card text-center bg-success text-white">
             <div class="card-body">
-                <i class="bi bi-box-seam display-4"></i>
+                <i class="bi bi-stack display-4"></i>
                 <h4 class="mt-2">{{ '{:,}'.format(summary | map(attribute='total_quantity') | sum) }}</h4>
                 <p class="card-text">Total Quantity</p>
             </div>
         </div>
     </div>
-    <div class="col-md-3">
-        <div class="card text-center bg-info text-white">
-            <div class="card-body">
-                <i class="bi bi-cpu display-4"></i>
-                <h4 class="mt-2">{{ summary | map(attribute='pcb_type') | unique | list | length }}</h4>
-                <p class="card-text">PCB Types</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
+    <div class="col-md-4">
         <div class="card text-center bg-warning text-white">
             <div class="card-body">
                 <i class="bi bi-geo-alt display-4"></i>
@@ -380,35 +367,29 @@
                                 <tr>
                                     <th>Timestamp</th>
                                     <th>Operation</th>
-                                    <th>Job</th>
-                                    <th>PCB Type</th>
-                                    <th>Quantity Change</th>
-                                    <th>New Qty</th>
-                                    <th>Location</th>
+                                    <th>Item</th>
+                                    <th>PCN</th>
+                                    <th>Quantity</th>
+                                    <th>From</th>
+                                    <th>To</th>
+                                    <th>User</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {% for entry in audit_log %}
                                 <tr>
-                                    <td class="text-muted small">
-                                        {{ entry.timestamp if entry.timestamp else 'N/A' }}
-                                    </td>
+                                    <td class="text-muted small">{{ entry.timestamp or 'N/A' }}</td>
                                     <td>
-                                        <span class="badge {% if entry.operation == 'STOCK' %}bg-success{% else %}bg-danger{% endif %}">
+                                        <span class="badge {% if entry.operation == 'STOCK' %}bg-success{% elif entry.operation == 'PICK' %}bg-danger{% elif entry.operation == 'RESTOCK' %}bg-warning{% else %}bg-secondary{% endif %}">
                                             {{ entry.operation }}
                                         </span>
                                     </td>
                                     <td><strong>{{ entry.job }}</strong></td>
-                                    <td>
-                                        <span class="badge bg-{% if entry.pcb_type == 'Bare' %}secondary{% elif entry.pcb_type == 'Partial' %}warning{% elif entry.pcb_type == 'Completed' %}info{% else %}success{% endif %} badge-sm">
-                                            {{ entry.pcb_type }}
-                                        </span>
-                                    </td>
-                                    <td class="{% if entry.quantity_change > 0 %}text-success{% else %}text-danger{% endif %}">
-                                        {{ '+' if entry.quantity_change > 0 else '' }}{{ entry.quantity_change }}
-                                    </td>
-                                    <td>{{ entry.new_quantity }}</td>
-                                    <td><code class="small">{{ entry.loc_to or entry.loc_from or 'N/A' }}</code></td>
+                                    <td><code class="small">{{ entry.pcn }}</code></td>
+                                    <td>{{ entry.quantity_change }}</td>
+                                    <td><code class="small">{{ entry.loc_from or '-' }}</code></td>
+                                    <td><code class="small">{{ entry.loc_to or '-' }}</code></td>
+                                    <td class="small text-muted">{{ entry.userid or '-' }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -612,8 +593,8 @@ function displayExpirationReport(stats, totalItems, totalQuantity) {
                 <thead class="table-light">
                     <tr>
                         <th>Status</th>
-                        <th>Job</th>
-                        <th>PCB Type</th>
+                        <th>Item</th>
+                        <th>MPN</th>
                         <th>Quantity</th>
                         <th>Date Code</th>
                         <th>Expiration Info</th>
@@ -628,7 +609,7 @@ function displayExpirationReport(stats, totalItems, totalQuantity) {
                 <tr class="table-danger">
                     <td><span class="badge bg-danger"><i class="bi bi-x-circle"></i> EXPIRED</span></td>
                     <td><strong>${item.job}</strong></td>
-                    <td><span class="badge bg-secondary">${item.pcb_type}</span></td>
+                    <td><code class="small">${item.pcb_type || '-'}</code></td>
                     <td>${item.qty.toLocaleString()}</td>
                     <td><code>${item.dc || 'N/A'}</code></td>
                     <td>${item.display_text || 'Unknown'}</td>
@@ -642,7 +623,7 @@ function displayExpirationReport(stats, totalItems, totalQuantity) {
                 <tr class="table-warning">
                     <td><span class="badge bg-warning text-dark"><i class="bi bi-exclamation-circle"></i> CRITICAL</span></td>
                     <td><strong>${item.job}</strong></td>
-                    <td><span class="badge bg-secondary">${item.pcb_type}</span></td>
+                    <td><code class="small">${item.pcb_type || '-'}</code></td>
                     <td>${item.qty.toLocaleString()}</td>
                     <td><code>${item.dc || 'N/A'}</code></td>
                     <td>${item.display_text || 'Unknown'}</td>
@@ -815,13 +796,13 @@ function exportToCSV() {
 }
 
 function convertToCSV(data) {
-    const header = ['Job', 'PCB Type', 'Quantity', 'Location', 'Created At', 'Updated At'];
+    const header = ['Item', 'MPN', 'PCN', 'Quantity', 'Location', 'Updated At'];
     const rows = data.map(item => [
         item.job,
-        item.pcb_type,
+        item.pcb_type || '',
+        item.pcn || '',
         item.qty,
         item.location,
-        item.created_at,
         item.updated_at
     ]);
     

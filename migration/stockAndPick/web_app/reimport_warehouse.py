@@ -91,18 +91,92 @@ def import_to_postgresql(records):
                 mfg_qty, qty_old, msd, po, cost
             ))
 
-        # Bulk insert using execute_values for better performance
-        insert_query = """
-            INSERT INTO pcb_inventory."tblWhse_Inventory"
-            (item, pcn, mpn, dc, onhandqty, loc_to, mfg_qty, qty_old, msd, po, cost)
-            VALUES %s
-        """
+        # Idempotent re-import: for each row from Access
+        #   - if (pcn, item, mpn) matches an existing row -> UPDATE quantities/locations
+        #   - if PCN exists with a DIFFERENT (item, mpn)  -> SKIP + log a conflict
+        #   - if PCN is new                                -> INSERT
+        # This prevents the old blind bulk-insert from creating duplicate rows
+        # every time this script is re-run (root cause of the 92 duplicate PCN
+        # groups discovered on 2026-04-16, including PCN 45061).
+        print(f"Importing {len(insert_data)} records to PostgreSQL (idempotent mode)...")
+        inserted = updated = skipped_conflict = 0
+        conflicts = []
 
-        print(f"Importing {len(insert_data)} records to PostgreSQL...")
-        execute_values(cur, insert_query, insert_data, page_size=100)
+        def _norm(v):
+            return (v or '').strip().lower()
+
+        for row in insert_data:
+            item, pcn, mpn, dc, onhandqty, loc_to, mfg_qty, qty_old, msd, po, cost = row
+
+            if not pcn:
+                # Can't reason about a row with no PCN — fall back to a plain insert
+                cur.execute("""
+                    INSERT INTO pcb_inventory."tblWhse_Inventory"
+                    (item, pcn, mpn, dc, onhandqty, loc_to, mfg_qty, qty_old, msd, po, cost)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, row)
+                inserted += 1
+                continue
+
+            cur.execute("""
+                SELECT id, item, mpn
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE pcn::text = %s
+            """, (str(pcn),))
+            existing_rows = cur.fetchall()
+
+            if not existing_rows:
+                cur.execute("""
+                    INSERT INTO pcb_inventory."tblWhse_Inventory"
+                    (item, pcn, mpn, dc, onhandqty, loc_to, mfg_qty, qty_old, msd, po, cost)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, row)
+                inserted += 1
+                continue
+
+            # Does any existing row match this (item, mpn)?
+            match_id = None
+            for ex_id, ex_item, ex_mpn in existing_rows:
+                if _norm(ex_item) == _norm(item) and (
+                    not _norm(ex_mpn) or not _norm(mpn) or _norm(ex_mpn) == _norm(mpn)
+                ):
+                    match_id = ex_id
+                    break
+
+            if match_id is not None:
+                # Do NOT overwrite onhandqty, mfg_qty or loc_to from Access.
+                # Access does NOT decrement OnHandQty on PICK, so its value is
+                # stale for any part that KOSH has picked. KOSH's transaction
+                # log + the on-hand reconcile thread are the source of truth
+                # for live quantities and locations. Access only contributes
+                # static metadata (item, mpn, dc, msd, po, cost, qty_old).
+                cur.execute("""
+                    UPDATE pcb_inventory."tblWhse_Inventory"
+                    SET item = %s, mpn = %s, dc = %s,
+                        qty_old = %s, msd = %s, po = %s, cost = %s,
+                        migrated_at = CURRENT_TIMESTAMP
+                    WHERE id = %s
+                """, (item, mpn, dc, qty_old, msd, po, cost, match_id))
+                updated += 1
+            else:
+                # PCN in use by a different part — do NOT create a duplicate row.
+                skipped_conflict += 1
+                conflicts.append({
+                    'pcn': pcn,
+                    'incoming_item': item, 'incoming_mpn': mpn,
+                    'existing': [(ex_item, ex_mpn) for _, ex_item, ex_mpn in existing_rows],
+                })
 
         conn.commit()
-        print(f"Successfully imported {len(insert_data)} records")
+        print(f"Re-import summary: inserted={inserted}, updated={updated}, "
+              f"skipped_pcn_conflicts={skipped_conflict}")
+        if conflicts:
+            print("PCN conflicts (rows NOT imported to avoid duplication):")
+            for c in conflicts[:50]:
+                print(f"  PCN {c['pcn']}: incoming {c['incoming_item']}/{c['incoming_mpn']} "
+                      f"vs existing {c['existing']}")
+            if len(conflicts) > 50:
+                print(f"  ... and {len(conflicts) - 50} more conflicts")
 
         # Verify import
         cur.execute('SELECT COUNT(*) FROM pcb_inventory."tblWhse_Inventory"')

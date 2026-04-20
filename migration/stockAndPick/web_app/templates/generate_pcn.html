@@ -218,6 +218,7 @@
                                 <div class="mb-3">
                                     <label for="mpnInput" class="form-label">
                                         <i class="bi bi-gear-wide-connected me-1"></i> MPN
+                                        <span class="badge bg-danger">Required</span>
                                     </label>
                                     <select class="form-select form-select-lg" id="mpnInput" name="mpn">
                                         <option value="">Select MPN or type custom...</option>
@@ -239,8 +240,9 @@
                                 <div class="mb-3">
                                     <label for="poNumberInput" class="form-label">
                                         <i class="bi bi-receipt-cutoff me-1"></i> PO Number
+                                        <span class="badge bg-danger">Required</span>
                                     </label>
-                                    <input type="text" class="form-control" id="poNumberInput" name="po_number"
+                                    <input type="text" class="form-control" id="poNumberInput" name="po_number" required
                                            placeholder="e.g., PO-2024-001">
                                     <div class="form-text text-muted">
                                         <i class="bi bi-arrow-right"></i> Purchase Order Number
@@ -251,8 +253,9 @@
                                 <div class="mb-3">
                                     <label for="vendorNameInput" class="form-label">
                                         <i class="bi bi-building me-1"></i> Vendor Name
+                                        <span class="badge bg-danger">Required</span>
                                     </label>
-                                    <input type="text" class="form-control" id="vendorNameInput" name="vendor_name"
+                                    <input type="text" class="form-control" id="vendorNameInput" name="vendor_name" required
                                            placeholder="e.g., Acme Corp">
                                     <div class="form-text text-muted">
                                         <i class="bi bi-arrow-right"></i> Supplier / Vendor Name
@@ -273,9 +276,10 @@
                                 <div class="mb-3">
                                     <label for="quantityInput" class="form-label">
                                         <i class="bi bi-123 me-1"></i> Quantity
+                                        <span class="badge bg-danger">Required</span>
                                     </label>
                                     <div class="input-group">
-                                        <input type="number" class="form-control" id="quantityInput" name="quantity" min="1"
+                                        <input type="number" class="form-control" id="quantityInput" name="quantity" min="1" required
                                                placeholder="e.g., 100">
                                         <span class="input-group-text">units</span>
                                     </div>
@@ -287,8 +291,9 @@
                                 <div class="mb-3">
                                     <label for="dateCodeInput" class="form-label">
                                         <i class="bi bi-calendar-event me-1"></i> Date Code
+                                        <span class="badge bg-danger">Required</span>
                                     </label>
-                                    <input type="text" class="form-control" id="dateCodeInput" name="date_code"
+                                    <input type="text" class="form-control" id="dateCodeInput" name="date_code" required
                                            placeholder="e.g., 2024WK12">
                                     <div class="form-text text-muted">Manufacturing date code</div>
                                 </div>
@@ -305,9 +310,10 @@
                         <div class="mb-3">
                             <label for="msdInput" class="form-label">
                                 <i class="bi bi-shield-check me-1"></i> MSD Level
+                                <span class="badge bg-danger">Required</span>
                             </label>
-                            <select class="form-select form-select-lg" id="msdInput" name="msd">
-                                <option value="">Select MSD Level (optional)</option>
+                            <select class="form-select form-select-lg" id="msdInput" name="msd" required>
+                                <option value="">Select MSD Level</option>
                                 <option value="Level 1">Level 1 - Unlimited floor life</option>
                                 <option value="Level 2">Level 2 - 1 year floor life</option>
                                 <option value="Level 3">Level 3 - 168 hours</option>
@@ -572,6 +578,68 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 
+    // ACI number pattern: ACI-NNNNN (5 digits)
+    const ACI_PATTERN = /^ACI-\d{5}$/i;
+
+    // Auto-fill form from an ACI number record
+    async function loadAciDetails(aciPn) {
+        console.log('🆔 loadAciDetails called with:', aciPn);
+
+        // Show loading state on MPN field
+        mpnLoadingText.style.display = 'inline';
+        mpnHelpText.style.display = 'none';
+
+        try {
+            const url = `/api/aci-numbers/lookup/${encodeURIComponent(aciPn.toUpperCase())}`;
+            const response = await fetch(url, { credentials: 'same-origin' });
+            const result = await response.json();
+
+            if (!response.ok || !result.success) {
+                // ACI not found — let user enter manually
+                mpnInput.innerHTML = '<option value="__CUSTOM__">➕ Enter Custom MPN...</option>';
+                mpnHelpText.textContent = `⚠️ ${aciPn} not found in ACI Numbers — enter MPN manually`;
+                mpnHelpText.style.color = '#f59e0b';
+                return;
+            }
+
+            // Populate MPN dropdown with the single ACI MPN value
+            mpnInput.innerHTML = '';
+            if (result.mpn) {
+                const opt = document.createElement('option');
+                opt.value = result.mpn;
+                opt.textContent = result.mpn;
+                opt.selected = true;
+                mpnInput.appendChild(opt);
+            }
+            const customOption = document.createElement('option');
+            customOption.value = '__CUSTOM__';
+            customOption.textContent = '➕ Enter Custom MPN...';
+            mpnInput.appendChild(customOption);
+
+            // Hide custom input field if it was open from a previous lookup
+            mpnCustomInput.style.display = 'none';
+            mpnCustomInput.value = '';
+
+            // Auto-fill Vendor from the ACI manufacturer
+            const vendorInput = document.getElementById('vendorNameInput');
+            if (vendorInput) {
+                vendorInput.value = result.manufacturer || '';
+            }
+
+            mpnHelpText.textContent = `✅ Loaded from ACI Numbers: ${result.description || aciPn}`;
+            mpnHelpText.style.color = '#10b981';
+            console.log('✨ ACI auto-fill complete for', aciPn);
+        } catch (error) {
+            console.error('❌ Error loading ACI details:', error);
+            mpnInput.innerHTML = '<option value="__CUSTOM__">➕ Enter Custom MPN...</option>';
+            mpnHelpText.textContent = '❌ Error loading ACI details — enter MPN manually';
+            mpnHelpText.style.color = '#ef4444';
+        } finally {
+            mpnLoadingText.style.display = 'none';
+            mpnHelpText.style.display = 'inline';
+        }
+    }
+
     // Function to load MPN options from BOM
     async function loadMPNOptions(partNumber) {
         console.log('🔍 loadMPNOptions called with:', partNumber);
@@ -582,6 +650,11 @@ document.addEventListener('DOMContentLoaded', function() {
             mpnHelpText.textContent = 'Manufacturer Part Number - Select from BOM or enter custom';
             mpnHelpText.style.color = '';
             return;
+        }
+
+        // If the part number looks like an ACI number, use the ACI lookup instead of BOM
+        if (ACI_PATTERN.test(partNumber.trim())) {
+            return loadAciDetails(partNumber.trim());
         }
 
         // Show loading indicator
@@ -725,9 +798,22 @@ document.addEventListener('DOMContentLoaded', function() {
             data.item = data.part_number;
         }
 
-        // Validate required fields
-        if (!data.item && !data.part_number) {
-            showError('Part Number is required!');
+        // Validate required fields — ALL fields must be filled before a PCN
+        // can be generated.
+        const requiredChecks = [
+            { value: data.part_number || data.item, label: 'Part Number' },
+            { value: data.mpn, label: 'MPN' },
+            { value: data.po_number, label: 'PO Number' },
+            { value: data.vendor_name, label: 'Vendor Name' },
+            { value: data.quantity, label: 'Quantity' },
+            { value: data.date_code, label: 'Date Code' },
+            { value: data.msd, label: 'MSD Level' }
+        ];
+        const missing = requiredChecks
+            .filter(f => !f.value || String(f.value).trim() === '')
+            .map(f => f.label);
+        if (missing.length > 0) {
+            showError('The following required field(s) are missing: ' + missing.join(', '));
             submitBtn.innerHTML = originalText;
             submitBtn.disabled = false;
             return;

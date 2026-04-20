@@ -176,6 +176,61 @@ def import_pn_list(records):
         cur.close()
         conn.close()
 
+def apply_adjt_to_inventory():
+    """Apply ADJT (part number change) transactions to tblWhse_Inventory.
+
+    In the Access database, ADJT transactions record part number changes where:
+    - item = loc_to = new item number
+    - loc_from = old item number
+
+    This function updates tblWhse_Inventory.item to match the latest ADJT change,
+    skipping any PCNs that already had a PN_CHANGE applied in KOSH.
+    """
+    print("\n--- Applying ADJT Part Number Changes to Inventory ---")
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            WITH latest_adjt AS (
+                SELECT DISTINCT ON (pcn) pcn, item as new_item, id as adjt_id
+                FROM pcb_inventory."tblTransaction"
+                WHERE trantype = 'ADJT'
+                  AND item = loc_to
+                  AND item != loc_from
+                ORDER BY pcn, id DESC
+            ),
+            has_later_pn_change AS (
+                SELECT DISTINCT a.pcn
+                FROM latest_adjt a
+                JOIN pcb_inventory."tblTransaction" t ON t.pcn::text = a.pcn::text
+                WHERE t.trantype = 'PN_CHANGE' AND t.id > a.adjt_id
+            ),
+            to_update AS (
+                SELECT w.id as whse_id, a.new_item
+                FROM pcb_inventory."tblWhse_Inventory" w
+                JOIN latest_adjt a ON w.pcn::text = a.pcn::text
+                WHERE w.item != a.new_item
+                  AND a.pcn NOT IN (SELECT pcn FROM has_later_pn_change)
+            )
+            UPDATE pcb_inventory."tblWhse_Inventory" w
+            SET item = u.new_item
+            FROM to_update u
+            WHERE w.id = u.whse_id
+        """)
+        updated = cur.rowcount
+        conn.commit()
+        print(f"Updated {updated} inventory records with ADJT part number changes")
+
+    except Exception as e:
+        conn.rollback()
+        print(f"Error applying ADJT changes: {e}")
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 def main():
     """Main function."""
     print("=" * 60)
@@ -187,6 +242,10 @@ def main():
     transaction_records = read_mdb_table('tblTransaction')
     if transaction_records:
         import_transactions(transaction_records)
+
+    # Apply ADJT part number changes to inventory
+    # Must run after transactions are imported
+    apply_adjt_to_inventory()
 
     # Import part number list
     print("\n--- Part Number List ---")

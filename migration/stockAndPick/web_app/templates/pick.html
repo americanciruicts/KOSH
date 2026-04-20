@@ -563,6 +563,16 @@ document.addEventListener('DOMContentLoaded', function() {
         pcnInput.addEventListener('input', function(e) {
             const pcnValue = e.target.value.trim();
 
+            // Clear any already-picked error when user starts typing a new PCN
+            const oldErr = document.getElementById('alreadyPickedError');
+            if (oldErr) oldErr.remove();
+            const btn = document.getElementById('pickSubmitBtn');
+            if (btn) {
+                btn.disabled = false;
+                btn.classList.remove('btn-secondary');
+                btn.classList.add('btn-primary');
+            }
+
             // Clear previous timeout
             if (pcnInputTimeout) {
                 clearTimeout(pcnInputTimeout);
@@ -1547,11 +1557,47 @@ function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
 
             console.log('=== AUTO-FILL COMPLETE ===');
 
+            // Block pick if this PCN was already picked but not yet restocked
+            if (result.already_picked) {
+                console.warn('PCN already picked and not restocked:', pcnNumber);
+                const submitBtn = document.getElementById('pickSubmitBtn');
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.classList.remove('btn-primary');
+                    submitBtn.classList.add('btn-secondary');
+                }
+                // Show error banner
+                const errDiv = document.createElement('div');
+                errDiv.id = 'alreadyPickedError';
+                errDiv.className = 'alert alert-danger alert-dismissible fade show position-fixed top-0 start-50 translate-middle-x mt-3';
+                errDiv.style.zIndex = '9999';
+                errDiv.innerHTML = `
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                    <strong>Part Already Picked!</strong> PCN ${pcnNumber} was already picked and has not been restocked yet. Restock it first before picking again.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+                document.body.appendChild(errDiv);
+                // Also show inline warning under PCN field
+                showAvailableQuantity(`PCN ${pcnNumber} already picked — restock before picking again`, 'danger');
+                return;
+            }
+
+            // Re-enable submit in case it was previously disabled by an already-picked PCN
+            const submitBtn = document.getElementById('pickSubmitBtn');
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('btn-secondary');
+                submitBtn.classList.add('btn-primary');
+            }
+            // Clear any prior already-picked error
+            const oldErr = document.getElementById('alreadyPickedError');
+            if (oldErr) oldErr.remove();
+
             // IMPORTANT: Auto-check inventory after PCN autofill to get TOTAL available quantity
             // This ensures validation uses the correct total, not just the PCN's individual quantity
             const partNumber = result.job || result.part_number;
             if (partNumber) {
-                console.log('🔍 Auto-checking inventory for item:', partNumber);
+                console.log('Auto-checking inventory for item:', partNumber);
                 checkInventory();
             }
 
