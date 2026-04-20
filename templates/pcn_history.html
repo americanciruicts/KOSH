@@ -38,19 +38,6 @@
                     <i class="bi bi-search me-1"></i> Search
                 </button>
             </div>
-            {% if pcn_info %}
-            <div class="col-md-6">
-                <div class="d-flex align-items-center flex-wrap gap-2 p-2 rounded" style="background: linear-gradient(to right, #f8fafc, #f1f5f9); border-left: 3px solid #8b5cf6;">
-                    <div class="d-flex align-items-center gap-1">
-                        <small class="text-muted" style="font-weight: 600;">DESC:</small>
-                        <strong style="color: #5b21b6; font-size: 0.95rem;">{{ pcn_info.item }}</strong>
-                    </div>
-                    <span class="badge bg-primary shadow-sm" style="font-size: 0.8rem; padding: 0.35rem 0.6rem;">MPN: {{ pcn_info.mpn or 'N/A' }}</span>
-                    <span class="badge bg-success shadow-sm" style="font-size: 0.8rem; padding: 0.35rem 0.6rem;">Qty: {{ pcn_info.onhandqty }}</span>
-                    <span class="badge bg-info shadow-sm" style="font-size: 0.8rem; padding: 0.35rem 0.6rem;"><i class="bi bi-geo-alt me-1"></i>{{ pcn_info.loc_to }}</span>
-                </div>
-            </div>
-            {% endif %}
         </form>
     </div>
 </div>

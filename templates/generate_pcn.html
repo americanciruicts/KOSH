@@ -240,9 +240,8 @@
                                 <div class="mb-3">
                                     <label for="poNumberInput" class="form-label">
                                         <i class="bi bi-receipt-cutoff me-1"></i> PO Number
-                                        <span class="badge bg-danger">Required</span>
                                     </label>
-                                    <input type="text" class="form-control" id="poNumberInput" name="po_number" required
+                                    <input type="text" class="form-control" id="poNumberInput" name="po_number"
                                            placeholder="e.g., PO-2024-001">
                                     <div class="form-text text-muted">
                                         <i class="bi bi-arrow-right"></i> Purchase Order Number
@@ -253,9 +252,8 @@
                                 <div class="mb-3">
                                     <label for="vendorNameInput" class="form-label">
                                         <i class="bi bi-building me-1"></i> Vendor Name
-                                        <span class="badge bg-danger">Required</span>
                                     </label>
-                                    <input type="text" class="form-control" id="vendorNameInput" name="vendor_name" required
+                                    <input type="text" class="form-control" id="vendorNameInput" name="vendor_name"
                                            placeholder="e.g., Acme Corp">
                                     <div class="form-text text-muted">
                                         <i class="bi bi-arrow-right"></i> Supplier / Vendor Name
@@ -291,9 +289,8 @@
                                 <div class="mb-3">
                                     <label for="dateCodeInput" class="form-label">
                                         <i class="bi bi-calendar-event me-1"></i> Date Code
-                                        <span class="badge bg-danger">Required</span>
                                     </label>
-                                    <input type="text" class="form-control" id="dateCodeInput" name="date_code" required
+                                    <input type="text" class="form-control" id="dateCodeInput" name="date_code"
                                            placeholder="e.g., 2024WK12">
                                     <div class="form-text text-muted">Manufacturing date code</div>
                                 </div>
@@ -310,9 +307,8 @@
                         <div class="mb-3">
                             <label for="msdInput" class="form-label">
                                 <i class="bi bi-shield-check me-1"></i> MSD Level
-                                <span class="badge bg-danger">Required</span>
                             </label>
-                            <select class="form-select form-select-lg" id="msdInput" name="msd" required>
+                            <select class="form-select form-select-lg" id="msdInput" name="msd">
                                 <option value="">Select MSD Level</option>
                                 <option value="Level 1">Level 1 - Unlimited floor life</option>
                                 <option value="Level 2">Level 2 - 1 year floor life</option>
@@ -798,16 +794,10 @@ document.addEventListener('DOMContentLoaded', function() {
             data.item = data.part_number;
         }
 
-        // Validate required fields — ALL fields must be filled before a PCN
-        // can be generated.
+        // Only Part Number and Quantity are required.
         const requiredChecks = [
             { value: data.part_number || data.item, label: 'Part Number' },
-            { value: data.mpn, label: 'MPN' },
-            { value: data.po_number, label: 'PO Number' },
-            { value: data.vendor_name, label: 'Vendor Name' },
-            { value: data.quantity, label: 'Quantity' },
-            { value: data.date_code, label: 'Date Code' },
-            { value: data.msd, label: 'MSD Level' }
+            { value: data.quantity, label: 'Quantity' }
         ];
         const missing = requiredChecks
             .filter(f => !f.value || String(f.value).trim() === '')

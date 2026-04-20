@@ -77,6 +77,11 @@
                 <input type="text" class="form-control" id="search_location" name="search_location"
                        value="{{ request.args.get('search_location', '') }}" placeholder="Location..." style="border-radius: 6px;">
             </div>
+            <div class="col-md-3">
+                <label for="search_description" class="form-label small fw-semibold mb-2" style="color: #475569;">Description</label>
+                <input type="text" class="form-control" id="search_description" name="search_description"
+                       value="{{ request.args.get('search_description', '') }}" placeholder="Search by description..." style="border-radius: 6px;">
+            </div>
             <div class="col-md-2">
                 <label for="per_page" class="form-label small fw-semibold mb-2" style="color: #475569;">Per Page</label>
                 <select class="form-select" id="per_page" name="per_page" style="border-radius: 6px;">
@@ -131,6 +136,7 @@
                         <th style="border: none; font-weight: 600; padding: 14px;">PCN</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">Item Number</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MPN</th>
+                        <th style="border: none; font-weight: 600; padding: 14px;">Description</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">DC</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">On Hand Qty</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">Loc From</th>
@@ -149,6 +155,7 @@
                         <td>{{ row.PCN if row.PCN else '-' }}</td>
                         <td>{{ row.Item if row.Item else '-' }}</td>
                         <td>{{ row.MPN if row.MPN else '-' }}</td>
+                        <td>{{ row.Description if row.Description else '-' }}</td>
                         <td>{{ row.DC if row.DC else '-' }}</td>
                         <td>{{ row.OnHandQty if row.OnHandQty is not none else '0' }}</td>
                         <td>{{ row.Loc_From if row.Loc_From else '-' }}</td>

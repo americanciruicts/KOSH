@@ -535,15 +535,16 @@ function doLoad() {
         return;
     }
 
-    // Apply rev overrides - metadata is authoritative, server prefers metadata over item values
+    // Apply rev overrides
     var jobRev = document.getElementById('metaJobRevInput').value.trim();
     var custRev = document.getElementById('metaCustRevInput').value.trim();
     parsedBomData.metadata.job_rev = jobRev;
     parsedBomData.metadata.cust_rev = custRev;
-    // Also update each item for consistency
-    for (var i = 0; i < parsedBomData.bom_items.length; i++) {
-        parsedBomData.bom_items[i].job_rev = jobRev;
-        parsedBomData.bom_items[i].cust_rev = custRev;
+    if (parsedBomData.bom_items) {
+        parsedBomData.bom_items.forEach(function(item) {
+            item.job_rev = jobRev;
+            item.cust_rev = custRev;
+        });
     }
 
     var loadBtn = document.getElementById('loadBtn');
@@ -554,8 +555,6 @@ function doLoad() {
     var metaTag = document.querySelector('meta[name="csrf-token"]');
     if (metaTag) csrfToken = metaTag.getAttribute('content') || '';
 
-    dbg('OVERRIDE: jobRev input="' + jobRev + '" custRev input="' + custRev + '"');
-    dbg('AFTER OVERRIDE: metadata.job_rev="' + parsedBomData.metadata.job_rev + '" item[0].job_rev="' + (parsedBomData.bom_items[0] ? parsedBomData.bom_items[0].job_rev : 'N/A') + '"');
     dbg('Sending load: job=' + parsedBomData.metadata.job + ' rev=' + jobRev + ' items=' + parsedBomData.bom_items.length);
 
     var xhr = new XMLHttpRequest();

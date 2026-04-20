@@ -908,12 +908,15 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             try:
-                # PURGE OPERATION: When quantity is 0, delete zero-qty records from inventory
+                # PURGE OPERATION: When quantity is 0, mark zero-qty records as
+                # purged but preserve the warehouse row (and its MPN/DC/MSD/
+                # location) so the PCN remains searchable, its history entries
+                # still join to part data, and it can be restocked later.
                 if quantity == 0:
                     if pcn:
                         # Check that the PCN exists and has zero on-hand qty
                         cursor.execute("""
-                            SELECT pcn, item, onhandqty
+                            SELECT pcn, item, onhandqty, mpn, dc, msd, loc_to
                             FROM pcb_inventory."tblWhse_Inventory"
                             WHERE pcn::text = %s AND item::text ILIKE %s
                             FOR UPDATE
@@ -933,20 +936,17 @@ class DatabaseManager:
                                 'error': f'Cannot purge PCN {pcn} — on-hand quantity is {int(row[2])}. Pick the remaining units first or edit quantity to 0.',
                                 'job': job, 'pcb_type': pcb_type
                             }
-                        # Delete the zero-qty warehouse inventory record
-                        cursor.execute("""
-                            DELETE FROM pcb_inventory."tblWhse_Inventory"
-                            WHERE pcn::text = %s AND item::text ILIKE %s
-                        """, (str(pcn), job))
-                        deleted_count = cursor.rowcount
-                        # Record a PURGE transaction
+                        _, _, _, w_mpn, w_dc, w_msd, w_loc = row
+                        deleted_count = 1
+                        # Record a PURGE transaction WITH mpn/dc/msd so history
+                        # shows part info even if the warehouse row is ever removed
                         cursor.execute("""
                             INSERT INTO pcb_inventory."tblTransaction"
-                            (trantype, item, pcn, tranqty, tran_time, loc_from, loc_to, wo, userid)
-                            VALUES ('PURGE', %s, %s, 0,
+                            (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                            VALUES ('PURGE', %s, %s, %s, %s, %s, 0,
                                     TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
-                                    'Warehouse', 'Purged', %s, %s)
-                        """, (job, str(pcn), work_order or '', username))
+                                    %s, 'Purged', %s, %s)
+                        """, (job, str(pcn), w_mpn, w_dc, w_msd, w_loc or 'Warehouse', work_order or '', username))
                     else:
                         # Purge all zero-qty records for this item
                         cursor.execute("""
@@ -975,27 +975,22 @@ class DatabaseManager:
                                     'error': f'Item {job} not found in warehouse inventory.',
                                     'job': job, 'pcb_type': pcb_type
                                 }
-                        # Get PCNs being purged for transaction logging
+                        # Get PCNs (and part info) being purged for transaction logging
                         cursor.execute("""
-                            SELECT pcn FROM pcb_inventory."tblWhse_Inventory"
+                            SELECT pcn, mpn, dc, msd, loc_to FROM pcb_inventory."tblWhse_Inventory"
                             WHERE item::text ILIKE %s AND onhandqty = 0
                         """, (job,))
-                        purged_pcns = [str(r[0]) for r in cursor.fetchall()]
-                        # Delete zero-qty records
-                        cursor.execute("""
-                            DELETE FROM pcb_inventory."tblWhse_Inventory"
-                            WHERE item::text ILIKE %s AND onhandqty = 0
-                        """, (job,))
-                        deleted_count = cursor.rowcount
-                        # Record PURGE transactions
-                        for p in purged_pcns:
+                        purged_rows = [(str(r[0]), r[1], r[2], r[3], r[4]) for r in cursor.fetchall()]
+                        deleted_count = len(purged_rows)
+                        # Record PURGE transactions WITH part info preserved
+                        for p_pcn, p_mpn, p_dc, p_msd, p_loc in purged_rows:
                             cursor.execute("""
                                 INSERT INTO pcb_inventory."tblTransaction"
-                                (trantype, item, pcn, tranqty, tran_time, loc_from, loc_to, wo, userid)
-                                VALUES ('PURGE', %s, %s, 0,
+                                (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                                VALUES ('PURGE', %s, %s, %s, %s, %s, 0,
                                         TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
-                                        'Warehouse', 'Purged', %s, %s)
-                            """, (job, p, work_order or '', username))
+                                        %s, 'Purged', %s, %s)
+                            """, (job, p_pcn, p_mpn, p_dc, p_msd, p_loc or 'Warehouse', work_order or '', username))
 
                     conn.commit()
                     logger.info(f"Purge operation: Deleted {deleted_count} zero-qty records for item {job} by {username}")
@@ -1015,7 +1010,14 @@ class DatabaseManager:
                         'records_deleted': deleted_count
                     }
 
-                # Block re-pick if this PCN was already picked but not yet restocked
+                # Block re-pick only if this PCN was already picked, not yet
+                # restocked, AND there is no remaining qty in warehouse. If
+                # onhandqty > 0, the part is physically still on the shelf, so
+                # a stale PICK transaction (e.g. legacy MDB data where the
+                # matching restock never made it over) must not block a real
+                # pick. Without this qty guard, ~39k legacy PICK rows with
+                # only ~400 RESTOCKs would permanently block picks on any PCN
+                # whose history was imported mid-cycle.
                 if pcn:
                     cursor.execute("""
                         SELECT trantype FROM pcb_inventory."tblTransaction"
@@ -1024,12 +1026,19 @@ class DatabaseManager:
                     """, (str(pcn),))
                     last_txn = cursor.fetchone()
                     if last_txn and last_txn[0] == 'PICK':
-                        conn.rollback()
-                        return {
-                            'success': False,
-                            'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
-                            'job': job, 'pcb_type': pcb_type
-                        }
+                        cursor.execute("""
+                            SELECT COALESCE(SUM(onhandqty), 0)
+                            FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE pcn::text = %s
+                        """, (str(pcn),))
+                        qty_on_hand = int(cursor.fetchone()[0] or 0)
+                        if qty_on_hand <= 0:
+                            conn.rollback()
+                            return {
+                                'success': False,
+                                'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
+                                'job': job, 'pcb_type': pcb_type
+                            }
 
                 # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
@@ -3866,6 +3875,7 @@ def warehouse_inventory():
         search_pcn = request.args.get('search_pcn', '').strip()
         search_mpn = request.args.get('search_mpn', '').strip()
         search_location = request.args.get('search_location', '').strip()
+        search_description = request.args.get('search_description', '').strip()
 
         # Get pagination parameters
         page = request.args.get('page', 1, type=int)
@@ -3875,30 +3885,43 @@ def warehouse_inventory():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Build query with filters
+        # Build query with filters.
+        # Left-join a deduplicated tblPN_List so we can surface and search by
+        # part description without multiplying inventory rows (item is not
+        # unique in tblPN_List — ~36k rows for ~35k distinct items).
         query = """
-            SELECT id, item, pcn, mpn, dc, onhandqty, loc_from, loc_to,
-                   mfg_qty, qty_old, msd, po, cost, vendor, migrated_at
-            FROM pcb_inventory."tblWhse_Inventory"
+            SELECT w.id, w.item, w.pcn, w.mpn, w.dc, w.onhandqty, w.loc_from, w.loc_to,
+                   w.mfg_qty, w.qty_old, w.msd, w.po, w.cost, w.vendor, w.migrated_at,
+                   p.description
+            FROM pcb_inventory."tblWhse_Inventory" w
+            LEFT JOIN (
+                SELECT item, MAX("DESC") AS description
+                FROM pcb_inventory."tblPN_List"
+                GROUP BY item
+            ) p ON w.item = p.item
             WHERE 1=1
         """
         params = []
 
         if search_item:
-            query += " AND LOWER(item::text) LIKE %s"
+            query += " AND LOWER(w.item::text) LIKE %s"
             params.append(f"%{search_item.lower()}%")
 
         if search_pcn:
-            query += " AND pcn::text LIKE %s"
+            query += " AND w.pcn::text LIKE %s"
             params.append(f"{search_pcn}%")
 
         if search_mpn:
-            query += " AND LOWER(mpn::text) LIKE %s"
+            query += " AND LOWER(w.mpn::text) LIKE %s"
             params.append(f"%{search_mpn.lower()}%")
 
         if search_location:
-            query += " AND LOWER(loc_to::text) LIKE %s"
+            query += " AND LOWER(w.loc_to::text) LIKE %s"
             params.append(f"%{search_location.lower()}%")
+
+        if search_description:
+            query += " AND LOWER(COALESCE(p.description, '')) LIKE %s"
+            params.append(f"%{search_description.lower()}%")
 
         # Get total count for pagination
         count_query = f"SELECT COUNT(*) as total FROM ({query}) AS filtered"
@@ -3906,7 +3929,7 @@ def warehouse_inventory():
         total_records = cursor.fetchone()['total']
 
         # Add sorting and pagination (newest entries first for efficiency)
-        query += " ORDER BY id DESC LIMIT %s OFFSET %s"
+        query += " ORDER BY w.id DESC LIMIT %s OFFSET %s"
         params.extend([per_page, (page - 1) * per_page])
 
         # Execute main query
@@ -3921,6 +3944,7 @@ def warehouse_inventory():
                 'PCN': row['pcn'],
                 'Item': row['item'],
                 'MPN': row['mpn'],
+                'Description': row['description'],
                 'DC': row['dc'],
                 'OnHandQty': row['onhandqty'],
                 'Loc_To': row['loc_to'],
@@ -3955,7 +3979,8 @@ def warehouse_inventory():
                              search_item=search_item,
                              search_pcn=search_pcn,
                              search_mpn=search_mpn,
-                             search_location=search_location)
+                             search_location=search_location,
+                             search_description=search_description)
 
     except Exception as e:
         logger.error(f"Error loading warehouse inventory: {e}")
@@ -5728,15 +5753,12 @@ def api_generate_pcn():
     try:
         data = request.get_json() or {}
 
-        # All form fields are required before a PCN can be generated.
+        # Only Part Number and Quantity are required; other fields are
+        # optional so operators can generate a PCN with whatever info they
+        # have on hand.
         required_fields = [
             ('item', 'Part Number'),
-            ('mpn', 'MPN'),
-            ('po_number', 'PO Number'),
-            ('vendor_name', 'Vendor Name'),
             ('quantity', 'Quantity'),
-            ('date_code', 'Date Code'),
-            ('msd', 'MSD Level'),
         ]
         missing = [
             label for key, label in required_fields
@@ -5906,8 +5928,12 @@ def api_get_pcn_details(pcn_number):
                 """, (pcn_number,))
                 last_txn = cursor.fetchone()
                 already_restocked = bool(last_txn and last_txn['trantype'] == 'RESTOCK')
-                # Check if PCN was picked but not yet restocked (blocks re-pick)
-                already_picked = bool(last_txn and last_txn['trantype'] == 'PICK')
+                # Only flag as already_picked if the last PICK/RESTOCK is PICK
+                # AND the PCN has no stock on hand. With the stock guard, a legacy
+                # MDB PICK transaction (never matched by a RESTOCK) won't block
+                # the UI from picking a PCN that physically still has units.
+                total_onhand = sum(int(r['onhandqty'] or 0) for r in whse_records)
+                already_picked = bool(last_txn and last_txn['trantype'] == 'PICK' and total_onhand <= 0)
 
                 # If multiple records found for the same PCN, return them all
                 if len(whse_records) > 1:

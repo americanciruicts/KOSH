@@ -28,7 +28,7 @@ services:
   # Flask Web Application
   web_app:
     build:
-      context: ./migration/stockAndPick/web_app
+      context: .
       dockerfile: Dockerfile.webapp
     container_name: stockandpick_webapp
     environment:
