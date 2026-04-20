@@ -275,6 +275,8 @@ def inject_current_time():
         'user_can_see_itar': g.get('user_can_see_itar', False),
         'is_admin': is_admin_user(),
         'can_manage': can_manage_parts(),
+        'can_access_tool': can_access_tool,
+        'can_view_notifications': can_view_notifications(),
         'cache_version': APP_START_TIME
     }
 
@@ -390,11 +392,58 @@ USER_ROLES = [
 # in addition to users with the 'Admin' role
 ADMIN_AUTHORIZED_USERS = {'kanav', 'preet'}
 
+# Users authorized to view ALL activity notifications (read-only — no other admin powers)
+NOTIFICATION_VIEWER_USERS = {'kris@americancircuits.com'}
+
+def can_view_notifications():
+    """Check if current user can view the admin notifications page."""
+    if is_admin_user():
+        return True
+    username = session.get('username', '').lower()
+    return username in NOTIFICATION_VIEWER_USERS
+
 def is_admin_user():
     """Check if current session user has admin-level access (by role or authorized list)."""
     if session.get('role') == 'Admin':
         return True
     return session.get('username', '').lower() in ADMIN_AUTHORIZED_USERS
+
+# Per-user tool access control
+# Users not listed here (and non-admins) get access to ALL tools by default
+# Users listed here are RESTRICTED to only the tools specified
+# Admins always have access to everything regardless of this setting
+USER_TOOL_ACCESS = {
+    'james@americancircuits.com': {'dashboard', 'generate_pcn', 'stock', 'pick', 'restock', 'pcn_history', 'warehouse_inventory'},
+    # Theresa: everything except pcb_inventory
+    'parts@americancircuits.com': {
+        'dashboard', 'generate_pcn', 'stock', 'pick', 'restock',
+        'jobs', 'shortage_report', 'warehouse_inventory', 'print_label',
+        'pcn_history', 'po_history', 'part_number_change', 'bom_loader',
+        'reports', 'manage'
+    },
+    # Jay: everything except pcb_inventory, manage, and part_number_change
+    'jayt@americancircuits.com': {
+        'dashboard', 'generate_pcn', 'stock', 'pick', 'restock',
+        'jobs', 'shortage_report', 'warehouse_inventory', 'print_label',
+        'pcn_history', 'po_history', 'bom_loader', 'reports'
+    },
+}
+
+# All available tool names for reference:
+# dashboard, generate_pcn, stock, pick, restock, jobs, shortage_report,
+# pcb_inventory, warehouse_inventory, print_label, pcn_history, po_history,
+# part_number_change, bom_loader, reports, sources, manage, admin
+
+def can_access_tool(tool_name):
+    """Check if current user can access a specific tool.
+    Admins bypass all restrictions. Users in USER_TOOL_ACCESS are restricted
+    to only their listed tools. Users NOT in USER_TOOL_ACCESS have full access."""
+    if is_admin_user():
+        return True
+    username = session.get('username', '').lower()
+    if username in USER_TOOL_ACCESS:
+        return tool_name in USER_TOOL_ACCESS[username]
+    return True  # unrestricted users get everything
 
 # Users allowed to access ACI Numbers and Locations (in addition to admins)
 MANAGE_AUTHORIZED_USERS = {'parts@americancircuits.com'}
@@ -468,6 +517,8 @@ class PickForm(FlaskForm):
 
 class RestockForm(FlaskForm):
     """Form for restocking parts from Count Area to specified location."""
+    class Meta:
+        csrf = False  # CSRF exempt — route is auth-protected, avoids stale token issues
     pcn = StringField('PCN Number', validators=[Optional(), Length(max=50)])
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
     po = StringField('PO Number', validators=[Optional(), Length(max=50)])
@@ -673,6 +724,42 @@ class DatabaseManager:
             # CRITICAL: Set SERIALIZABLE isolation to prevent race conditions
             conn.autocommit = False
             cursor = conn.cursor()
+
+            # PCN integrity guard: reject if this PCN is already bound to a
+            # different item or a different (non-empty) MPN. Prevents the same
+            # PCN being reused across two unrelated parts (root cause of the
+            # PCN 45061 duplication bug). Case-insensitive; blank MPN is
+            # treated as "unspecified" and does not trigger a conflict.
+            cursor.execute("""
+                SELECT item, mpn
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE pcn::text = %s
+                LIMIT 1
+            """, (str(pcn),))
+            conflict_row = cursor.fetchone()
+            if conflict_row:
+                existing_item = (conflict_row[0] or '').strip()
+                existing_mpn = (conflict_row[1] or '').strip()
+                new_item = (job or '').strip()
+                new_mpn = (mpn or '').strip()
+                same_item = existing_item.lower() == new_item.lower()
+                same_mpn = (not existing_mpn) or (not new_mpn) or (existing_mpn.lower() == new_mpn.lower())
+                if not same_item or not same_mpn:
+                    conn.rollback()
+                    logger.warning(
+                        f"PCN conflict blocked: PCN {pcn} already bound to item '{existing_item}' "
+                        f"MPN '{existing_mpn}'; refused stock as item '{new_item}' MPN '{new_mpn}' "
+                        f"by user {username}"
+                    )
+                    return {
+                        'success': False,
+                        'error': (
+                            f'PCN {pcn} is already assigned to item "{existing_item}" '
+                            f'(MPN: {existing_mpn or "-"}). It cannot be reused for '
+                            f'item "{new_item}" (MPN: {new_mpn or "-"}). '
+                            f'Generate a new PCN instead.'
+                        )
+                    }
 
             # CRITICAL: Lock row with FOR UPDATE to prevent concurrent stock operations
             # Check if PCN and item combination exists in warehouse
@@ -928,6 +1015,22 @@ class DatabaseManager:
                         'records_deleted': deleted_count
                     }
 
+                # Block re-pick if this PCN was already picked but not yet restocked
+                if pcn:
+                    cursor.execute("""
+                        SELECT trantype FROM pcb_inventory."tblTransaction"
+                        WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
+                        ORDER BY id DESC LIMIT 1
+                    """, (str(pcn),))
+                    last_txn = cursor.fetchone()
+                    if last_txn and last_txn[0] == 'PICK':
+                        conn.rollback()
+                        return {
+                            'success': False,
+                            'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
+                            'job': job, 'pcb_type': pcb_type
+                        }
+
                 # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
                 # Use ILIKE for flexible matching (consistent with search_inventory)
@@ -1032,7 +1135,10 @@ class DatabaseManager:
                     UPDATE pcb_inventory."tblWhse_Inventory" w
                     SET onhandqty = GREATEST(0, w.onhandqty - r.qty_to_pick),
                         mfg_qty = (CASE WHEN w.mfg_qty ~ '^\-?[0-9]+$' THEN w.mfg_qty::integer ELSE 0 END + r.qty_to_pick)::text,
-                        loc_to = 'MFG Floor'
+                        loc_to = CASE
+                            WHEN w.onhandqty - r.qty_to_pick <= 0 THEN 'MFG Floor'
+                            ELSE w.loc_to
+                        END
                     FROM rows_to_update r
                     WHERE w.pcn::text = r.pcn::text
                     AND w.item = r.item
@@ -1331,19 +1437,33 @@ class DatabaseManager:
                     except (ValueError, TypeError):
                         mfg_qty_int = 0
 
-                # Check if this part was picked from inventory before allowing restock
-                pick_check_query = """
-                    SELECT COUNT(*) FROM pcb_inventory."tblTransaction"
-                    WHERE trantype = 'PICK' AND pcn::text = %s
-                """
-                cursor.execute(pick_check_query, (str(pcn_num),))
-                pick_count = cursor.fetchone()[0]
-                if pick_count == 0:
+                # Check if this PCN was picked since its last restock
+                # If the most recent transaction is RESTOCK (no PICK after it), block
+                cursor.execute("""
+                    SELECT trantype FROM pcb_inventory."tblTransaction"
+                    WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
+                    ORDER BY id DESC
+                    LIMIT 1
+                """, (str(pcn_num),))
+                last_txn = cursor.fetchone()
+                if last_txn and last_txn[0] == 'RESTOCK':
                     conn.rollback()
                     return {
                         'success': False,
-                        'error': f'You have not picked this part (PCN: {pcn_num}) from inventory. Parts must be picked before they can be restocked.'
+                        'error': f'PCN {pcn_num} has already been restocked. It must be picked again before it can be restocked.'
                     }
+                if not last_txn:
+                    # No PICK or RESTOCK found at all — check if ever picked
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM pcb_inventory."tblTransaction"
+                        WHERE trantype = 'PICK' AND pcn::text = %s
+                    """, (str(pcn_num),))
+                    if cursor.fetchone()[0] == 0:
+                        conn.rollback()
+                        return {
+                            'success': False,
+                            'error': f'PCN {pcn_num} has not been picked from inventory. Parts must be picked before they can be restocked.'
+                        }
 
                 # Log if restocking more than tracked MFG quantity (user may have physical count)
                 if mfg_qty_int < quantity:
@@ -2531,7 +2651,6 @@ def _ensure_aci_partnumbers_table():
                 mpn VARCHAR(255),
                 description TEXT,
                 comment TEXT,
-                loaded VARCHAR(1) DEFAULT 'N',
                 created_by VARCHAR(100),
                 created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')
             )
@@ -2549,6 +2668,145 @@ def _ensure_aci_partnumbers_table():
                 pass
 
 threading.Thread(target=_ensure_aci_partnumbers_table, daemon=True).start()
+
+
+# Background sync: apply ADJT part number changes from Access to inventory
+def _sync_adjt_to_inventory():
+    """Periodically apply ADJT (part number change) transactions to tblWhse_Inventory.
+    Access records part number changes as ADJT transactions with:
+      item = loc_to = new item number, loc_from = old item number.
+    This syncs inventory to match, running every 5 minutes."""
+    import time
+    time.sleep(10)  # Wait for app startup
+    while True:
+        conn = None
+        try:
+            conn = db_manager.get_connection()
+            cur = conn.cursor()
+            # Scope ADJT renames by (pcn, mpn). Historically this joined on PCN
+            # alone, which cross-contaminated when two different parts shared a
+            # PCN: an ADJT on part A's history would rename part B's inventory
+            # row too. PCN+MPN is the real identifier of an inventory row.
+            cur.execute("""
+                WITH latest_adjt AS (
+                    SELECT DISTINCT ON (pcn, mpn) pcn, mpn, item as new_item, id as adjt_id
+                    FROM pcb_inventory."tblTransaction"
+                    WHERE trantype = 'ADJT'
+                      AND item = loc_to
+                      AND item != loc_from
+                    ORDER BY pcn, mpn, id DESC
+                ),
+                has_later_pn_change AS (
+                    SELECT DISTINCT a.pcn, a.mpn
+                    FROM latest_adjt a
+                    JOIN pcb_inventory."tblTransaction" t
+                      ON t.pcn::text = a.pcn::text
+                     AND COALESCE(LOWER(TRIM(t.mpn)),'') = COALESCE(LOWER(TRIM(a.mpn)),'')
+                    WHERE t.trantype = 'PN_CHANGE' AND t.id > a.adjt_id
+                ),
+                to_update AS (
+                    SELECT w.id as whse_id, a.new_item
+                    FROM pcb_inventory."tblWhse_Inventory" w
+                    JOIN latest_adjt a
+                      ON w.pcn::text = a.pcn::text
+                     AND COALESCE(LOWER(TRIM(w.mpn)),'') = COALESCE(LOWER(TRIM(a.mpn)),'')
+                    WHERE w.item != a.new_item
+                      AND NOT EXISTS (
+                          SELECT 1 FROM has_later_pn_change h
+                          WHERE h.pcn::text = a.pcn::text
+                            AND COALESCE(LOWER(TRIM(h.mpn)),'') = COALESCE(LOWER(TRIM(a.mpn)),'')
+                      )
+                )
+                UPDATE pcb_inventory."tblWhse_Inventory" w
+                SET item = u.new_item
+                FROM to_update u
+                WHERE w.id = u.whse_id
+            """)
+            updated = cur.rowcount
+            conn.commit()
+            if updated > 0:
+                logger.info(f"ADJT sync: updated {updated} inventory item numbers")
+        except Exception as e:
+            logger.error(f"ADJT sync error: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+        finally:
+            if conn:
+                try:
+                    db_manager.return_connection(conn)
+                except:
+                    pass
+        time.sleep(300)  # Run every 5 minutes
+
+threading.Thread(target=_sync_adjt_to_inventory, daemon=True).start()
+
+
+# Background sync: reconcile on-hand qty from transaction log.
+# Access's tblWhse_Inventory.OnHandQty is NOT decremented on PICK, so importing
+# from Access would otherwise resurrect quantities for parts that KOSH already
+# picked. This recomputes onhandqty from KOSH's tblTransaction log, which is
+# authoritative because every KOSH PICK/RESTOCK/STOCK/RNDT logs there.
+def _sync_onhand_from_transactions():
+    """Recompute onhandqty from the transaction log once per interval.
+    Runs every 5 minutes. Only rewrites rows whose computed value differs from
+    what is currently stored, so it's a no-op when already in sync."""
+    import time
+    time.sleep(30)  # Wait for app startup
+    while True:
+        conn = None
+        try:
+            conn = db_manager.get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                WITH net AS (
+                    SELECT pcn::text AS pcn,
+                           LOWER(TRIM(COALESCE(mpn,''))) AS mpn_key,
+                           GREATEST(0, SUM(CASE trantype
+                                 WHEN 'INDF' THEN tranqty::integer
+                                 WHEN 'STOCK' THEN tranqty::integer
+                                 WHEN 'PCN Generation' THEN tranqty::integer
+                                 WHEN 'RNDT' THEN tranqty::integer
+                                 WHEN 'PICK' THEN -tranqty::integer
+                                 WHEN 'PURGE' THEN -tranqty::integer
+                                 ELSE 0
+                               END)) AS qty,
+                           SUM(CASE WHEN trantype = 'PICK' THEN 1 ELSE 0 END) AS pick_count
+                    FROM pcb_inventory."tblTransaction"
+                    WHERE COALESCE(reversed, false) = false
+                      AND tranqty ~ '^-?[0-9]+$'
+                    GROUP BY pcn::text, LOWER(TRIM(COALESCE(mpn,'')))
+                )
+                UPDATE pcb_inventory."tblWhse_Inventory" w
+                SET onhandqty = n.qty
+                FROM net n
+                WHERE w.pcn::text = n.pcn
+                  AND LOWER(TRIM(COALESCE(w.mpn,''))) = n.mpn_key
+                  AND w.onhandqty > n.qty
+                  AND n.pick_count > 0
+            """)
+            updated = cur.rowcount
+            conn.commit()
+            if updated > 0:
+                logger.info(f"On-hand reconcile: updated {updated} inventory rows from transaction log")
+        except Exception as e:
+            logger.error(f"On-hand reconcile error: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+        finally:
+            if conn:
+                try:
+                    db_manager.return_connection(conn)
+                except:
+                    pass
+        time.sleep(300)
+
+threading.Thread(target=_sync_onhand_from_transactions, daemon=True).start()
 
 
 def _do_log_activity(user_id, username, full_name, action_type, description, details):
@@ -2914,6 +3172,9 @@ def index():
 @require_auth
 def stock():
     """Stock PCB page."""
+    if not can_access_tool('stock'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     form = StockForm()
 
     if form.validate_on_submit():
@@ -2975,6 +3236,9 @@ def stock():
 @require_auth
 def pick():
     """Pick PCB page."""
+    if not can_access_tool('pick'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     form = PickForm()
     
     if form.validate_on_submit():
@@ -3066,9 +3330,13 @@ def api_recent_picks():
 
 
 @app.route('/restock', methods=['GET', 'POST'])
+@csrf.exempt
 @require_auth
 def restock():
     """Restock parts from Count Area to specified location."""
+    if not can_access_tool('restock'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     form = RestockForm()
 
     # Set default source location on GET request (destination is left blank)
@@ -3122,7 +3390,11 @@ def restock():
                 for error in errors:
                     flash(f"{field}: {error}", 'error')
 
-    return render_template('restock.html', form=form)
+    response = make_response(render_template('restock.html', form=form))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 
 @app.route('/api/restock', methods=['POST'])
@@ -3197,6 +3469,9 @@ def api_restock():
 @require_auth
 def part_number_change():
     """Change part number (item) for a PCN."""
+    if not can_access_tool('part_number_change'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     if request.method == 'POST':
         pcn = request.form.get('pcn', '').strip()
         new_part_number = request.form.get('new_part_number', '').strip()
@@ -3441,6 +3716,9 @@ def get_part_details():
 @require_auth
 def pcb_inventory():
     """PCB Inventory listing page with pagination and advanced filters."""
+    if not can_access_tool('pcb_inventory'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     # Get search and pagination parameters
     search_job = request.args.get('job', '').strip()
     search_pcb_type = request.args.get('pcb_type', '').strip()
@@ -3577,6 +3855,9 @@ def pcb_inventory():
 @require_auth
 def warehouse_inventory():
     """Warehouse Inventory listing page - reads from PostgreSQL database."""
+    if not can_access_tool('warehouse_inventory'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     conn = None
     cursor = None
     try:
@@ -3636,6 +3917,7 @@ def warehouse_inventory():
         inventory = []
         for row in rows:
             inventory.append({
+                'id': row['id'],
                 'PCN': row['pcn'],
                 'Item': row['item'],
                 'MPN': row['mpn'],
@@ -3696,32 +3978,45 @@ def warehouse_inventory():
 @app.route('/api/warehouse-inventory/item')
 @require_auth
 def get_warehouse_item():
-    """API endpoint to get a single warehouse inventory item."""
+    """API endpoint to get a single warehouse inventory item.
+
+    Prefer lookup by unique row id. Fall back to item+pcn for backward
+    compatibility (returns first match, which is ambiguous when multiple rows
+    share the same item+pcn).
+    """
     try:
+        row_id = request.args.get('id', '').strip()
         item_id = request.args.get('item', '').strip()
         pcn = request.args.get('pcn', '').strip()
-
-        if not item_id or not pcn:
-            return jsonify({'success': False, 'message': 'Item and PCN are required'}), 400
 
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            # Query for specific item
-            cursor.execute("""
-                SELECT id, item, pcn, mpn, dc, onhandqty, loc_from, loc_to,
-                       mfg_qty, qty_old, msd, po, cost
-                FROM pcb_inventory."tblWhse_Inventory"
-                WHERE item::text = %s AND pcn::text = %s
-                LIMIT 1
-            """, (item_id, pcn))
+            if row_id:
+                cursor.execute("""
+                    SELECT id, item, pcn, mpn, dc, onhandqty, loc_from, loc_to,
+                           mfg_qty, qty_old, msd, po, cost
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE id = %s
+                """, (row_id,))
+            elif item_id and pcn:
+                cursor.execute("""
+                    SELECT id, item, pcn, mpn, dc, onhandqty, loc_from, loc_to,
+                           mfg_qty, qty_old, msd, po, cost
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE item::text = %s AND pcn::text = %s
+                    LIMIT 1
+                """, (item_id, pcn))
+            else:
+                return jsonify({'success': False, 'message': 'id (or item+pcn) is required'}), 400
 
             row = cursor.fetchone()
 
             if row:
                 # Convert to dict with consistent naming (matching .mdb format)
                 item_data = {
+                    'id': row['id'],
                     'PCN': row['pcn'],
                     'Item': row['item'],
                     'MPN': row['mpn'],
@@ -3845,6 +4140,15 @@ def update_warehouse_item():
             if not data.get(field):
                 return jsonify({'success': False, 'message': f'{field} is required'}), 400
 
+        # Require row id: the unique primary key guarantees we update the
+        # exact row the user edited. Previously this endpoint used an
+        # item+pcn+mpn composite WHERE clause, which matched multiple rows
+        # whenever those three fields weren't unique — causing edits to
+        # silently land on the wrong row or overwrite siblings.
+        row_id = data.get('id')
+        if not row_id:
+            return jsonify({'success': False, 'message': 'Row id is required'}), 400
+
         conn = db_manager.get_connection()
         conn.autocommit = False
         cursor = conn.cursor()
@@ -3890,16 +4194,15 @@ def update_warehouse_item():
             # Lock row before updating to prevent concurrent overwrites
             cursor.execute("""
                 SELECT id FROM pcb_inventory."tblWhse_Inventory"
-                WHERE item::text = %s AND pcn::text = %s
-                  AND (mpn::text = %s OR (mpn IS NULL AND %s IS NULL))
+                WHERE id = %s
                 FOR UPDATE
-            """, (data.get('item'), data.get('pcn'), data.get('mpn') or None, data.get('mpn') or None))
+            """, (row_id,))
 
             if not cursor.fetchone():
                 conn.rollback()
                 return jsonify({'success': False, 'message': 'Item not found'}), 404
 
-            # Update warehouse inventory record
+            # Update warehouse inventory record by unique id
             cursor.execute("""
                 UPDATE pcb_inventory."tblWhse_Inventory"
                 SET dc = %s,
@@ -3910,8 +4213,7 @@ def update_warehouse_item():
                     msd = %s,
                     po = %s,
                     cost = %s
-                WHERE item::text = %s AND pcn::text = %s
-                  AND (mpn::text = %s OR (mpn IS NULL AND %s IS NULL))
+                WHERE id = %s
             """, (
                 data.get('dc') or None,
                 onhand_qty,
@@ -3921,10 +4223,7 @@ def update_warehouse_item():
                 data.get('msd') or None,
                 data.get('po') or None,
                 to_float_or_none(data.get('cost')),
-                data.get('item'),
-                data.get('pcn'),
-                data.get('mpn') or None,
-                data.get('mpn') or None
+                row_id
             ))
 
             if cursor.rowcount == 0:
@@ -3933,6 +4232,14 @@ def update_warehouse_item():
 
             conn.commit()
             logger.info(f"Updated warehouse inventory item: {data.get('item')}, PCN: {data.get('pcn')}")
+
+            log_user_activity(
+                'WAREHOUSE_EDIT',
+                f"Edited warehouse inventory: {data.get('item')} (PCN: {data.get('pcn')})",
+                f"Qty: {onhand_qty}, MFG Qty: {mfg_qty}, Loc From: {data.get('loc_from') or '-'}, "
+                f"Loc To: {data.get('loc_to') or '-'}, DC: {data.get('dc') or '-'}, "
+                f"MSD: {data.get('msd') or '-'}, PO: {data.get('po') or '-'}, Cost: {data.get('cost') or '-'}"
+            )
 
             return jsonify({
                 'success': True,
@@ -3965,50 +4272,45 @@ def update_warehouse_item():
 @app.route('/reports')
 @require_auth
 def reports():
-    """Reports page."""
+    """Reports page — based on warehouse inventory only."""
+    if not can_access_tool('reports'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
+    conn = None
     try:
-        # Get current inventory data for reports
-        user_role = session.get('role', 'USER')
-        itar_auth = session.get('itar_authorized', False)
-        inventory = db_manager.get_current_inventory(user_role, itar_auth)
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Summary grouped by location only (warehouse inventory)
+            cur.execute("""
+                SELECT
+                    COALESCE(loc_to, 'Unknown') as location,
+                    COUNT(DISTINCT item) as item_count,
+                    COUNT(*) as record_count,
+                    COALESCE(SUM(onhandqty), 0) as total_quantity,
+                    COALESCE(AVG(onhandqty), 0) as average_quantity
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE onhandqty > 0
+                GROUP BY loc_to
+                ORDER BY total_quantity DESC
+            """)
+            summary = [dict(row) for row in cur.fetchall()]
 
-        # Create summary data matching template expectations
-        summary = []
-        location_type_summary = {}
+            total_qty = sum(s['total_quantity'] for s in summary) or 1
+            for s in summary:
+                s['percentage'] = (s['total_quantity'] / total_qty) * 100
+                s['average_quantity'] = float(s['average_quantity'])
 
-        # Group by location and PCB type
-        for item in inventory:
-            location = item.get('location', 'Unknown')
-            pcb_type = item.get('pcb_type', 'Unknown')
-            key = f"{location}|{pcb_type}"
-
-            if key not in location_type_summary:
-                location_type_summary[key] = {
-                    'location': location,
-                    'pcb_type': pcb_type,
-                    'job_count': 0,
-                    'total_quantity': 0,
-                    'jobs': set()
-                }
-
-            location_type_summary[key]['total_quantity'] += item.get('qty', 0)
-            if item.get('job'):
-                location_type_summary[key]['jobs'].add(item.get('job'))
-
-        # Convert to list format expected by template
-        total_all_qty = sum(item.get('qty', 0) for item in inventory)
-        for data in location_type_summary.values():
-            data['job_count'] = len(data['jobs'])
-            data['average_quantity'] = data['total_quantity'] / max(data['job_count'], 1)
-            data['percentage'] = (data['total_quantity'] / max(total_all_qty, 1)) * 100
-            del data['jobs']  # Remove set object
-            summary.append(data)
-
-        # Sort by total quantity descending
-        summary.sort(key=lambda x: x['total_quantity'], reverse=True)
-
-        # Get audit log
-        audit_log = db_manager.get_audit_log(100)
+            # Recent transactions for activity log (warehouse-related)
+            cur.execute("""
+                SELECT trantype as operation, item as job, pcn,
+                       tranqty as quantity_change, loc_from, loc_to,
+                       tran_time as timestamp, userid
+                FROM pcb_inventory."tblTransaction"
+                WHERE trantype IN ('STOCK', 'PICK', 'RESTOCK', 'PN_CHANGE', 'PCN Generation', 'WAREHOUSE_EDIT')
+                ORDER BY id DESC
+                LIMIT 100
+            """)
+            audit_log = [dict(row) for row in cur.fetchall()]
 
         return render_template('reports.html',
                              summary=summary,
@@ -4017,6 +4319,9 @@ def reports():
         logger.error(f"Error loading reports: {e}")
         flash('Error loading reports. Please try again.', 'error')
         return render_template('reports.html', summary=[], audit_log=[])
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
 
 # ============================================================================
 # SHORTAGE REPORT ROUTES
@@ -4026,6 +4331,9 @@ def reports():
 @require_auth
 def shortage_report():
     """Shortage Report page - list saved reports and generate new ones."""
+    if not can_access_tool('shortage_report'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     conn = None
     try:
         conn = db_manager.get_connection()
@@ -5134,12 +5442,18 @@ def api_source_table_data(table_name):
 @require_auth
 def generate_pcn():
     """Generate PCN page"""
+    if not can_access_tool('generate_pcn'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     return render_template('generate_pcn.html')
 
 @app.route('/po-history')
 @require_auth
 def po_history():
     """PO History lookup page"""
+    if not can_access_tool('po_history'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     # Get pagination parameters
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
@@ -5253,6 +5567,9 @@ def po_history():
 @require_auth
 def pcn_history():
     """PCN transaction history page - focused on efficiency"""
+    if not can_access_tool('pcn_history'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     # Get PCN parameter only
     search_pcn = request.args.get('pcn', '').strip()
 
@@ -5409,33 +5726,53 @@ def stock_alerts():
 def api_generate_pcn():
     """API endpoint to generate new PCN"""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
 
-        # Validate required fields
-        if not data.get('item'):
-            return jsonify({'error': 'Item (Job Number) is required'}), 400
+        # All form fields are required before a PCN can be generated.
+        required_fields = [
+            ('item', 'Part Number'),
+            ('mpn', 'MPN'),
+            ('po_number', 'PO Number'),
+            ('vendor_name', 'Vendor Name'),
+            ('quantity', 'Quantity'),
+            ('date_code', 'Date Code'),
+            ('msd', 'MSD Level'),
+        ]
+        missing = [
+            label for key, label in required_fields
+            if not data.get(key) or str(data.get(key)).strip() == ''
+        ]
+        if missing:
+            return jsonify({
+                'error': 'The following required field(s) are missing: ' + ', '.join(missing)
+            }), 400
 
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
             # Validate quantity input
-            quantity = data.get('quantity', 0)
-            if quantity:
-                try:
-                    quantity = int(quantity)
-                    if quantity < 0 or quantity > 10000:
-                        return jsonify({'error': 'Quantity must be between 0 and 10000'}), 400
-                except (ValueError, TypeError):
-                    return jsonify({'error': 'Quantity must be a number'}), 400
+            try:
+                quantity = int(data.get('quantity'))
+            except (ValueError, TypeError):
+                return jsonify({'error': 'Quantity must be a number'}), 400
+            if quantity < 1 or quantity > 10000:
+                return jsonify({'error': 'Quantity must be between 1 and 10000'}), 400
 
             # Generate new PCN using MAX+1 with advisory lock to prevent duplicates
             # Lock key 73746 = arbitrary constant for PCN generation
+            # Take MAX across BOTH tblTransaction and tblWhse_Inventory so a PCN
+            # surviving in one table but not the other (e.g. after manual edits
+            # or partial re-imports) cannot be re-issued and collide.
             cursor.execute("SELECT pg_advisory_xact_lock(73746)")
             cursor.execute("""
-                SELECT COALESCE(MAX(pcn::integer), 0) + 1 as next_pcn
-                FROM pcb_inventory."tblTransaction"
-                WHERE pcn ~ '^[0-9]+$'
+                SELECT COALESCE(MAX(v), 0) + 1 as next_pcn FROM (
+                    SELECT MAX(pcn::integer) AS v FROM pcb_inventory."tblTransaction"
+                        WHERE pcn ~ '^[0-9]+$'
+                    UNION ALL
+                    SELECT MAX(pcn::integer) AS v FROM pcb_inventory."tblWhse_Inventory"
+                        WHERE pcn ~ '^[0-9]+$'
+                ) m
             """)
             result = cursor.fetchone()
             pcn_number = str(result['next_pcn'])
@@ -5545,14 +5882,14 @@ def api_get_pcn_details(pcn_number):
             # Query from tblWhse_Inventory (main warehouse table)
             if item_filter:
                 cursor.execute("""
-                    SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po
+                    SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po, mfg_qty
                     FROM pcb_inventory."tblWhse_Inventory"
                     WHERE pcn::text = %s AND item::text = %s
                     LIMIT 1
                 """, (pcn_number, item_filter))
             else:
                 cursor.execute("""
-                    SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po
+                    SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po, mfg_qty
                     FROM pcb_inventory."tblWhse_Inventory"
                     WHERE pcn::text = %s
                     ORDER BY id DESC
@@ -5561,11 +5898,23 @@ def api_get_pcn_details(pcn_number):
             whse_records = cursor.fetchall()
 
             if whse_records:
+                # Check restock status: is the last PICK/RESTOCK transaction a RESTOCK?
+                cursor.execute("""
+                    SELECT trantype FROM pcb_inventory."tblTransaction"
+                    WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
+                    ORDER BY id DESC LIMIT 1
+                """, (pcn_number,))
+                last_txn = cursor.fetchone()
+                already_restocked = bool(last_txn and last_txn['trantype'] == 'RESTOCK')
+                # Check if PCN was picked but not yet restocked (blocks re-pick)
+                already_picked = bool(last_txn and last_txn['trantype'] == 'PICK')
+
                 # If multiple records found for the same PCN, return them all
-                # so the frontend can ask the user to choose
                 if len(whse_records) > 1:
                     matches = []
                     for rec in whse_records:
+                        mfg = rec.get('mfg_qty') or '0'
+                        mfg_int = int(mfg) if str(mfg).lstrip('-').isdigit() else 0
                         matches.append({
                             'pcn_number': str(rec['pcn']),
                             'part_number': rec['item'],
@@ -5576,18 +5925,23 @@ def api_get_pcn_details(pcn_number):
                             'msd': rec['msd'],
                             'location': rec['loc_to'],
                             'location_from': rec['loc_from'],
-                            'po_number': rec['po']
+                            'po_number': rec['po'],
+                            'mfg_qty': mfg_int
                         })
                     return jsonify({
                         'success': True,
                         'multiple': True,
                         'count': len(matches),
                         'matches': matches,
+                        'already_restocked': already_restocked,
+                        'already_picked': already_picked,
                         'message': f'Multiple items found for PCN {pcn_number}. Please select the correct one.'
                     })
 
-                # Single record - return as before
+                # Single record
                 whse_record = whse_records[0]
+                mfg = whse_record.get('mfg_qty') or '0'
+                mfg_int = int(mfg) if str(mfg).lstrip('-').isdigit() else 0
                 return jsonify({
                     'success': True,
                     'pcn_number': str(whse_record['pcn']),
@@ -5599,7 +5953,10 @@ def api_get_pcn_details(pcn_number):
                     'msd': whse_record['msd'],
                     'location': whse_record['loc_to'],
                     'location_from': whse_record['loc_from'],
-                    'po_number': whse_record['po']
+                    'po_number': whse_record['po'],
+                    'mfg_qty': mfg_int,
+                    'already_restocked': already_restocked,
+                    'already_picked': already_picked
                 })
 
             # If not in tblWhse_Inventory, try tblTransaction
@@ -6297,6 +6654,9 @@ def api_pcn_assignment_history():
 @require_auth
 def bom_loader():
     """BOM Loader page"""
+    if not can_access_tool('bom_loader'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     response = make_response(render_template('bom_loader.html'))
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
@@ -6665,10 +7025,11 @@ def inventory_history_page():
 @require_auth
 def admin_notifications():
     """Admin page to view activity notifications.
-    Admins see all activity. Theresa sees only James's activity."""
+    Admins and Kris see all activity. Theresa sees only James's activity."""
     is_theresa = session.get('username', '').lower() in MANAGE_AUTHORIZED_USERS
-    if not is_admin_user() and not is_theresa:
-        flash('Access denied. Admin privileges required.', 'danger')
+    is_kris = session.get('username', '').lower() in NOTIFICATION_VIEWER_USERS
+    if not is_admin_user() and not is_theresa and not is_kris:
+        flash('Access denied.', 'danger')
         return redirect(url_for('index'))
 
     conn = None
@@ -6722,8 +7083,8 @@ def admin_notifications():
 @require_auth
 def mark_notifications_seen():
     """Mark all notifications as seen."""
-    if not is_admin_user():
-        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+    if not can_view_notifications():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
 
     conn = None
     try:
@@ -6783,7 +7144,8 @@ def clear_notifications():
 def get_notification_count():
     """Get count of unseen notifications. Theresa sees only James's count."""
     is_theresa = session.get('username', '').lower() in MANAGE_AUTHORIZED_USERS
-    if not is_admin_user() and not is_theresa:
+    is_kris = session.get('username', '').lower() in NOTIFICATION_VIEWER_USERS
+    if not is_admin_user() and not is_theresa and not is_kris:
         return jsonify({'count': 0})
 
     conn = None
@@ -6817,6 +7179,9 @@ def get_notification_count():
 @require_auth
 def jobs_list():
     """Jobs list page with search."""
+    if not can_access_tool('jobs'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     search_query = request.args.get('q', '').strip()
     conn = None
     try:
@@ -6855,6 +7220,9 @@ def jobs_list():
 @require_auth
 def job_detail(job_number):
     """Job detail page with live inventory lookup."""
+    if not can_access_tool('jobs'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     conn = None
     try:
         conn = db_manager.get_connection()
@@ -7831,8 +8199,8 @@ def handle_csrf_error(e):
             'error': 'CSRF token validation failed. Please refresh the page and try again.'
         }), 400
 
-    # For non-API requests, return simple HTML error message
-    return f"<h1>400 Bad Request</h1><p>{e.description}</p><p>Please refresh the page and try again.</p>", 400
+    # For non-API requests, silently redirect back — fresh page with new token
+    return redirect(request.url)
 
 @app.errorhandler(404)
 def not_found_error(error):
@@ -7988,26 +8356,31 @@ def aci_numbers():
 def api_aci_next_number():
     if not can_manage_parts():
         return jsonify({'success': False, 'error': 'Access denied'}), 403
-    """Get the next available ACI number by scanning tblPN_List and tblACI_PartNumbers."""
+    """Get the next available ACI number — fills gaps from deleted entries first."""
     conn = None
     try:
         conn = db_manager.get_connection()
         with conn.cursor() as cursor:
-            # Find the highest ACI-XXXXX number in the 5-digit sequence (10000-99999)
+            # Find the smallest unused number in the ACI-XXXXX sequence
+            # Looks at both tblPN_List and tblACI_PartNumbers, fills gaps from deletions
             cursor.execute("""
-                SELECT MAX(num) FROM (
+                WITH used AS (
                     SELECT CAST(SUBSTRING(item FROM 5) AS INTEGER) as num
                     FROM pcb_inventory."tblPN_List"
                     WHERE item ~ '^ACI-[0-9]{5}$'
-                    UNION ALL
+                    UNION
                     SELECT CAST(SUBSTRING(aci_pn FROM 5) AS INTEGER) as num
                     FROM pcb_inventory."tblACI_PartNumbers"
                     WHERE aci_pn ~ '^ACI-[0-9]{5}$'
-                ) sub
+                )
+                SELECT MIN(n) FROM generate_series(
+                    10001,
+                    GREATEST((SELECT COALESCE(MAX(num), 10000) FROM used) + 1, 10001)
+                ) n
+                WHERE n NOT IN (SELECT num FROM used)
             """)
             row = cursor.fetchone()
-            max_num = row[0] if row and row[0] else 10000
-            next_num = max_num + 1
+            next_num = row[0] if row and row[0] else 10001
             return jsonify({'success': True, 'next_number': next_num, 'next_aci_pn': f'ACI-{next_num}'})
     except Exception as e:
         logger.error(f"Error getting next ACI number: {e}")
@@ -8044,20 +8417,24 @@ def api_aci_create():
             # Lock to prevent race conditions on concurrent creates
             cursor.execute("LOCK TABLE pcb_inventory.\"tblACI_PartNumbers\" IN EXCLUSIVE MODE")
 
-            # Get the current max ACI number in the 5-digit sequence
+            # Build set of all currently used ACI numbers
             cursor.execute("""
-                SELECT MAX(num) FROM (
-                    SELECT CAST(SUBSTRING(item FROM 5) AS INTEGER) as num
-                    FROM pcb_inventory."tblPN_List"
-                    WHERE item ~ '^ACI-[0-9]{5}$'
-                    UNION ALL
-                    SELECT CAST(SUBSTRING(aci_pn FROM 5) AS INTEGER) as num
-                    FROM pcb_inventory."tblACI_PartNumbers"
-                    WHERE aci_pn ~ '^ACI-[0-9]{5}$'
-                ) sub
+                SELECT CAST(SUBSTRING(item FROM 5) AS INTEGER) as num
+                FROM pcb_inventory."tblPN_List"
+                WHERE item ~ '^ACI-[0-9]{5}$'
+                UNION
+                SELECT CAST(SUBSTRING(aci_pn FROM 5) AS INTEGER) as num
+                FROM pcb_inventory."tblACI_PartNumbers"
+                WHERE aci_pn ~ '^ACI-[0-9]{5}$'
             """)
-            row = cursor.fetchone()
-            current_max = row[0] if row and row[0] else 10000
+            used_numbers = set(r[0] for r in cursor.fetchall())
+
+            def next_available():
+                """Find smallest unused number >= 10001."""
+                n = 10001
+                while n in used_numbers:
+                    n += 1
+                return n
 
             username = session.get('username', 'unknown')
 
@@ -8066,23 +8443,21 @@ def api_aci_create():
                 mpn = (part.get('mpn') or '').strip()
                 description = (part.get('description') or '').strip()
                 comment = (part.get('comment') or '').strip()
-                loaded = (part.get('loaded') or 'N').strip().upper()
-                if loaded not in ('Y', 'N'):
-                    loaded = 'N'
 
                 if not manufacturer and not mpn and not description:
                     errors.append('Skipped empty row')
                     continue
 
-                current_max += 1
-                aci_pn = f'ACI-{current_max}'
+                num = next_available()
+                used_numbers.add(num)
+                aci_pn = f'ACI-{num}'
 
                 # Insert into tblACI_PartNumbers
                 cursor.execute("""
                     INSERT INTO pcb_inventory."tblACI_PartNumbers"
-                    (aci_pn, manufacturer, mpn, description, comment, loaded, created_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (aci_pn, manufacturer, mpn, description, comment, loaded, username))
+                    (aci_pn, manufacturer, mpn, description, comment, created_by)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (aci_pn, manufacturer, mpn, description, comment, username))
 
                 # Also insert into tblPN_List so it shows up in inventory lookups
                 cursor.execute("""
@@ -8095,8 +8470,7 @@ def api_aci_create():
                     'aci_pn': aci_pn,
                     'manufacturer': manufacturer,
                     'mpn': mpn,
-                    'description': description,
-                    'loaded': loaded
+                    'description': description
                 })
 
         conn.commit()
@@ -8151,6 +8525,118 @@ def api_aci_history():
             return jsonify({'success': True, 'history': rows})
     except Exception as e:
         logger.error(f"Error fetching ACI history: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/api/aci-numbers/delete', methods=['POST'])
+@require_auth
+def api_aci_delete():
+    """Delete an ACI part number."""
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    data = request.get_json() or {}
+    aci_pn = (data.get('aci_pn') or '').strip()
+    if not aci_pn:
+        return jsonify({'success': False, 'error': 'ACI number required'}), 400
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                'DELETE FROM pcb_inventory."tblACI_PartNumbers" WHERE aci_pn = %s',
+                (aci_pn,)
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+            if deleted == 0:
+                return jsonify({'success': False, 'error': f'{aci_pn} not found'}), 404
+            log_user_activity('ACI_DELETE', f'Deleted ACI number {aci_pn}')
+            return jsonify({'success': True})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error deleting ACI number: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/api/aci-numbers/lookup/<aci_pn>', methods=['GET'])
+@require_auth
+def api_aci_lookup(aci_pn):
+    """Look up an ACI part number's manufacturer/MPN/description for auto-fill on Generate PCN."""
+    aci_pn = (aci_pn or '').strip()
+    if not aci_pn:
+        return jsonify({'success': False, 'error': 'ACI number required'}), 400
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            cursor.execute("""
+                SELECT aci_pn, manufacturer, mpn, description, comment
+                FROM pcb_inventory."tblACI_PartNumbers"
+                WHERE aci_pn = %s
+                LIMIT 1
+            """, (aci_pn,))
+            row = cursor.fetchone()
+            if not row:
+                return jsonify({'success': False, 'error': f'{aci_pn} not found'}), 404
+            return jsonify({
+                'success': True,
+                'aci_pn': row['aci_pn'],
+                'manufacturer': row['manufacturer'] or '',
+                'mpn': row['mpn'] or '',
+                'description': row['description'] or '',
+                'comment': row['comment'] or ''
+            })
+        finally:
+            cursor.close()
+    except Exception as e:
+        logger.error(f"Error looking up ACI number {aci_pn}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/api/aci-numbers/update', methods=['POST'])
+@require_auth
+def api_aci_update():
+    """Update an existing ACI part number."""
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    data = request.get_json() or {}
+    aci_pn = (data.get('aci_pn') or '').strip()
+    if not aci_pn:
+        return jsonify({'success': False, 'error': 'ACI number required'}), 400
+    manufacturer = (data.get('manufacturer') or '').strip()
+    mpn = (data.get('mpn') or '').strip()
+    description = (data.get('description') or '').strip()
+    comment = (data.get('comment') or '').strip()
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE pcb_inventory."tblACI_PartNumbers"
+                SET manufacturer = %s, mpn = %s, description = %s, comment = %s
+                WHERE aci_pn = %s
+            """, (manufacturer, mpn, description, comment, aci_pn))
+            updated = cursor.rowcount
+            conn.commit()
+            if updated == 0:
+                return jsonify({'success': False, 'error': f'{aci_pn} not found'}), 404
+            log_user_activity('ACI_UPDATE', f'Updated ACI number {aci_pn}')
+            return jsonify({'success': True})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"Error updating ACI number: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         if conn:

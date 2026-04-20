@@ -160,6 +160,7 @@
                         <td>{{ row.Cost if row.Cost else '-' }}</td>
                         <td class="text-center">
                             <div class="btn-group btn-group-sm" role="group"
+                                 data-id="{{ row.id|default('', true)|e }}"
                                  data-item="{{ row.Item|default('', true)|e }}"
                                  data-pcn="{{ row.PCN|default('', true)|e }}"
                                  data-mpn="{{ row.MPN|default('', true)|e }}">
@@ -176,7 +177,7 @@
                                     <i class="bi bi-dash-circle"></i>
                                 </button>
                                 <button type="button" class="btn btn-outline-primary" title="Edit"
-                                        onclick="editItem(this.parentElement.dataset.item, this.parentElement.dataset.pcn, this.parentElement.dataset.mpn)">
+                                        onclick="editItem(this.parentElement.dataset.id, this.parentElement.dataset.item, this.parentElement.dataset.pcn, this.parentElement.dataset.mpn)">
                                     <i class="bi bi-pencil"></i>
                                 </button>
                             </div>
@@ -671,11 +672,14 @@ function pickItem(jobNumber, pcn, mpn) {
     window.location.href = pickUrl;
 }
 
-function editItem(jobNumber, pcn, mpn) {
-    console.log('Edit button clicked:', {jobNumber, pcn, mpn});
+function editItem(rowId, jobNumber, pcn, mpn) {
+    console.log('Edit button clicked:', {rowId, jobNumber, pcn, mpn});
 
-    // Fetch the full record data
-    const url = `/api/warehouse-inventory/item?item=${encodeURIComponent(jobNumber)}&pcn=${encodeURIComponent(pcn)}`;
+    // Fetch the full record data by unique row id so we can later save back
+    // to the exact same row (the composite item+pcn+mpn is not unique).
+    const url = rowId
+        ? `/api/warehouse-inventory/item?id=${encodeURIComponent(rowId)}`
+        : `/api/warehouse-inventory/item?item=${encodeURIComponent(jobNumber)}&pcn=${encodeURIComponent(pcn)}`;
     console.log('Fetching from:', url);
 
     fetch(url)
@@ -687,7 +691,8 @@ function editItem(jobNumber, pcn, mpn) {
             console.log('Response data:', data);
 
             if (data.success && data.item) {
-                // Populate modal fields (PCN first, then Item)
+                // Populate modal fields (id first, then PCN, then Item)
+                document.getElementById('edit_id').value = data.item.id || '';
                 document.getElementById('edit_pcn').value = data.item.PCN || '';
                 document.getElementById('edit_item').value = data.item.Item || '';
                 document.getElementById('edit_mpn').value = data.item.MPN || '';
@@ -777,6 +782,7 @@ function saveEdit() {
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
     const itemData = {
+        id: document.getElementById('edit_id').value,
         item: document.getElementById('edit_item').value,
         pcn: document.getElementById('edit_pcn').value,
         mpn: document.getElementById('edit_mpn').value,
