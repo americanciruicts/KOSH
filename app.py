@@ -413,7 +413,7 @@ def is_admin_user():
 # Users listed here are RESTRICTED to only the tools specified
 # Admins always have access to everything regardless of this setting
 USER_TOOL_ACCESS = {
-    'james@americancircuits.com': {'dashboard', 'generate_pcn', 'stock', 'pick', 'restock', 'pcn_history', 'warehouse_inventory'},
+    'james@americancircuits.com': {'dashboard', 'generate_pcn', 'stock', 'pick', 'restock', 'pcn_history', 'warehouse_inventory', 'part_number_change'},
     # Theresa: everything except pcb_inventory
     'parts@americancircuits.com': {
         'dashboard', 'generate_pcn', 'stock', 'pick', 'restock',
