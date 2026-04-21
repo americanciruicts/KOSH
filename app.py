@@ -5753,12 +5753,15 @@ def api_generate_pcn():
     try:
         data = request.get_json() or {}
 
-        # Only Part Number and Quantity are required; other fields are
-        # optional so operators can generate a PCN with whatever info they
-        # have on hand.
+        # All form fields are required before a PCN can be generated.
         required_fields = [
             ('item', 'Part Number'),
+            ('mpn', 'MPN'),
+            ('po_number', 'PO Number'),
+            ('vendor_name', 'Vendor Name'),
             ('quantity', 'Quantity'),
+            ('date_code', 'Date Code'),
+            ('msd', 'MSD Level'),
         ]
         missing = [
             label for key, label in required_fields
