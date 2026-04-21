@@ -1010,25 +1010,8 @@ class DatabaseManager:
                         'records_deleted': deleted_count
                     }
 
-                # Block re-pick if this PCN's last KOSH-era PICK/RESTOCK is a
-                # PICK (i.e. picked in KOSH without a following restock).
-                # Legacy MDB picks (userid = 'peter', 'john', etc.) are
-                # excluded so pre-migration history never blocks a real pick.
-                if pcn:
-                    cursor.execute("""
-                        SELECT trantype FROM pcb_inventory."tblTransaction"
-                        WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
-                          AND userid LIKE '%%@%%'
-                        ORDER BY id DESC LIMIT 1
-                    """, (str(pcn),))
-                    last_txn = cursor.fetchone()
-                    if last_txn and last_txn[0] == 'PICK':
-                        conn.rollback()
-                        return {
-                            'success': False,
-                            'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
-                            'job': job, 'pcb_type': pcb_type
-                        }
+                # "Already picked" block removed per user request — picks are
+                # always allowed regardless of prior PICK/RESTOCK history.
 
                 # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
@@ -5904,21 +5887,11 @@ def api_get_pcn_details(pcn_number):
             whse_records = cursor.fetchall()
 
             if whse_records:
-                # Check restock status based on the last KOSH-era PICK/RESTOCK.
-                # Legacy MDB imports use short usernames (peter, john, harsh,
-                # etc.); real KOSH transactions use the authenticated user's
-                # email. Filtering on userid LIKE '%@%' excludes bulk-imported
-                # legacy rows so a PCN that was only ever picked in the old
-                # Access system does not stay permanently "already picked".
-                cursor.execute("""
-                    SELECT trantype FROM pcb_inventory."tblTransaction"
-                    WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
-                      AND userid LIKE '%%@%%'
-                    ORDER BY id DESC LIMIT 1
-                """, (pcn_number,))
-                last_txn = cursor.fetchone()
-                already_restocked = bool(last_txn and last_txn['trantype'] == 'RESTOCK')
-                already_picked = bool(last_txn and last_txn['trantype'] == 'PICK')
+                # Block checks disabled per user request — the "already picked"
+                # flag was gating legitimate picks, so surface False regardless
+                # of prior PICK/RESTOCK history.
+                already_restocked = False
+                already_picked = False
 
                 # If multiple records found for the same PCN, return them all
                 if len(whse_records) > 1:
