@@ -1010,35 +1010,25 @@ class DatabaseManager:
                         'records_deleted': deleted_count
                     }
 
-                # Block re-pick only if this PCN was already picked, not yet
-                # restocked, AND there is no remaining qty in warehouse. If
-                # onhandqty > 0, the part is physically still on the shelf, so
-                # a stale PICK transaction (e.g. legacy MDB data where the
-                # matching restock never made it over) must not block a real
-                # pick. Without this qty guard, ~39k legacy PICK rows with
-                # only ~400 RESTOCKs would permanently block picks on any PCN
-                # whose history was imported mid-cycle.
+                # Block re-pick if this PCN's last KOSH-era PICK/RESTOCK is a
+                # PICK (i.e. picked in KOSH without a following restock).
+                # Legacy MDB picks (userid = 'peter', 'john', etc.) are
+                # excluded so pre-migration history never blocks a real pick.
                 if pcn:
                     cursor.execute("""
                         SELECT trantype FROM pcb_inventory."tblTransaction"
                         WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
+                          AND userid LIKE '%%@%%'
                         ORDER BY id DESC LIMIT 1
                     """, (str(pcn),))
                     last_txn = cursor.fetchone()
                     if last_txn and last_txn[0] == 'PICK':
-                        cursor.execute("""
-                            SELECT COALESCE(SUM(onhandqty), 0)
-                            FROM pcb_inventory."tblWhse_Inventory"
-                            WHERE pcn::text = %s
-                        """, (str(pcn),))
-                        qty_on_hand = int(cursor.fetchone()[0] or 0)
-                        if qty_on_hand <= 0:
-                            conn.rollback()
-                            return {
-                                'success': False,
-                                'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
-                                'job': job, 'pcb_type': pcb_type
-                            }
+                        conn.rollback()
+                        return {
+                            'success': False,
+                            'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
+                            'job': job, 'pcb_type': pcb_type
+                        }
 
                 # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
@@ -1446,11 +1436,14 @@ class DatabaseManager:
                     except (ValueError, TypeError):
                         mfg_qty_int = 0
 
-                # Check if this PCN was picked since its last restock
-                # If the most recent transaction is RESTOCK (no PICK after it), block
+                # Check last KOSH-era PICK/RESTOCK to decide if restock is valid.
+                # Legacy MDB transactions are excluded (userid LIKE '%@%' keeps
+                # only authenticated-user rows), so the restock flow isn't
+                # blocked or mis-routed by pre-migration history.
                 cursor.execute("""
                     SELECT trantype FROM pcb_inventory."tblTransaction"
                     WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
+                      AND userid LIKE '%%@%%'
                     ORDER BY id DESC
                     LIMIT 1
                 """, (str(pcn_num),))
@@ -1461,18 +1454,6 @@ class DatabaseManager:
                         'success': False,
                         'error': f'PCN {pcn_num} has already been restocked. It must be picked again before it can be restocked.'
                     }
-                if not last_txn:
-                    # No PICK or RESTOCK found at all — check if ever picked
-                    cursor.execute("""
-                        SELECT COUNT(*) FROM pcb_inventory."tblTransaction"
-                        WHERE trantype = 'PICK' AND pcn::text = %s
-                    """, (str(pcn_num),))
-                    if cursor.fetchone()[0] == 0:
-                        conn.rollback()
-                        return {
-                            'success': False,
-                            'error': f'PCN {pcn_num} has not been picked from inventory. Parts must be picked before they can be restocked.'
-                        }
 
                 # Log if restocking more than tracked MFG quantity (user may have physical count)
                 if mfg_qty_int < quantity:
@@ -5923,20 +5904,21 @@ def api_get_pcn_details(pcn_number):
             whse_records = cursor.fetchall()
 
             if whse_records:
-                # Check restock status: is the last PICK/RESTOCK transaction a RESTOCK?
+                # Check restock status based on the last KOSH-era PICK/RESTOCK.
+                # Legacy MDB imports use short usernames (peter, john, harsh,
+                # etc.); real KOSH transactions use the authenticated user's
+                # email. Filtering on userid LIKE '%@%' excludes bulk-imported
+                # legacy rows so a PCN that was only ever picked in the old
+                # Access system does not stay permanently "already picked".
                 cursor.execute("""
                     SELECT trantype FROM pcb_inventory."tblTransaction"
                     WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
+                      AND userid LIKE '%%@%%'
                     ORDER BY id DESC LIMIT 1
                 """, (pcn_number,))
                 last_txn = cursor.fetchone()
                 already_restocked = bool(last_txn and last_txn['trantype'] == 'RESTOCK')
-                # Only flag as already_picked if the last PICK/RESTOCK is PICK
-                # AND the PCN has no stock on hand. With the stock guard, a legacy
-                # MDB PICK transaction (never matched by a RESTOCK) won't block
-                # the UI from picking a PCN that physically still has units.
-                total_onhand = sum(int(r['onhandqty'] or 0) for r in whse_records)
-                already_picked = bool(last_txn and last_txn['trantype'] == 'PICK' and total_onhand <= 0)
+                already_picked = bool(last_txn and last_txn['trantype'] == 'PICK')
 
                 # If multiple records found for the same PCN, return them all
                 if len(whse_records) > 1:
