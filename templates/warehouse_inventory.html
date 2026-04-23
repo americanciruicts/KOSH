@@ -699,17 +699,26 @@ function editItem(rowId, jobNumber, pcn, mpn) {
 
             if (data.success && data.item) {
                 // Populate modal fields (id first, then PCN, then Item).
-                // Use ?? '' (nullish coalescing) so numeric 0 is preserved —
-                // `0 || ''` would evaluate to '' and wipe legit zero quantities.
+                // Use blank() so numeric 0 is preserved — `0 || ''` evaluates
+                // to '' and would wipe legit zero quantities on save.
+                // sanitizeLoc clears legacy placeholder values ('-', 'n/a',
+                // 'NA', 'Warehouse') that fail isValidLocation and would block
+                // the save. These are MDB-migration artifacts; clearing them is
+                // correct — the server also treats NULL the same as absent.
                 const blank = v => (v === null || v === undefined ? '' : v);
+                const INVALID_LOCS = ['-', 'n/a', 'na', 'n/a', 'warehouse', 'none'];
+                const sanitizeLoc = v => {
+                    const s = blank(v);
+                    return (s && INVALID_LOCS.includes(s.trim().toLowerCase())) ? '' : s;
+                };
                 document.getElementById('edit_id').value = blank(data.item.id);
                 document.getElementById('edit_pcn').value = blank(data.item.PCN);
                 document.getElementById('edit_item').value = blank(data.item.Item);
                 document.getElementById('edit_mpn').value = blank(data.item.MPN);
                 document.getElementById('edit_dc').value = blank(data.item.DC);
                 document.getElementById('edit_onhandqty').value = blank(data.item.OnHandQty);
-                document.getElementById('edit_loc_from').value = blank(data.item.Loc_From);
-                document.getElementById('edit_location').value = blank(data.item.Loc_To);
+                document.getElementById('edit_loc_from').value = sanitizeLoc(data.item.Loc_From);
+                document.getElementById('edit_location').value = sanitizeLoc(data.item.Loc_To);
                 document.getElementById('edit_mfg_qty').value = blank(data.item.MFG_Qty);
                 document.getElementById('edit_msd').value = blank(data.item.MSD);
                 document.getElementById('edit_po').value = blank(data.item.PO);

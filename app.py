@@ -4281,33 +4281,26 @@ def update_warehouse_item():
                 conn.rollback()
                 return jsonify({'success': False, 'message': 'Item not found'}), 404
 
-            # Record a PICK (decrease) or STOCK (increase) transaction if the
-            # on-hand quantity changed via this edit. This keeps PCN history
-            # and the reconcile formula consistent with manual edits.
+            # Record an ADJT transaction when on-hand qty changes via a manual
+            # warehouse edit. Using ADJT (not PICK/STOCK) is critical: the
+            # already-picked guard only looks at PICK/RESTOCK/PURGE, so an ADJT
+            # never permanently blocks a PCN from being picked later. Logging
+            # it as PICK or STOCK caused ghost "picks" in history and locked out
+            # every PCN that Theresa had manually adjusted.
             prior_onhand_int = int(prior_onhand) if prior_onhand is not None else 0
             new_onhand_int = onhand_qty if onhand_qty is not None else prior_onhand_int
             delta = new_onhand_int - prior_onhand_int
             if delta != 0 and prior_pcn is not None:
                 username = session.get('username', 'system')
                 new_loc = data.get('loc_to') or prior_loc or 'Warehouse'
-                if delta < 0:
-                    cursor.execute("""
-                        INSERT INTO pcb_inventory."tblTransaction"
-                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, po, userid)
-                        VALUES ('PICK', %s, %s, %s, %s, %s, %s,
-                                TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
-                                %s, 'MFG Floor', %s, %s)
-                    """, (prior_item, str(prior_pcn), prior_mpn, prior_dc, prior_msd,
-                          abs(delta), prior_loc or 'Warehouse', prior_po, username))
-                else:
-                    cursor.execute("""
-                        INSERT INTO pcb_inventory."tblTransaction"
-                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, po, userid)
-                        VALUES ('STOCK', %s, %s, %s, %s, %s, %s,
-                                TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
-                                'n/a', %s, %s, %s)
-                    """, (prior_item, str(prior_pcn), prior_mpn, prior_dc, prior_msd,
-                          delta, new_loc, prior_po, username))
+                cursor.execute("""
+                    INSERT INTO pcb_inventory."tblTransaction"
+                    (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, po, userid)
+                    VALUES ('ADJT', %s, %s, %s, %s, %s, %s,
+                            TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
+                            %s, %s, %s, %s)
+                """, (prior_item, str(prior_pcn), prior_mpn, prior_dc, prior_msd,
+                      delta, prior_loc or 'n/a', new_loc, prior_po, username))
 
             conn.commit()
             logger.info(f"Updated warehouse inventory item: {data.get('item')}, PCN: {data.get('pcn')}")
