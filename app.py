@@ -2733,32 +2733,68 @@ def _sync_onhand_from_transactions():
         try:
             conn = db_manager.get_connection()
             cur = conn.cursor()
+            # RNDT is a physical recount — the tranqty is the authoritative
+            # on-hand at that moment, NOT an additive delta. So for each
+            # (pcn, mpn) use the most recent RNDT as baseline and apply only
+            # transactions recorded after it. If no RNDT exists, sum from
+            # the start. RESTOCK is a positive contributor (previously missing,
+            # which caused restocked inventory to be silently zeroed out).
             cur.execute("""
-                WITH net AS (
+                WITH last_rndt AS (
+                    SELECT DISTINCT ON (pcn::text, LOWER(TRIM(COALESCE(mpn,''))))
+                           pcn::text AS pcn,
+                           LOWER(TRIM(COALESCE(mpn,''))) AS mpn_key,
+                           id AS rndt_id,
+                           tranqty::integer AS rndt_qty
+                    FROM pcb_inventory."tblTransaction"
+                    WHERE trantype = 'RNDT'
+                      AND COALESCE(reversed, false) = false
+                      AND tranqty ~ '^-?[0-9]+$'
+                    ORDER BY pcn::text, LOWER(TRIM(COALESCE(mpn,''))), id DESC
+                ),
+                activity AS (
                     SELECT pcn::text AS pcn,
                            LOWER(TRIM(COALESCE(mpn,''))) AS mpn_key,
-                           GREATEST(0, SUM(CASE trantype
-                                 WHEN 'INDF' THEN tranqty::integer
-                                 WHEN 'STOCK' THEN tranqty::integer
-                                 WHEN 'PCN Generation' THEN tranqty::integer
-                                 WHEN 'RNDT' THEN tranqty::integer
-                                 WHEN 'PICK' THEN -tranqty::integer
-                                 WHEN 'PURGE' THEN -tranqty::integer
-                                 ELSE 0
-                               END)) AS qty,
-                           SUM(CASE WHEN trantype = 'PICK' THEN 1 ELSE 0 END) AS pick_count
+                           SUM(CASE WHEN trantype = 'PICK' THEN 1 ELSE 0 END) AS pick_count,
+                           COUNT(*) FILTER (WHERE trantype IN ('RNDT','RESTOCK')) AS touch_count
                     FROM pcb_inventory."tblTransaction"
                     WHERE COALESCE(reversed, false) = false
                       AND tranqty ~ '^-?[0-9]+$'
                     GROUP BY pcn::text, LOWER(TRIM(COALESCE(mpn,'')))
+                ),
+                net AS (
+                    SELECT t.pcn::text AS pcn,
+                           LOWER(TRIM(COALESCE(t.mpn,''))) AS mpn_key,
+                           GREATEST(0,
+                             COALESCE(MAX(r.rndt_qty), 0)
+                             + SUM(CASE
+                                 WHEN t.trantype = 'INDF' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'STOCK' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'PCN Generation' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'RESTOCK' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'PICK' THEN -t.tranqty::integer
+                                 WHEN t.trantype = 'PURGE' THEN -t.tranqty::integer
+                                 ELSE 0
+                               END)
+                           ) AS qty
+                    FROM pcb_inventory."tblTransaction" t
+                    LEFT JOIN last_rndt r
+                      ON t.pcn::text = r.pcn
+                     AND LOWER(TRIM(COALESCE(t.mpn,''))) = r.mpn_key
+                    WHERE COALESCE(t.reversed, false) = false
+                      AND t.tranqty ~ '^-?[0-9]+$'
+                      AND (r.rndt_id IS NULL OR t.id >= r.rndt_id)
+                    GROUP BY t.pcn::text, LOWER(TRIM(COALESCE(t.mpn,'')))
                 )
                 UPDATE pcb_inventory."tblWhse_Inventory" w
                 SET onhandqty = n.qty
                 FROM net n
+                JOIN activity a
+                  ON a.pcn = n.pcn AND a.mpn_key = n.mpn_key
                 WHERE w.pcn::text = n.pcn
                   AND LOWER(TRIM(COALESCE(w.mpn,''))) = n.mpn_key
-                  AND w.onhandqty > n.qty
-                  AND n.pick_count > 0
+                  AND w.onhandqty IS DISTINCT FROM n.qty
+                  AND (a.pick_count > 0 OR a.touch_count > 0)
             """)
             updated = cur.rowcount
             conn.commit()
