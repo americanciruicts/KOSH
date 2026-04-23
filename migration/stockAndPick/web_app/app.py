@@ -2783,6 +2783,7 @@ def _sync_onhand_from_transactions():
                                  WHEN 'STOCK' THEN tranqty::integer
                                  WHEN 'PCN Generation' THEN tranqty::integer
                                  WHEN 'RNDT' THEN tranqty::integer
+                                 WHEN 'RESTOCK' THEN tranqty::integer
                                  WHEN 'PICK' THEN -tranqty::integer
                                  WHEN 'PURGE' THEN -tranqty::integer
                                  ELSE 0
