@@ -1010,8 +1010,27 @@ class DatabaseManager:
                         'records_deleted': deleted_count
                     }
 
-                # "Already picked" block removed per user request — picks are
-                # always allowed regardless of prior PICK/RESTOCK history.
+                # Block re-pick if this PCN's last KOSH-era PICK/RESTOCK is a
+                # PICK (i.e. picked in KOSH without a following restock). The
+                # userid LIKE '%@%' filter excludes legacy MDB imports (short
+                # usernames like 'peter', 'john') so pre-migration history
+                # never blocks a real pick. PURGE is treated as a pick for the
+                # purpose of this guard.
+                if pcn:
+                    cursor.execute("""
+                        SELECT trantype FROM pcb_inventory."tblTransaction"
+                        WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK', 'PURGE')
+                          AND userid LIKE '%%@%%'
+                        ORDER BY id DESC LIMIT 1
+                    """, (str(pcn),))
+                    last_txn = cursor.fetchone()
+                    if last_txn and last_txn[0] in ('PICK', 'PURGE'):
+                        conn.rollback()
+                        return {
+                            'success': False,
+                            'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
+                            'job': job, 'pcb_type': pcb_type
+                        }
 
                 # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
@@ -4293,6 +4312,12 @@ def update_warehouse_item():
             conn.commit()
             logger.info(f"Updated warehouse inventory item: {data.get('item')}, PCN: {data.get('pcn')}")
 
+            # Invalidate cached inventory reads so dashboards and other views
+            # that hit get_current_inventory don't show stale numbers after a
+            # save. Without this, edits can take up to 60s to appear elsewhere.
+            cache.delete_memoized(db_manager.get_current_inventory)
+            cache.delete('stats_summary')
+
             log_user_activity(
                 'WAREHOUSE_EDIT',
                 f"Edited warehouse inventory: {data.get('item')} (PCN: {data.get('pcn')})",
@@ -5958,11 +5983,22 @@ def api_get_pcn_details(pcn_number):
             whse_records = cursor.fetchall()
 
             if whse_records:
-                # Block checks disabled per user request — the "already picked"
-                # flag was gating legitimate picks, so surface False regardless
-                # of prior PICK/RESTOCK history.
-                already_restocked = False
-                already_picked = False
+                # Check restock status based on the last KOSH-era PICK/RESTOCK.
+                # Legacy MDB imports use short usernames (peter, john, harsh,
+                # etc.); real KOSH transactions use the authenticated user's
+                # email. Filtering on userid LIKE '%@%' excludes bulk-imported
+                # legacy rows so a PCN that was only ever picked in the old
+                # Access system does not stay permanently "already picked".
+                # PURGE is treated as a pick for this guard.
+                cursor.execute("""
+                    SELECT trantype FROM pcb_inventory."tblTransaction"
+                    WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK', 'PURGE')
+                      AND userid LIKE '%%@%%'
+                    ORDER BY id DESC LIMIT 1
+                """, (pcn_number,))
+                last_txn = cursor.fetchone()
+                already_restocked = bool(last_txn and last_txn['trantype'] == 'RESTOCK')
+                already_picked = bool(last_txn and last_txn['trantype'] in ('PICK', 'PURGE'))
 
                 # If multiple records found for the same PCN, return them all
                 if len(whse_records) > 1:

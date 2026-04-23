@@ -59,7 +59,7 @@
                         <small style="color: white !important; opacity: 0.9;">Stock</small>
                     </div>
                     <div class="col-md-4">
-                        <h5 class="mb-0 fw-bold" style="color: white !important;">{{ transactions|selectattr('trantype', 'equalto', 'PICK')|list|length }}</h5>
+                        <h5 class="mb-0 fw-bold" style="color: white !important;">{{ transactions|selectattr('trantype', 'equalto', 'PICK')|list|length + transactions|selectattr('trantype', 'equalto', 'PURGE')|list|length }}</h5>
                         <small style="color: white !important; opacity: 0.9;">Pick</small>
                     </div>
                 </div>
@@ -91,12 +91,13 @@
                 </thead>
                 <tbody>
                     {% for txn in transactions %}
-                    <tr style="{% if loop.index % 2 == 0 %}background: #f8fafc;{% endif %} border-left: 3px solid {% if txn.trantype == 'STOCK' %}#10b981{% elif txn.trantype == 'PICK' %}#f59e0b{% elif txn.trantype == 'RESTOCK' %}#06b6d4{% else %}#6b7280{% endif %}; color: #475569;">
+                    {% set display_trantype = 'PICK' if txn.trantype == 'PURGE' else txn.trantype %}
+                    <tr style="{% if loop.index % 2 == 0 %}background: #f8fafc;{% endif %} border-left: 3px solid {% if display_trantype == 'STOCK' %}#10b981{% elif display_trantype == 'PICK' %}#f59e0b{% elif display_trantype == 'RESTOCK' %}#06b6d4{% else %}#6b7280{% endif %}; color: #475569;">
                         <td class="py-2 px-3" style="color: #64748b;">{{ txn.tran_time or txn.migrated_at or '-' }}</td>
                         <td class="py-2 px-3">
-                            <span class="badge shadow-sm {% if txn.trantype == 'STOCK' %}bg-success{% elif txn.trantype == 'PICK' %}bg-warning text-dark{% elif txn.trantype == 'RESTOCK' %}bg-info{% else %}bg-secondary{% endif %}"
+                            <span class="badge shadow-sm {% if display_trantype == 'STOCK' %}bg-success{% elif display_trantype == 'PICK' %}bg-warning text-dark{% elif display_trantype == 'RESTOCK' %}bg-info{% else %}bg-secondary{% endif %}"
                                   style="font-size: 0.75rem; min-width: 60px; padding: 0.35rem 0.5rem; font-weight: 600;">
-                                {{ txn.trantype or 'N/A' }}
+                                {{ display_trantype or 'N/A' }}
                             </span>
                         </td>
                         <td class="py-2 px-3"><strong style="color: #8b5cf6;">{{ txn.item or '-' }}</strong></td>

@@ -698,19 +698,22 @@ function editItem(rowId, jobNumber, pcn, mpn) {
             console.log('Response data:', data);
 
             if (data.success && data.item) {
-                // Populate modal fields (id first, then PCN, then Item)
-                document.getElementById('edit_id').value = data.item.id || '';
-                document.getElementById('edit_pcn').value = data.item.PCN || '';
-                document.getElementById('edit_item').value = data.item.Item || '';
-                document.getElementById('edit_mpn').value = data.item.MPN || '';
-                document.getElementById('edit_dc').value = data.item.DC || '';
-                document.getElementById('edit_onhandqty').value = data.item.OnHandQty || '';
-                document.getElementById('edit_loc_from').value = data.item.Loc_From || '';
-                document.getElementById('edit_location').value = data.item.Loc_To || '';
-                document.getElementById('edit_mfg_qty').value = data.item.MFG_Qty || '';
-                document.getElementById('edit_msd').value = data.item.MSD || '';
-                document.getElementById('edit_po').value = data.item.PO || '';
-                document.getElementById('edit_cost').value = data.item.Cost || '';
+                // Populate modal fields (id first, then PCN, then Item).
+                // Use ?? '' (nullish coalescing) so numeric 0 is preserved —
+                // `0 || ''` would evaluate to '' and wipe legit zero quantities.
+                const blank = v => (v === null || v === undefined ? '' : v);
+                document.getElementById('edit_id').value = blank(data.item.id);
+                document.getElementById('edit_pcn').value = blank(data.item.PCN);
+                document.getElementById('edit_item').value = blank(data.item.Item);
+                document.getElementById('edit_mpn').value = blank(data.item.MPN);
+                document.getElementById('edit_dc').value = blank(data.item.DC);
+                document.getElementById('edit_onhandqty').value = blank(data.item.OnHandQty);
+                document.getElementById('edit_loc_from').value = blank(data.item.Loc_From);
+                document.getElementById('edit_location').value = blank(data.item.Loc_To);
+                document.getElementById('edit_mfg_qty').value = blank(data.item.MFG_Qty);
+                document.getElementById('edit_msd').value = blank(data.item.MSD);
+                document.getElementById('edit_po').value = blank(data.item.PO);
+                document.getElementById('edit_cost').value = blank(data.item.Cost);
 
                 console.log('Fields populated, showing modal');
 
