@@ -286,13 +286,22 @@ def moment_fromnow_filter(dt):
     if not dt:
         return "Unknown"
 
-    # Handle string timestamps from database
+    # Handle string timestamps from database.
+    # tblTransaction stores tran_time as 'MM/DD/YY HH:MM:SS'; try that
+    # format before falling back to ISO so notifications show real times.
     if isinstance(dt, str):
-        try:
-            dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
-        except (ValueError, TypeError) as e:
-            logger.warning(f"Failed to parse timestamp: {dt}, error: {e}")
-            return "Unknown"
+        for fmt in ('%m/%d/%y %H:%M:%S', '%m/%d/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S'):
+            try:
+                dt = datetime.strptime(dt, fmt)
+                break
+            except (ValueError, TypeError):
+                continue
+        else:
+            try:
+                dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Failed to parse timestamp: {dt}, error: {e}")
+                return "Unknown"
 
     now = datetime.now()
     if dt.tzinfo is not None:
@@ -1014,8 +1023,12 @@ class DatabaseManager:
                 # PICK (i.e. picked in KOSH without a following restock). The
                 # userid LIKE '%@%' filter excludes legacy MDB imports (short
                 # usernames like 'peter', 'john') so pre-migration history
-                # never blocks a real pick. PURGE is treated as a pick for the
-                # purpose of this guard.
+                # never blocks a real pick. PURGE is treated as a pick.
+                #
+                # CRITICAL secondary check: also verify the PCN's on-hand qty
+                # is actually 0 before blocking. If qty > 0 the PCN is still
+                # in the warehouse — ghost PICK records from old warehouse edits
+                # (before the ADJT fix) must not permanently lock a pickable PCN.
                 if pcn:
                     cursor.execute("""
                         SELECT trantype FROM pcb_inventory."tblTransaction"
@@ -1025,12 +1038,20 @@ class DatabaseManager:
                     """, (str(pcn),))
                     last_txn = cursor.fetchone()
                     if last_txn and last_txn[0] in ('PICK', 'PURGE'):
-                        conn.rollback()
-                        return {
-                            'success': False,
-                            'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
-                            'job': job, 'pcb_type': pcb_type
-                        }
+                        cursor.execute("""
+                            SELECT COALESCE(SUM(onhandqty), 0)
+                            FROM pcb_inventory."tblWhse_Inventory"
+                            WHERE pcn::text = %s
+                        """, (str(pcn),))
+                        qty_row = cursor.fetchone()
+                        current_qty = int(qty_row[0]) if qty_row else 0
+                        if current_qty == 0:
+                            conn.rollback()
+                            return {
+                                'success': False,
+                                'error': f'PCN {pcn} has already been picked and not yet restocked. Restock it first before picking again.',
+                                'job': job, 'pcb_type': pcb_type
+                            }
 
                 # CRITICAL: Lock rows with FOR UPDATE to prevent concurrent picks
                 # Check if item exists in warehouse inventory with sufficient quantity
@@ -5992,6 +6013,16 @@ def api_get_pcn_details(pcn_number):
                 last_txn = cursor.fetchone()
                 already_restocked = bool(last_txn and last_txn['trantype'] == 'RESTOCK')
                 already_picked = bool(last_txn and last_txn['trantype'] in ('PICK', 'PURGE'))
+                # Cross-check qty: if on-hand > 0 the PCN is still in the
+                # warehouse — ghost PICK records from old warehouse edits must
+                # not show the "already picked" warning on a PCN with live stock.
+                if already_picked:
+                    live_qty = sum(
+                        int(r['onhandqty']) for r in whse_records
+                        if r.get('onhandqty') is not None
+                    )
+                    if live_qty > 0:
+                        already_picked = False
 
                 # If multiple records found for the same PCN, return them all
                 if len(whse_records) > 1:
