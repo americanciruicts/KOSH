@@ -5849,6 +5849,7 @@ def pcn_history():
                            END as sort_time
                     FROM pcb_inventory."tblTransaction"
                     WHERE pcn::text = %s
+                      AND COALESCE(reversed, false) = false
                     ORDER BY sort_time DESC NULLS LAST, id DESC
                     LIMIT 500
                 """
