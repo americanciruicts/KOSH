@@ -2773,12 +2773,53 @@ def _sync_onhand_from_transactions():
         try:
             conn = db_manager.get_connection()
             cur = conn.cursor()
+            # Ensure audit table + safeguard indexes exist. All idempotent so
+            # restarts are safe; this is the single source that guarantees the
+            # safeguards stay installed regardless of who edits the DB.
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pcb_inventory."tblReconcileAudit" (
+                    id SERIAL PRIMARY KEY,
+                    pcn text,
+                    item text,
+                    mpn text,
+                    prior_qty integer,
+                    new_qty integer,
+                    source text,
+                    reconciled_at timestamptz DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_tbltrans_pcn_id
+                    ON pcb_inventory."tblTransaction" (pcn, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_tbltrans_trantype_id
+                    ON pcb_inventory."tblTransaction" (trantype, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_tblwhse_pcn
+                    ON pcb_inventory."tblWhse_Inventory" (pcn);
+                CREATE INDEX IF NOT EXISTS idx_reconcile_audit_pcn_time
+                    ON pcb_inventory."tblReconcileAudit" (pcn, reconciled_at DESC);
+            """)
+            # Alert (not constraint) for negative qty — a CHECK constraint
+            # would be too strict for legacy rows. Instead, surface negatives
+            # as reconcile audit rows with source='negative_alert' so they're
+            # visible and investigable without blocking writes.
+            cur.execute("""
+                INSERT INTO pcb_inventory."tblReconcileAudit"
+                    (pcn, item, mpn, prior_qty, new_qty, source)
+                SELECT pcn::text, item, mpn, onhandqty, 0, 'negative_alert'
+                FROM pcb_inventory."tblWhse_Inventory"
+                WHERE onhandqty < 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM pcb_inventory."tblReconcileAudit" a
+                    WHERE a.pcn = "tblWhse_Inventory".pcn::text
+                      AND a.source = 'negative_alert'
+                      AND a.reconciled_at > NOW() - INTERVAL '1 hour'
+                  )
+            """)
+            conn.commit()
             # RNDT is a physical recount — the tranqty is the authoritative
             # on-hand at that moment, NOT an additive delta. So for each
             # (pcn, mpn) use the most recent RNDT as baseline and apply only
             # transactions recorded after it. If no RNDT exists, sum from
-            # the start. RESTOCK is a positive contributor (previously missing,
-            # which caused restocked inventory to be silently zeroed out).
+            # the start. RESTOCK is a positive contributor, and ADJT is a
+            # signed delta logged by manual warehouse edits.
             cur.execute("""
                 WITH last_rndt AS (
                     SELECT DISTINCT ON (pcn::text, LOWER(TRIM(COALESCE(mpn,''))))
@@ -2796,7 +2837,9 @@ def _sync_onhand_from_transactions():
                     SELECT pcn::text AS pcn,
                            LOWER(TRIM(COALESCE(mpn,''))) AS mpn_key,
                            SUM(CASE WHEN trantype = 'PICK' THEN 1 ELSE 0 END) AS pick_count,
-                           COUNT(*) FILTER (WHERE trantype IN ('RNDT','RESTOCK')) AS touch_count
+                           COUNT(*) FILTER (WHERE trantype IN ('RNDT','RESTOCK','ADJT')) AS touch_count,
+                           MAX(id) FILTER (WHERE trantype = 'ADJT') AS last_adjt_id,
+                           MAX(id) AS last_txn_id
                     FROM pcb_inventory."tblTransaction"
                     WHERE COALESCE(reversed, false) = false
                       AND tranqty ~ '^-?[0-9]+$'
@@ -2812,6 +2855,7 @@ def _sync_onhand_from_transactions():
                                  WHEN t.trantype = 'STOCK' THEN t.tranqty::integer
                                  WHEN t.trantype = 'PCN Generation' THEN t.tranqty::integer
                                  WHEN t.trantype = 'RESTOCK' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'ADJT' THEN t.tranqty::integer
                                  WHEN t.trantype = 'PICK' THEN -t.tranqty::integer
                                  WHEN t.trantype = 'PURGE' THEN -t.tranqty::integer
                                  ELSE 0
@@ -2826,15 +2870,29 @@ def _sync_onhand_from_transactions():
                       AND (r.rndt_id IS NULL OR t.id >= r.rndt_id)
                     GROUP BY t.pcn::text, LOWER(TRIM(COALESCE(t.mpn,'')))
                 )
+                , to_update AS (
+                    SELECT w.id, w.pcn::text AS pcn, w.item, w.mpn,
+                           w.onhandqty AS prior_qty, n.qty AS new_qty
+                    FROM pcb_inventory."tblWhse_Inventory" w
+                    JOIN net n
+                      ON w.pcn::text = n.pcn
+                     AND LOWER(TRIM(COALESCE(w.mpn,''))) = n.mpn_key
+                    JOIN activity a
+                      ON a.pcn = n.pcn AND a.mpn_key = n.mpn_key
+                    WHERE w.onhandqty IS DISTINCT FROM n.qty
+                      AND (a.pick_count > 0 OR a.touch_count > 0)
+                ),
+                log_update AS (
+                    INSERT INTO pcb_inventory."tblReconcileAudit"
+                        (pcn, item, mpn, prior_qty, new_qty, source)
+                    SELECT pcn, item, mpn, prior_qty, new_qty, 'auto_reconcile'
+                    FROM to_update
+                    RETURNING 1
+                )
                 UPDATE pcb_inventory."tblWhse_Inventory" w
-                SET onhandqty = n.qty
-                FROM net n
-                JOIN activity a
-                  ON a.pcn = n.pcn AND a.mpn_key = n.mpn_key
-                WHERE w.pcn::text = n.pcn
-                  AND LOWER(TRIM(COALESCE(w.mpn,''))) = n.mpn_key
-                  AND w.onhandqty IS DISTINCT FROM n.qty
-                  AND (a.pick_count > 0 OR a.touch_count > 0)
+                SET onhandqty = u.new_qty
+                FROM to_update u
+                WHERE w.id = u.id
             """)
             updated = cur.rowcount
             conn.commit()
@@ -4240,6 +4298,15 @@ def update_warehouse_item():
             loc_from_val = data.get('loc_from', '').strip() if data.get('loc_from') else ''
             loc_to_val = data.get('loc_to', '').strip() if data.get('loc_to') else ''
 
+            # Sanitize legacy placeholder location values to empty so saves
+            # never silently fail on old MDB-migrated rows. The client also
+            # does this, but the server must be resilient on its own too.
+            LEGACY_PLACEHOLDERS = {'-', 'n/a', 'na', 'warehouse', 'none'}
+            if loc_from_val and loc_from_val.lower().strip() in LEGACY_PLACEHOLDERS:
+                loc_from_val = ''
+            if loc_to_val and loc_to_val.lower().strip() in LEGACY_PLACEHOLDERS:
+                loc_to_val = ''
+
             if loc_to_val and not validate_location(loc_to_val):
                 return jsonify({'success': False, 'message': 'Location To must be exactly 7 digits (e.g. 1101101) or a standard location.'}), 400
 
@@ -4274,7 +4341,9 @@ def update_warehouse_item():
                 return jsonify({'success': False, 'message': 'Item not found'}), 404
             prior_item, prior_pcn, prior_mpn, prior_dc, prior_msd, prior_onhand, prior_loc, prior_po = prior
 
-            # Update warehouse inventory record by unique id
+            # Update warehouse inventory record by unique id. Use the
+            # server-sanitized loc values (not raw data.get) so legacy
+            # placeholders that slipped through are written as NULL.
             cursor.execute("""
                 UPDATE pcb_inventory."tblWhse_Inventory"
                 SET dc = %s,
@@ -4289,8 +4358,8 @@ def update_warehouse_item():
             """, (
                 data.get('dc') or None,
                 onhand_qty,
-                data.get('loc_from') or None,
-                data.get('loc_to') or None,
+                loc_from_val or None,
+                loc_to_val or None,
                 mfg_qty,
                 data.get('msd') or None,
                 data.get('po') or None,
@@ -4301,6 +4370,21 @@ def update_warehouse_item():
             if cursor.rowcount == 0:
                 conn.rollback()
                 return jsonify({'success': False, 'message': 'Item not found'}), 404
+
+            # Verify the save actually landed: read the row back in the same
+            # transaction. If the stored onhandqty doesn't match what we sent,
+            # abort and surface the divergence — never lie about success.
+            cursor.execute("""
+                SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" WHERE id = %s
+            """, (row_id,))
+            verify = cursor.fetchone()
+            stored_qty = verify[0] if verify else None
+            if onhand_qty is not None and stored_qty != onhand_qty:
+                conn.rollback()
+                return jsonify({
+                    'success': False,
+                    'message': f'Save verification failed: expected {onhand_qty}, got {stored_qty}'
+                }), 500
 
             # Record an ADJT transaction when on-hand qty changes via a manual
             # warehouse edit. Using ADJT (not PICK/STOCK) is critical: the
