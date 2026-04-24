@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 Complete Migration Script for ACI Inventory
-Migrates ALL tables from Access database (INVENTORY TABLE.mdb) to PostgreSQL
+Migrates ALL tables from Access database (INVENTORY TABLE.mdb) to PostgreSQL.
+
+GATED: Refuses to run unless --i-know-this-overwrites-kosh-data is passed.
+Re-running a migration over a live KOSH database destroys in-flight
+transactions. Never invoke from cron, hooks, or container start.
 """
 
 import subprocess
@@ -15,6 +19,15 @@ import sys
 import os
 from datetime import datetime
 from pathlib import Path
+
+if '--i-know-this-overwrites-kosh-data' not in sys.argv:
+    print('REFUSED: migrate_all_tables.py is a destructive re-import.')
+    print('Running it over a live KOSH database will wipe in-flight work.')
+    print('')
+    print('If you really mean to do this, re-run with:')
+    print('  python migrate_all_tables.py --i-know-this-overwrites-kosh-data')
+    sys.exit(2)
+sys.argv = [a for a in sys.argv if a != '--i-know-this-overwrites-kosh-data']
 
 # PostgreSQL reserved keywords that need quoting
 RESERVED_KEYWORDS = {

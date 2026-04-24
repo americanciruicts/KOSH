@@ -3,11 +3,19 @@
 Migration script: Import tblLoc from INVENTORY TABLE.mdb into PostgreSQL.
 Creates the tblLoc table in pcb_inventory schema and populates it with location data.
 Enforces 7-digit numeric location constraint.
+
+GATED: Refuses to run unless --i-know-this-overwrites-kosh-data is passed.
 """
 
 import os
 import sys
 import psycopg2
+
+if '--i-know-this-overwrites-kosh-data' not in sys.argv:
+    print('REFUSED: migrate_tblLoc.py is a destructive re-import.')
+    print('Re-run with --i-know-this-overwrites-kosh-data if intentional.')
+    sys.exit(2)
+sys.argv = [a for a in sys.argv if a != '--i-know-this-overwrites-kosh-data']
 
 # Try to import access_parser for reading .mdb files
 try:

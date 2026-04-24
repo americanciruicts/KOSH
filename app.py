@@ -2773,9 +2773,9 @@ def _sync_onhand_from_transactions():
         try:
             conn = db_manager.get_connection()
             cur = conn.cursor()
-            # Ensure audit table + safeguard indexes exist. All idempotent so
-            # restarts are safe; this is the single source that guarantees the
-            # safeguards stay installed regardless of who edits the DB.
+            # Idempotent schema hardening. All statements are safe to run on
+            # every boot; this is the single source that guarantees the
+            # safeguards stay installed regardless of who touches the DB.
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS pcb_inventory."tblReconcileAudit" (
                     id SERIAL PRIMARY KEY,
@@ -2795,6 +2795,65 @@ def _sync_onhand_from_transactions():
                     ON pcb_inventory."tblWhse_Inventory" (pcn);
                 CREATE INDEX IF NOT EXISTS idx_reconcile_audit_pcn_time
                     ON pcb_inventory."tblReconcileAudit" (pcn, reconciled_at DESC);
+            """)
+            # Generated columns for reliable math/sort without having to parse
+            # tranqty text in every query. Idempotent via IF NOT EXISTS.
+            # Note: text-stored values like 'NA', 'n/a', empty → NULL int.
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema='pcb_inventory'
+                          AND table_name='tblTransaction'
+                          AND column_name='tranqty_int'
+                    ) THEN
+                        ALTER TABLE pcb_inventory."tblTransaction"
+                        ADD COLUMN tranqty_int integer GENERATED ALWAYS AS (
+                            CASE WHEN tranqty ~ '^-?[0-9]+$'
+                                 THEN tranqty::integer END
+                        ) STORED;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema='pcb_inventory'
+                          AND table_name='tblTransaction'
+                          AND column_name='tran_ts'
+                    ) THEN
+                        ALTER TABLE pcb_inventory."tblTransaction"
+                        ADD COLUMN tran_ts timestamptz GENERATED ALWAYS AS (
+                            CASE
+                                WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                                    THEN tran_time::timestamptz
+                                WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}'
+                                    THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
+                                ELSE NULL
+                            END
+                        ) STORED;
+                    END IF;
+                END
+                $$;
+                CREATE INDEX IF NOT EXISTS idx_tbltrans_tran_ts
+                    ON pcb_inventory."tblTransaction" (tran_ts DESC NULLS LAST);
+            """)
+            # Non-negative CHECK on onhandqty. We install it as NOT VALID first
+            # (no full table scan, ignores legacy violations), then try to
+            # VALIDATE only if all rows pass. This guarantees new writes are
+            # blocked from going negative without failing the deploy on
+            # pre-existing bad data.
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'chk_whse_onhand_nonneg'
+                    ) THEN
+                        ALTER TABLE pcb_inventory."tblWhse_Inventory"
+                        ADD CONSTRAINT chk_whse_onhand_nonneg
+                        CHECK (onhandqty IS NULL OR onhandqty >= 0) NOT VALID;
+                    END IF;
+                END
+                $$;
             """)
             # Alert (not constraint) for negative qty — a CHECK constraint
             # would be too strict for legacy rows. Instead, surface negatives
@@ -4386,26 +4445,26 @@ def update_warehouse_item():
                     'message': f'Save verification failed: expected {onhand_qty}, got {stored_qty}'
                 }), 500
 
-            # Record an ADJT transaction when on-hand qty changes via a manual
-            # warehouse edit. Using ADJT (not PICK/STOCK) is critical: the
-            # already-picked guard only looks at PICK/RESTOCK/PURGE, so an ADJT
-            # never permanently blocks a PCN from being picked later. Logging
-            # it as PICK or STOCK caused ghost "picks" in history and locked out
-            # every PCN that Theresa had manually adjusted.
+            # Record an ADJT transaction for EVERY manual warehouse edit, not
+            # just qty changes. Location, DC, MSD, PO edits used to be silent
+            # in tblTransaction, which is why Theresa saw only legacy Access
+            # rows for PCNs she had worked on in KOSH. Now every edit writes
+            # a row so the PCN history reflects the full audit trail.
             prior_onhand_int = int(prior_onhand) if prior_onhand is not None else 0
             new_onhand_int = onhand_qty if onhand_qty is not None else prior_onhand_int
             delta = new_onhand_int - prior_onhand_int
-            if delta != 0 and prior_pcn is not None:
+            if prior_pcn is not None:
                 username = session.get('username', 'system')
-                new_loc = data.get('loc_to') or prior_loc or 'Warehouse'
+                new_loc = loc_to_val or prior_loc or ''
                 cursor.execute("""
                     INSERT INTO pcb_inventory."tblTransaction"
                     (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, po, userid)
                     VALUES ('ADJT', %s, %s, %s, %s, %s, %s,
                             TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
                             %s, %s, %s, %s)
-                """, (prior_item, str(prior_pcn), prior_mpn, prior_dc, prior_msd,
-                      delta, prior_loc or 'n/a', new_loc, prior_po, username))
+                """, (prior_item, str(prior_pcn), prior_mpn,
+                      data.get('dc') or prior_dc, data.get('msd') or prior_msd,
+                      delta, prior_loc or '', new_loc, data.get('po') or prior_po, username))
 
             conn.commit()
             logger.info(f"Updated warehouse inventory item: {data.get('item')}, PCN: {data.get('pcn')}")
@@ -5385,13 +5444,20 @@ def api_pick():
         user_role = session.get('role', 'USER')
         itar_auth = session.get('itar_authorized', False)
 
+        # Forward pcn + work_order if provided — previously dropped, causing
+        # FIFO to pick from any PCN for the item even when the user selected
+        # a specific one.
+        pcn = data.get('pcn')
+        work_order = data.get('work_order') or data.get('wo')
         result = db_manager.pick_pcb(
             job=job,
             pcb_type=data['pcb_type'],
-            quantity=data['quantity'],  # Already validated and converted to int
+            quantity=data['quantity'],
             user_role=user_role,
             itar_auth=itar_auth,
-            username=session.get('username', 'system')
+            username=session.get('username', 'system'),
+            work_order=work_order,
+            pcn=pcn
         )
         return jsonify(result)
     except Exception as e:
@@ -6128,16 +6194,28 @@ def api_get_pcn_details(pcn_number):
                 last_txn = cursor.fetchone()
                 already_restocked = bool(last_txn and last_txn['trantype'] == 'RESTOCK')
                 already_picked = bool(last_txn and last_txn['trantype'] in ('PICK', 'PURGE'))
-                # Cross-check qty: if on-hand > 0 the PCN is still in the
-                # warehouse — ghost PICK records from old warehouse edits must
-                # not show the "already picked" warning on a PCN with live stock.
+                # Cross-check qty per-row: if ANY warehouse row for this PCN
+                # still has onhandqty > 0, the PCN is in stock somewhere and
+                # should be pickable. Per-row (not sum) avoids mistakenly
+                # unblocking when the matching item's row is zero but a
+                # different item on the same PCN has stock.
                 if already_picked:
-                    live_qty = sum(
-                        int(r['onhandqty']) for r in whse_records
-                        if r.get('onhandqty') is not None
-                    )
-                    if live_qty > 0:
+                    try:
+                        has_stock = any(
+                            int(r['onhandqty']) > 0
+                            for r in whse_records
+                            if r.get('onhandqty') is not None
+                        )
+                    except (TypeError, ValueError):
+                        has_stock = False
+                    if has_stock:
                         already_picked = False
+                # live_qty retained for templates that may reference it
+                live_qty = sum(
+                    int(r['onhandqty']) for r in whse_records
+                    if r.get('onhandqty') is not None and
+                       str(r['onhandqty']).lstrip('-').isdigit()
+                )
 
                 # If multiple records found for the same PCN, return them all
                 if len(whse_records) > 1:
