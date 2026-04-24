@@ -5767,20 +5767,15 @@ def pcn_history():
                 # Get all transactions for the PCN (no pagination, show everything)
                 # Format tran_time consistently as MM/DD/YYYY HH:MI:SS AM/PM for ALL date formats
                 query = """
-                    SELECT trantype, item, mpn, tranqty,
+                    SELECT id, trantype, item, mpn, tranqty,
                            CASE
-                               -- Handle ISO format timestamps (YYYY-MM-DD HH:MM:SS...) - convert from UTC to EST
                                WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
                                    TO_CHAR(timezone('America/New_York', tran_time::timestamptz), 'MM/DD/YYYY HH12:MI:SS AM')
-                               -- Handle old short format (MM/DD/YY HH:MI:SS) - convert to full year
                                WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN
                                    TO_CHAR(TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS'), 'MM/DD/YYYY HH12:MI:SS AM')
-                               -- If empty, NULL or other format, return as-is
-                               ELSE
-                                   tran_time
+                               ELSE tran_time
                            END as tran_time,
-                           loc_from, loc_to, wo, po,
-                           -- Create sortable timestamp for ORDER BY
+                           loc_from, loc_to, wo, po, reversed,
                            CASE
                                WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN tran_time::timestamptz
                                WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
@@ -5793,6 +5788,42 @@ def pcn_history():
                 """
                 cur.execute(query, (search_pcn,))
                 transactions = [dict(row) for row in cur.fetchall()]
+
+                # Compute running on-hand balance per row using the SAME math
+                # as the reconcile thread. Users see the on-hand AFTER each
+                # transaction, so a signed ADJT tranqty like -85 can't be
+                # misread as the current on-hand. RNDT resets the baseline.
+                chron = sorted(transactions, key=lambda r: (r['sort_time'] or 0, r['id'] or 0))
+                balance = 0
+                for row in chron:
+                    tq_str = str(row.get('tranqty') or '').strip()
+                    try:
+                        tq = int(tq_str)
+                        valid = True
+                    except (TypeError, ValueError):
+                        tq = 0
+                        valid = False
+                    reversed_row = bool(row.get('reversed'))
+                    tt = row.get('trantype') or ''
+                    if reversed_row or not valid:
+                        delta = 0
+                    elif tt == 'RNDT':
+                        balance = tq  # physical recount resets baseline
+                        row['balance'] = balance
+                        continue
+                    elif tt in ('INDF', 'STOCK', 'PCN Generation', 'RESTOCK', 'ADJT'):
+                        delta = tq
+                    elif tt in ('PICK', 'PURGE'):
+                        delta = -tq
+                    else:
+                        delta = 0
+                    balance = max(0, balance + delta)
+                    row['balance'] = balance
+                # Drop the helper field so template doesn't need it
+                for row in transactions:
+                    row.pop('sort_time', None)
+                    row.pop('id', None)
+                    row.pop('reversed', None)
 
                 # Get PCN info from warehouse inventory
                 cur.execute("""

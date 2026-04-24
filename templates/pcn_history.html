@@ -83,6 +83,7 @@
                         <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Item</th>
                         <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">MPN</th>
                         <th class="py-2 px-3 text-center" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">Qty</th>
+                        <th class="py-2 px-3 text-center" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;" title="On-hand after this transaction">Balance</th>
                         <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">From</th>
                         <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">To</th>
                         <th class="py-2 px-3" style="border: none; color: #64748b; font-weight: 600; font-size: 0.85rem;">WO</th>
@@ -104,6 +105,9 @@
                         <td class="py-2 px-3"><code style="background: #ede9fe; color: #5b21b6; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.85rem; font-weight: 600;">{{ txn.mpn or '-' }}</code></td>
                         <td class="py-2 px-3 text-center">
                             <strong style="color: #7c3aed; font-size: 0.95rem;">{{ txn.tranqty or 0 }}</strong>
+                        </td>
+                        <td class="py-2 px-3 text-center">
+                            <span class="badge bg-light text-dark border" style="font-size: 0.85rem; font-weight: 600;">{{ txn.balance if txn.balance is not none else '-' }}</span>
                         </td>
                         <td class="py-2 px-3" style="color: #64748b;">{{ txn.loc_from or '-' }}</td>
                         <td class="py-2 px-3" style="color: #64748b;">{{ txn.loc_to or '-' }}</td>
