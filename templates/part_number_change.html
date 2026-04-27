@@ -160,20 +160,16 @@
 </style>
 
 <script>
-    // After successful part number change, auto-open print label modal with PCN pre-filled
+    // After successful part number change, kick off the same print flow as
+    // Generate PCN: try Zebra silent first, fall back to /print-label/<pcn>
+    // preview iframe. silentPrint is loaded from /static/js/print-label.js.
     {% if show_print and item %}
     document.addEventListener('DOMContentLoaded', function() {
         setTimeout(function() {
-            var pcnInput = document.getElementById('printLabelPcn');
-            if (pcnInput) {
-                pcnInput.value = '{{ item.pcn }}';
-            }
-            if (typeof openPrintLabelModal === 'function') {
-                var modal = _getPrintLabelModal();
-                if (modal) {
-                    modal.show();
-                    // Don't clear the value since we pre-filled it
-                }
+            if (typeof window.silentPrint === 'function') {
+                window.silentPrint('{{ item.pcn }}');
+            } else {
+                window.open('/print-label/{{ item.pcn }}', '_blank');
             }
         }, 500);
     });
