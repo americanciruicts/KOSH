@@ -1746,21 +1746,49 @@ class DatabaseManager:
         try:
             conn = self.get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Read directly from tblWhse_Inventory table (warehouse inventory)
+                # Read directly from tblWhse_Inventory table (warehouse inventory).
+                # Date columns come from MAX(tran_ts) of the matching (pcn, mpn) in
+                # tblTransaction, not migrated_at — migrated_at only bumps on STOCK
+                # and the original migration, so PICK/RESTOCK/RNDT/ADJT activity
+                # would otherwise leave a stale migration date showing here while
+                # the on-hand qty was already updated by the reconciler.
                 cur.execute(
                     """
                     SELECT
-                        id,
-                        pcn,
-                        item as job,
-                        mpn as pcb_type,
-                        onhandqty as qty,
-                        loc_to as location,
-                        migrated_at as checked_on,
-                        migrated_at as updated_at
-                    FROM pcb_inventory."tblWhse_Inventory"
-                    WHERE onhandqty > 0
-                    ORDER BY item, mpn
+                        w.id,
+                        w.pcn,
+                        w.item as job,
+                        w.mpn as pcb_type,
+                        w.onhandqty as qty,
+                        w.loc_to as location,
+                        COALESCE(t.last_tran_ts, w.migrated_at) as checked_on,
+                        COALESCE(t.last_tran_ts, w.migrated_at) as updated_at,
+                        t.last_trantype as last_trantype,
+                        t.last_tranqty  as last_tranqty,
+                        t.last_userid   as last_userid
+                    FROM pcb_inventory."tblWhse_Inventory" w
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            CASE
+                                WHEN tx.tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                                    THEN tx.tran_time::timestamptz
+                                WHEN tx.tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\s+[0-9]{2}:[0-9]{2}'
+                                    THEN TO_TIMESTAMP(tx.tran_time, 'MM/DD/YY HH24:MI:SS')
+                                ELSE NULL
+                            END                AS last_tran_ts,
+                            tx.trantype        AS last_trantype,
+                            tx.tranqty         AS last_tranqty,
+                            tx.userid          AS last_userid
+                        FROM pcb_inventory."tblTransaction" tx
+                        WHERE tx.pcn::text = w.pcn::text
+                          AND COALESCE(LOWER(TRIM(tx.mpn)),'') =
+                              COALESCE(LOWER(TRIM(w.mpn)),'')
+                          AND COALESCE(tx.reversed, false) = false
+                        ORDER BY tx.id DESC
+                        LIMIT 1
+                    ) t ON TRUE
+                    WHERE w.onhandqty > 0
+                    ORDER BY w.item, w.mpn
                     """
                 )
                 result = [dict(row) for row in cur.fetchall()]
@@ -2814,27 +2842,14 @@ def _sync_onhand_from_transactions():
                                  THEN tranqty::integer END
                         ) STORED;
                     END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_schema='pcb_inventory'
-                          AND table_name='tblTransaction'
-                          AND column_name='tran_ts'
-                    ) THEN
-                        ALTER TABLE pcb_inventory."tblTransaction"
-                        ADD COLUMN tran_ts timestamptz GENERATED ALWAYS AS (
-                            CASE
-                                WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-                                    THEN tran_time::timestamptz
-                                WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}'
-                                    THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
-                                ELSE NULL
-                            END
-                        ) STORED;
-                    END IF;
+                    -- tran_ts generated column was previously created here,
+                    -- but its expression depends on a session-mutable cast
+                    -- (tran_time::timestamptz) which Postgres rejects as
+                    -- non-immutable for STORED generated columns. The whole
+                    -- reconciler aborted every cycle because of this. Queries
+                    -- that need the parsed timestamp now compute it inline.
                 END
                 $$;
-                CREATE INDEX IF NOT EXISTS idx_tbltrans_tran_ts
-                    ON pcb_inventory."tblTransaction" (tran_ts DESC NULLS LAST);
             """)
             # Non-negative CHECK on onhandqty. We install it as NOT VALID first
             # (no full table scan, ignores legacy violations), then try to
@@ -2880,33 +2895,52 @@ def _sync_onhand_from_transactions():
             # the start. RESTOCK is a positive contributor, and ADJT is a
             # signed delta logged by manual warehouse edits.
             cur.execute("""
-                WITH last_rndt AS (
-                    SELECT DISTINCT ON (pcn::text, LOWER(TRIM(COALESCE(mpn,''))))
-                           pcn::text AS pcn,
-                           LOWER(TRIM(COALESCE(mpn,''))) AS mpn_key,
-                           id AS rndt_id,
-                           tranqty::integer AS rndt_qty
+                WITH parsed AS (
+                    -- Parse tran_time to a real timestamp so ordering is by
+                    -- BUSINESS time, not by row id. id ordering is unsafe here
+                    -- because Access data was migrated in batches and id !=
+                    -- chronological order. Without this, the "last RNDT" pick
+                    -- below grabs whichever RNDT was imported last, not the
+                    -- most recent one in real time.
+                    SELECT
+                        pcn::text AS pcn,
+                        LOWER(TRIM(COALESCE(mpn,''))) AS mpn_key,
+                        id, trantype, tranqty, COALESCE(reversed, false) AS reversed,
+                        CASE
+                            WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                                THEN tran_time::timestamptz
+                            WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}'
+                                THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
+                            ELSE NULL
+                        END AS ts
                     FROM pcb_inventory."tblTransaction"
+                ),
+                last_rndt AS (
+                    SELECT DISTINCT ON (pcn, mpn_key)
+                           pcn, mpn_key,
+                           id AS rndt_id,
+                           ts AS rndt_ts,
+                           tranqty::integer AS rndt_qty
+                    FROM parsed
                     WHERE trantype = 'RNDT'
-                      AND COALESCE(reversed, false) = false
+                      AND reversed = false
                       AND tranqty ~ '^-?[0-9]+$'
-                    ORDER BY pcn::text, LOWER(TRIM(COALESCE(mpn,''))), id DESC
+                    -- Order by chronological ts; fallback to id when ts NULL
+                    ORDER BY pcn, mpn_key, ts DESC NULLS LAST, id DESC
                 ),
                 activity AS (
-                    SELECT pcn::text AS pcn,
-                           LOWER(TRIM(COALESCE(mpn,''))) AS mpn_key,
+                    SELECT pcn, mpn_key,
                            SUM(CASE WHEN trantype = 'PICK' THEN 1 ELSE 0 END) AS pick_count,
                            COUNT(*) FILTER (WHERE trantype IN ('RNDT','RESTOCK','ADJT')) AS touch_count,
                            MAX(id) FILTER (WHERE trantype = 'ADJT') AS last_adjt_id,
                            MAX(id) AS last_txn_id
-                    FROM pcb_inventory."tblTransaction"
-                    WHERE COALESCE(reversed, false) = false
+                    FROM parsed
+                    WHERE reversed = false
                       AND tranqty ~ '^-?[0-9]+$'
-                    GROUP BY pcn::text, LOWER(TRIM(COALESCE(mpn,'')))
+                    GROUP BY pcn, mpn_key
                 ),
                 net AS (
-                    SELECT t.pcn::text AS pcn,
-                           LOWER(TRIM(COALESCE(t.mpn,''))) AS mpn_key,
+                    SELECT t.pcn, t.mpn_key,
                            GREATEST(0,
                              COALESCE(MAX(r.rndt_qty), 0)
                              + SUM(CASE
@@ -2920,14 +2954,19 @@ def _sync_onhand_from_transactions():
                                  ELSE 0
                                END)
                            ) AS qty
-                    FROM pcb_inventory."tblTransaction" t
+                    FROM parsed t
                     LEFT JOIN last_rndt r
-                      ON t.pcn::text = r.pcn
-                     AND LOWER(TRIM(COALESCE(t.mpn,''))) = r.mpn_key
-                    WHERE COALESCE(t.reversed, false) = false
+                      ON t.pcn = r.pcn AND t.mpn_key = r.mpn_key
+                    WHERE t.reversed = false
                       AND t.tranqty ~ '^-?[0-9]+$'
-                      AND (r.rndt_id IS NULL OR t.id >= r.rndt_id)
-                    GROUP BY t.pcn::text, LOWER(TRIM(COALESCE(t.mpn,'')))
+                      -- Only include txns AT or AFTER the chronological last
+                      -- RNDT. Fall back to id comparison when ts is NULL.
+                      AND (
+                          r.rndt_id IS NULL
+                          OR (r.rndt_ts IS NOT NULL AND t.ts IS NOT NULL AND t.ts >= r.rndt_ts)
+                          OR (r.rndt_ts IS NULL AND t.id >= r.rndt_id)
+                      )
+                    GROUP BY t.pcn, t.mpn_key
                 )
                 , to_update AS (
                     SELECT w.id, w.pcn::text AS pcn, w.item, w.mpn,

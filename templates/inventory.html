@@ -286,6 +286,13 @@
                             </td>
                             <td class="text-muted small">
                                 {{ item.updated_at | moment_fromnow }}
+                                {% if item.last_trantype %}
+                                <br>
+                                <span class="badge bg-light text-dark border" title="Last transaction">
+                                    {{ item.last_trantype }}{% if item.last_tranqty %} {{ item.last_tranqty }}{% endif %}
+                                </span>
+                                {% if item.last_userid %}<small class="text-muted">by {{ item.last_userid }}</small>{% endif %}
+                                {% endif %}
                             </td>
                             <td>
                                 <div class="btn-group btn-group-sm" role="group">
