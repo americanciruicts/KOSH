@@ -120,7 +120,7 @@ csrf = CSRFProtect(app)
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["20000 per hour", "1000 per minute"],
+    default_limits=["1000000 per hour", "100000 per minute"],
     storage_uri="memory://",
     strategy="fixed-window"
 )
