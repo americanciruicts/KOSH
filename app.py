@@ -113,11 +113,14 @@ app.config['WTF_CSRF_CHECK_DEFAULT'] = True
 app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken', 'X-CSRF-Token']  # Accept CSRF token from headers
 csrf = CSRFProtect(app)
 
-# Enable rate limiting (protects against brute force attacks)
+# Enable rate limiting (protects against brute force attacks). Default
+# limits are sized for power users editing warehouse inventory in bulk —
+# Theresa repeatedly hit 429s under the previous 200/hour cap. Login
+# itself keeps a tighter, route-specific cap below.
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per hour", "50 per minute"],
+    default_limits=["20000 per hour", "1000 per minute"],
     storage_uri="memory://",
     strategy="fixed-window"
 )
@@ -4208,6 +4211,7 @@ def warehouse_inventory():
 
 @app.route('/api/warehouse-inventory/item')
 @require_auth
+@limiter.exempt
 def get_warehouse_item():
     """API endpoint to get a single warehouse inventory item.
 
@@ -4285,6 +4289,7 @@ def get_warehouse_item():
 
 @app.route('/api/warehouse-inventory/recent')
 @require_auth
+@limiter.exempt
 def get_recent_warehouse_inventory():
     """API endpoint to get recent warehouse inventory items for stock page."""
     try:
@@ -4357,8 +4362,14 @@ def get_locations():
 
 @app.route('/api/warehouse-inventory/update', methods=['POST'])
 @require_auth
+@limiter.exempt
 def update_warehouse_item():
-    """API endpoint to update warehouse inventory item."""
+    """API endpoint to update warehouse inventory item.
+
+    Exempt from rate limiting: this is an authenticated, intentional user
+    action that warehouse staff fire many times in succession when doing
+    bulk relocations or qty corrections. Brute-force protection isn't
+    relevant here, and the limiter was 429-ing legitimate work."""
     try:
         data = request.get_json()
 
