@@ -3471,11 +3471,21 @@ def pick():
             logger.info(f"pick_pcb returned: {result}")
 
             if result.get('success'):
+                pcn_str = f" (PCN {result.get('pcn')})" if result.get('pcn') else ''
+                loc_str = f" from {result.get('loc_from')}" if result.get('loc_from') else ''
                 if result.get('purged'):
-                    log_user_activity('PICK', f"Purged {result.get('records_deleted', 0)} zero-quantity record(s) for {result['job']}")
+                    log_user_activity(
+                        'PICK',
+                        f"Purged {result.get('records_deleted', 0)} zero-quantity record(s) for {result['job']}{pcn_str}{loc_str}",
+                        f"PCN: {result.get('pcn','-')}, MPN: {result.get('mpn','-')}, Loc: {result.get('loc_from','-')}",
+                    )
                     flash(f"Successfully purged {result.get('records_deleted', 0)} zero-quantity record(s) for {result['job']}.", 'success')
                 else:
-                    log_user_activity('PICK', f"Picked {result['picked_qty']} units of {result['job']}", f"Remaining: {result['new_qty']}")
+                    log_user_activity(
+                        'PICK',
+                        f"Picked {result['picked_qty']} units of {result['job']}{pcn_str}{loc_str}",
+                        f"PCN: {result.get('pcn','-')}, MPN: {result.get('mpn','-')}, From: {result.get('loc_from','-')}, Remaining: {result['new_qty']}",
+                    )
                     flash(f"Successfully picked {result['picked_qty']} units of {result['job']}. "
                           f"Remaining: {result['new_qty']}", 'success')
                 return redirect(url_for('pick'))
@@ -7385,23 +7395,80 @@ def admin_notifications():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        if is_theresa and not is_admin_user():
-            # Theresa only sees James's activity
-            cursor.execute("""
-                SELECT id, user_id, username, full_name, action_type, description, details, created_at, seen, seen_at
+        # Enrich each activity log row with the matching transaction's full
+        # context (PCN, item, MPN, qty, from→to location, WO, PO). This way
+        # both NEW and OLD notifications get full detail without rewriting
+        # historical description text. The match is by case-insensitive
+        # username = userid, mapped action_type → trantype, and tran_time
+        # within ±5 minutes of created_at; closest by absolute time wins.
+        base_where = "WHERE username = 'james@americancircuits.com'" if (is_theresa and not is_admin_user()) else ""
+        cursor.execute(f"""
+            WITH log AS (
+                SELECT id, user_id, username, full_name, action_type,
+                       description, details, created_at, seen, seen_at
                 FROM pcb_inventory."tblActivityLog"
-                WHERE username = 'james@americancircuits.com'
+                {base_where}
                 ORDER BY created_at DESC
                 LIMIT 200
-            """)
-        else:
-            # Admins see all activity
-            cursor.execute("""
-                SELECT id, user_id, username, full_name, action_type, description, details, created_at, seen, seen_at
-                FROM pcb_inventory."tblActivityLog"
-                ORDER BY created_at DESC
-                LIMIT 200
-            """)
+            )
+            SELECT l.*,
+                   t.pcn        AS txn_pcn,
+                   t.item       AS txn_item,
+                   t.mpn        AS txn_mpn,
+                   t.dc         AS txn_dc,
+                   t.tranqty    AS txn_qty,
+                   t.loc_from   AS txn_loc_from,
+                   t.loc_to     AS txn_loc_to,
+                   t.wo         AS txn_wo,
+                   t.po         AS txn_po,
+                   t.trantype   AS txn_type,
+                   t.tran_time  AS txn_time
+            FROM log l
+            LEFT JOIN LATERAL (
+                SELECT tx.pcn, tx.item, tx.mpn, tx.dc, tx.tranqty, tx.loc_from,
+                       tx.loc_to, tx.wo, tx.po, tx.trantype, tx.tran_time,
+                       CASE
+                           WHEN tx.tran_time ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+                               THEN tx.tran_time::timestamptz
+                           WHEN tx.tran_time ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{2}}\\s+[0-9]{{2}}:[0-9]{{2}}'
+                               THEN TO_TIMESTAMP(tx.tran_time, 'MM/DD/YY HH24:MI:SS')
+                           ELSE NULL
+                       END AS ts
+                FROM pcb_inventory."tblTransaction" tx
+                WHERE LOWER(COALESCE(tx.userid,'')) = LOWER(COALESCE(l.username,''))
+                  AND tx.trantype = ANY(
+                      CASE l.action_type
+                          WHEN 'PICK'               THEN ARRAY['PICK','PURGE']
+                          WHEN 'PURGE'              THEN ARRAY['PURGE']
+                          WHEN 'STOCK'              THEN ARRAY['STOCK']
+                          WHEN 'RESTOCK'            THEN ARRAY['RESTOCK']
+                          WHEN 'PCN_GENERATE'       THEN ARRAY['PCN Generation']
+                          WHEN 'PART_NUMBER_CHANGE' THEN ARRAY['PN_CHANGE','ADJT']
+                          WHEN 'WAREHOUSE_EDIT'     THEN ARRAY['ADJT']
+                          WHEN 'REVERSE_PICK'       THEN ARRAY['REVERSE_PICK','PICK']
+                          ELSE ARRAY[]::text[]
+                      END
+                  )
+                  AND CASE
+                          WHEN tx.tran_time ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+                              THEN tx.tran_time::timestamptz
+                          WHEN tx.tran_time ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{2}}\\s+[0-9]{{2}}:[0-9]{{2}}'
+                              THEN TO_TIMESTAMP(tx.tran_time, 'MM/DD/YY HH24:MI:SS')
+                          ELSE NULL
+                      END BETWEEN l.created_at - INTERVAL '5 minutes'
+                              AND l.created_at + INTERVAL '5 minutes'
+                ORDER BY ABS(EXTRACT(EPOCH FROM (
+                    CASE
+                        WHEN tx.tran_time ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+                            THEN tx.tran_time::timestamptz
+                        WHEN tx.tran_time ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{2}}\\s+[0-9]{{2}}:[0-9]{{2}}'
+                            THEN TO_TIMESTAMP(tx.tran_time, 'MM/DD/YY HH24:MI:SS')
+                        ELSE NULL
+                    END - l.created_at)))
+                LIMIT 1
+            ) t ON TRUE
+            ORDER BY l.created_at DESC
+        """)
         notifications = cursor.fetchall()
 
         if is_theresa and not is_admin_user():

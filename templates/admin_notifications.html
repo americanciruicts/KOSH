@@ -91,6 +91,24 @@
                                 <td>
                                     {{ n.description or '-' }}
                                     {% if n.details %}<br><small class="text-muted">{{ n.details }}</small>{% endif %}
+                                    {% if n.txn_pcn or n.txn_item or n.txn_qty or n.txn_loc_from or n.txn_loc_to %}
+                                    <div class="mt-2 d-flex flex-wrap gap-1" style="font-size: 0.78rem;">
+                                        {% if n.txn_pcn %}<span class="badge bg-primary"><i class="bi bi-upc-scan me-1"></i>PCN {{ n.txn_pcn }}</span>{% endif %}
+                                        {% if n.txn_item %}<span class="badge bg-light text-dark border">Item: {{ n.txn_item }}</span>{% endif %}
+                                        {% if n.txn_mpn %}<span class="badge bg-light text-dark border">MPN: {{ n.txn_mpn }}</span>{% endif %}
+                                        {% if n.txn_qty is not none and n.txn_qty != '' %}<span class="badge bg-warning text-dark">Qty: {{ n.txn_qty }}</span>{% endif %}
+                                        {% if n.txn_loc_from or n.txn_loc_to %}
+                                            <span class="badge bg-light text-dark border">
+                                                <i class="bi bi-geo-alt me-1"></i>{{ n.txn_loc_from or '-' }}
+                                                <i class="bi bi-arrow-right mx-1"></i>{{ n.txn_loc_to or '-' }}
+                                            </span>
+                                        {% endif %}
+                                        {% if n.txn_dc %}<span class="badge bg-light text-dark border">DC: {{ n.txn_dc }}</span>{% endif %}
+                                        {% if n.txn_wo %}<span class="badge bg-light text-dark border">WO: {{ n.txn_wo }}</span>{% endif %}
+                                        {% if n.txn_po %}<span class="badge bg-light text-dark border">PO: {{ n.txn_po }}</span>{% endif %}
+                                        {% if n.txn_type and n.txn_type != n.action_type %}<span class="badge bg-secondary">{{ n.txn_type }}</span>{% endif %}
+                                    </div>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     <i class="bi bi-clock me-1 text-muted"></i>
