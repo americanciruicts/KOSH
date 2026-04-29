@@ -104,10 +104,14 @@
                         <td class="py-2 px-3"><strong style="color: #8b5cf6;">{{ txn.item or '-' }}</strong></td>
                         <td class="py-2 px-3"><code style="background: #ede9fe; color: #5b21b6; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.85rem; font-weight: 600;">{{ txn.mpn or '-' }}</code></td>
                         <td class="py-2 px-3 text-center">
-                            <strong style="color: #7c3aed; font-size: 0.95rem;">{{ txn.tranqty or 0 }}</strong>
+                            {% if display_trantype == 'PICK' %}
+                            <strong style="color: #7c3aed; font-size: 0.95rem;">{{ (txn.tranqty | int(0)) | abs }}</strong>
+                            {% else %}
+                            <span style="color: #cbd5e1;">-</span>
+                            {% endif %}
                         </td>
                         <td class="py-2 px-3 text-center">
-                            <strong style="color: #0f766e; font-size: 0.95rem;">{{ txn.balance if txn.balance is not none else 0 }}</strong>
+                            <strong style="color: #0f766e; font-size: 0.95rem;">{{ [txn.balance if txn.balance is not none else 0, 0] | max }}</strong>
                         </td>
                         <td class="py-2 px-3" style="color: #64748b;">{{ txn.loc_from or '-' }}</td>
                         <td class="py-2 px-3" style="color: #64748b;">{{ txn.loc_to or '-' }}</td>
