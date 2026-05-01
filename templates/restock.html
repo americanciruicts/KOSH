@@ -275,13 +275,104 @@
         }
     });
 
-    // Location 7-digit cap
-    var locInputs = document.querySelectorAll('.location-input');
-    for (var i = 0; i < locInputs.length; i++) {
-        locInputs[i].addEventListener('input', function() {
-            if (/^\d+$/.test(this.value) && this.value.length > 7) this.value = this.value.slice(0, 7);
+    // ==================== LOCATION VALIDATION (7-digit + lookup) ====================
+    (function() {
+        const stdLocs = ['receiving area', 'rec area', 'count area', 'stock room', 'mfg floor'];
+        const form = document.getElementById('restockForm');
+        if (!form) return;
+        const submitBtn = form.querySelector('[type="submit"]');
+        const locInputs = Array.from(form.querySelectorAll('.location-input'));
+        if (!locInputs.length) return;
+
+        let validLocs = new Set();
+        let locsLoaded = false;
+
+        function ensureFeedback(input) {
+            const host = input.closest('.input-group') ? input.closest('.input-group').parentElement : input.parentElement;
+            let fb = host.querySelector('.location-error');
+            if (!fb) {
+                fb = document.createElement('div');
+                fb.className = 'location-error invalid-feedback d-block';
+                fb.style.display = 'none';
+                fb.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Wrong location — not found on Locations page.';
+                host.appendChild(fb);
+            }
+            return fb;
+        }
+
+        function isValid(input) {
+            const val = (input.value || '').trim();
+            if (!val) return !input.required;
+            if (stdLocs.includes(val.toLowerCase())) return true;
+            if (!/^\d{7}$/.test(val)) return false;
+            if (!locsLoaded) return true;
+            return validLocs.has(val);
+        }
+
+        function refresh() {
+            let allOk = true;
+            locInputs.forEach(function(input) {
+                if (input.readOnly || input.disabled) return; // skip fixed source field
+                const fb = ensureFeedback(input);
+                const ok = isValid(input);
+                if (!ok) {
+                    input.classList.add('is-invalid');
+                    fb.style.display = 'block';
+                    allOk = false;
+                } else {
+                    input.classList.remove('is-invalid');
+                    fb.style.display = 'none';
+                }
+            });
+            if (submitBtn) {
+                if (!allOk) {
+                    submitBtn.disabled = true;
+                    submitBtn.dataset.locDisabled = '1';
+                } else if (submitBtn.dataset.locDisabled === '1') {
+                    submitBtn.disabled = false;
+                    delete submitBtn.dataset.locDisabled;
+                }
+            }
+        }
+
+        locInputs.forEach(function(input) {
+            input.addEventListener('input', function() {
+                if (/^\d+$/.test(this.value) && this.value.length > 7) {
+                    this.value = this.value.slice(0, 7);
+                }
+                refresh();
+            });
+            input.addEventListener('blur', refresh);
         });
-    }
+
+        form.addEventListener('submit', function(e) {
+            for (const input of locInputs) {
+                if (input.readOnly || input.disabled) continue;
+                if (!isValid(input)) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    refresh();
+                    input.focus();
+                    return false;
+                }
+            }
+        }, true);
+
+        fetch('/api/locations')
+            .then(function(r) { return r.json(); })
+            .then(function(j) {
+                if (j && j.success && Array.isArray(j.locations)) {
+                    j.locations.forEach(function(l) {
+                        if (l && l.location) validLocs.add(String(l.location).trim());
+                    });
+                }
+                locsLoaded = true;
+                refresh();
+            })
+            .catch(function() { refresh(); });
+
+        refresh();
+    })();
 })();
 </script>
 {% endblock %}
