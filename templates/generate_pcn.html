@@ -532,6 +532,12 @@ document.addEventListener('DOMContentLoaded', function() {
     if (printableLabel) {
         printableLabel.innerHTML = '';
     }
+
+    // Ensure cursor lands on Part Number on initial page load
+    const partNumberInput = document.getElementById('partNumberInput');
+    if (partNumberInput) {
+        partNumberInput.focus();
+    }
 });
 </script>
 <script>
@@ -869,6 +875,23 @@ document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => {
                 loadPCNHistory();
             }, 1000);
+
+            // Auto-reset form after print so user can immediately scan/enter the next PCN
+            setTimeout(() => {
+                form.reset();
+                pcnPreview.style.display = 'none';
+                pcnInstructions.style.display = 'block';
+                currentPCNData = null;
+
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('btn-secondary');
+                submitBtn.classList.add('btn-primary');
+                submitBtn.style.opacity = '1';
+                submitBtn.style.cursor = 'pointer';
+
+                partNumberInput.focus();
+            }, 1500);
 
         } catch (error) {
             console.error('Error:', error);

@@ -1447,9 +1447,9 @@ class DatabaseManager:
 
                 pcn_num, item_num, mpn, dc, mfg_qty, current_onhand, existing_loc_to = result
 
-                # If no destination specified, fall back to the part's existing location
+                # If no destination specified, auto-assign to Count Area on restock
                 if not location_to:
-                    location_to = existing_loc_to or 'Count Area'
+                    location_to = 'Count Area'
 
                 # Handle NULL quantities and convert mfg_qty from text to int
                 if current_onhand is None:
