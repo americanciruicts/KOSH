@@ -1542,7 +1542,8 @@ class DatabaseManager:
                         SET mfg_qty = GREATEST(0, CASE WHEN mfg_qty ~ '^\-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END - %s)::text,
                             onhandqty = COALESCE(onhandqty, 0) + %s,
                             loc_from = %s,
-                            loc_to = %s
+                            loc_to = %s,
+                            migrated_at = CURRENT_TIMESTAMP
                         WHERE pcn::text = %s AND item::text ILIKE %s
                     """
                     cursor.execute(update_query, (quantity, quantity, location_from, location_to, str(pcn), item))
@@ -1552,7 +1553,8 @@ class DatabaseManager:
                         SET mfg_qty = GREATEST(0, CASE WHEN mfg_qty ~ '^\-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END - %s)::text,
                             onhandqty = COALESCE(onhandqty, 0) + %s,
                             loc_from = %s,
-                            loc_to = %s
+                            loc_to = %s,
+                            migrated_at = CURRENT_TIMESTAMP
                         WHERE pcn::text = %s
                     """
                     cursor.execute(update_query, (quantity, quantity, location_from, location_to, str(pcn)))
@@ -1562,7 +1564,8 @@ class DatabaseManager:
                         SET mfg_qty = GREATEST(0, CASE WHEN mfg_qty ~ '^\-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END - %s)::text,
                             onhandqty = COALESCE(onhandqty, 0) + %s,
                             loc_from = %s,
-                            loc_to = %s
+                            loc_to = %s,
+                            migrated_at = CURRENT_TIMESTAMP
                         WHERE item = %s
                     """
                     cursor.execute(update_query, (quantity, quantity, location_from, location_to, item))
@@ -6739,22 +6742,34 @@ def print_label(pcn_number):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            # First check tblWhse_Inventory for most current data (updated by restock/stock/pick)
+            # Pull the most recently updated row's metadata, but use the SUM of
+            # onhandqty across every warehouse row for this PCN so the label
+            # total can't lose units when duplicate rows exist.
             cursor.execute("""
-                SELECT pcn::varchar as pcn_number,
-                       item,
-                       po as po_number,
-                       item as part_number,
-                       mpn,
-                       onhandqty as quantity,
-                       dc as date_code,
-                       msd,
-                       NULL as barcode_data,
-                       loc_to as location,
-                       NULL as pcb_type
-                FROM pcb_inventory."tblWhse_Inventory"
-                WHERE pcn::text = %s
-                ORDER BY created_at DESC LIMIT 1
+                WITH rows AS (
+                    SELECT pcn, item, po, mpn, onhandqty, dc, msd, loc_to,
+                           COALESCE(migrated_at, created_at) AS sort_ts
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn::text = %s
+                ),
+                latest AS (
+                    SELECT * FROM rows ORDER BY sort_ts DESC NULLS LAST LIMIT 1
+                ),
+                totals AS (
+                    SELECT COALESCE(SUM(onhandqty), 0) AS total_qty FROM rows
+                )
+                SELECT latest.pcn::varchar AS pcn_number,
+                       latest.item,
+                       latest.po AS po_number,
+                       latest.item AS part_number,
+                       latest.mpn,
+                       totals.total_qty AS quantity,
+                       latest.dc AS date_code,
+                       latest.msd,
+                       NULL AS barcode_data,
+                       latest.loc_to AS location,
+                       NULL AS pcb_type
+                FROM latest, totals
             """, (pcn_number,))
 
             pcn_data = cursor.fetchone()
@@ -6789,19 +6804,30 @@ def generate_zpl_label(pcn_number):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            # Get PCN data from tblWhse_Inventory
+            # Most recently updated row's metadata + SUM(onhandqty) across every
+            # row for this PCN, so the label total isn't lost when duplicate rows exist.
             cursor.execute("""
-                SELECT pcn::varchar as pcn_number,
-                       item,
-                       po as po_number,
-                       item as part_number,
-                       mpn,
-                       onhandqty as quantity,
-                       dc as date_code,
-                       msd
-                FROM pcb_inventory."tblWhse_Inventory"
-                WHERE pcn::text = %s
-                ORDER BY created_at DESC LIMIT 1
+                WITH rows AS (
+                    SELECT pcn, item, po, mpn, onhandqty, dc, msd,
+                           COALESCE(migrated_at, created_at) AS sort_ts
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn::text = %s
+                ),
+                latest AS (
+                    SELECT * FROM rows ORDER BY sort_ts DESC NULLS LAST LIMIT 1
+                ),
+                totals AS (
+                    SELECT COALESCE(SUM(onhandqty), 0) AS total_qty FROM rows
+                )
+                SELECT latest.pcn::varchar AS pcn_number,
+                       latest.item,
+                       latest.po AS po_number,
+                       latest.item AS part_number,
+                       latest.mpn,
+                       totals.total_qty AS quantity,
+                       latest.dc AS date_code,
+                       latest.msd
+                FROM latest, totals
             """, (pcn_number,))
 
             pcn_data = cursor.fetchone()
