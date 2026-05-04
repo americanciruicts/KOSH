@@ -469,22 +469,84 @@ TESTS = [
 ]
 
 
+def _final_cleanup():
+    """Wipe every trace of regression-test data: activity log rows by the
+    test username, any straggler warehouse/transaction/BOM/job/loc rows
+    matching test markers. Runs unconditionally after the suite, even on
+    test failure, so test data never leaks into the real activity log
+    Preet sees in the UI.
+    """
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = True
+    cur = conn.cursor()
+    test_user = 'regression@test.com'
+    test_pcns = ['99001', '99002', '99003', '99004', '99005']
+    test_jobs = ['REGRESS-BOM-9999']
+    test_items = (
+        'REGRESS-RESTOCK-AFTER-PURGE', 'REGRESS-ZERO-ONHAND',
+        'REGRESS-DOUBLE-RESTOCK', 'REGRESS-DUP-A', 'REGRESS-DUP-B',
+        'REGRESS-PURGED-LOSTROW',
+    )
+    test_loc = '9999301'
+    try:
+        cur.execute(
+            f'DELETE FROM {SCHEMA}."tblActivityLog" WHERE username = %s',
+            (test_user,),
+        )
+        cur.execute(
+            f'DELETE FROM {SCHEMA}."tblActivityLog" '
+            f"WHERE description ILIKE %s OR description ILIKE %s OR details ILIKE %s",
+            ('%REGRESS-%', '%PCN 9900%', '%REGRESS-%'),
+        )
+        cur.execute(
+            f'DELETE FROM {SCHEMA}."tblTransaction" WHERE pcn::text = ANY(%s)',
+            (test_pcns,),
+        )
+        cur.execute(
+            f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn::text = ANY(%s)',
+            (test_pcns,),
+        )
+        cur.execute(
+            f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE item = ANY(%s)',
+            (list(test_items),),
+        )
+        cur.execute(
+            f'DELETE FROM {SCHEMA}."tblBOM" WHERE job::text = ANY(%s)',
+            (test_jobs,),
+        )
+        cur.execute(
+            f'DELETE FROM {SCHEMA}."tblJob" WHERE job_number = ANY(%s)',
+            (test_jobs,),
+        )
+        cur.execute(
+            f'DELETE FROM {SCHEMA}."tblLoc" WHERE location = %s',
+            (test_loc,),
+        )
+    except Exception as e:
+        print(f'  WARN  final cleanup raised: {e}')
+    finally:
+        conn.close()
+
+
 def main():
     print('KOSH regression smoke tests')
     print('=' * 60)
     failures = []
-    for fn in TESTS:
-        name = fn.__name__
-        try:
-            fn()
-            print(f'  PASS  {name}')
-        except AssertionError as e:
-            print(f'  FAIL  {name}: {e}')
-            failures.append((name, str(e)))
-        except Exception as e:
-            tb = traceback.format_exc()
-            print(f'  ERROR {name}: {e}\n{tb}')
-            failures.append((name, f'{e}\n{tb}'))
+    try:
+        for fn in TESTS:
+            name = fn.__name__
+            try:
+                fn()
+                print(f'  PASS  {name}')
+            except AssertionError as e:
+                print(f'  FAIL  {name}: {e}')
+                failures.append((name, str(e)))
+            except Exception as e:
+                tb = traceback.format_exc()
+                print(f'  ERROR {name}: {e}\n{tb}')
+                failures.append((name, f'{e}\n{tb}'))
+    finally:
+        _final_cleanup()
     print('=' * 60)
     print(f'{len(TESTS) - len(failures)} passed, {len(failures)} failed')
     if failures:
