@@ -675,7 +675,28 @@ class DatabaseManager:
             """, (location,))
 
             count = cursor.fetchone()[0]
-            return count > 0
+            if count > 0:
+                return True
+
+            # Auto-register new 7-digit location so stock/restock isn't blocked
+            # when the location hasn't been pre-created on the locations page.
+            # Derive area/shelf/loc from the digits: area=1, shelf=2-3, loc=4-7.
+            try:
+                area_val = int(location[0])
+                shelf_val = location[1:3]
+                loc_val = location[3:]
+                cursor.execute("""
+                    INSERT INTO pcb_inventory."tblLoc" (area, shelf, loc, location)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (area_val, shelf_val, loc_val, location))
+                conn.commit()
+                logger.info(f"Auto-registered new location {location} in tblLoc")
+                return True
+            except Exception as ins_err:
+                conn.rollback()
+                logger.error(f"Failed to auto-register location {location}: {ins_err}")
+                return False
         except Exception as e:
             logger.error(f"Error validating location: {e}")
             return False
