@@ -1439,6 +1439,32 @@ class DatabaseManager:
                 result = cursor.fetchone()
 
                 if not result:
+                    # Fallback: warehouse row missing (likely a legacy purge that
+                    # deleted the row). Recreate it from the most recent PURGE
+                    # or STOCK transaction so the same PCN can be restocked.
+                    if pcn:
+                        cursor.execute("""
+                            SELECT item, mpn, dc, msd
+                            FROM pcb_inventory."tblTransaction"
+                            WHERE pcn::text = %s
+                              AND trantype IN ('PURGE', 'STOCK', 'RESTOCK', 'PICK')
+                              AND COALESCE(item, '') <> ''
+                            ORDER BY id DESC
+                            LIMIT 1
+                        """, (str(pcn),))
+                        prior = cursor.fetchone()
+                        if prior:
+                            p_item, p_mpn, p_dc, p_msd = prior
+                            recreate_loc = location_to or 'Count Area'
+                            cursor.execute("""
+                                INSERT INTO pcb_inventory."tblWhse_Inventory"
+                                (item, pcn, mpn, dc, msd, onhandqty, mfg_qty, loc_from, loc_to, migrated_at)
+                                VALUES (%s, %s, %s, %s, %s, 0, '0', %s, %s, CURRENT_TIMESTAMP)
+                                RETURNING pcn, item, mpn, dc, mfg_qty, onhandqty, loc_to
+                            """, (p_item, str(pcn), p_mpn, p_dc, p_msd, location_from, recreate_loc))
+                            result = cursor.fetchone()
+                            logger.info(f"Recreated missing warehouse row for purged PCN {pcn} on restock by {username}")
+                if not result:
                     conn.rollback()  # Release lock
                     return {
                         'success': False,
