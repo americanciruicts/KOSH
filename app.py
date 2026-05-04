@@ -1509,19 +1509,29 @@ class DatabaseManager:
                     except (ValueError, TypeError):
                         mfg_qty_int = 0
 
-                # Check last KOSH-era PICK/RESTOCK to decide if restock is valid.
+                # Check last KOSH-era PICK/RESTOCK/PURGE to decide if restock is valid.
                 # Legacy MDB transactions are excluded (userid LIKE '%@%' keeps
-                # only authenticated-user rows), so the restock flow isn't
-                # blocked or mis-routed by pre-migration history.
+                # only authenticated-user rows). PURGE counts as a stock-clearing
+                # event — if it ran after the most recent RESTOCK, the "already
+                # restocked" lock is released because the units it added have
+                # since been removed.
                 cursor.execute("""
                     SELECT trantype FROM pcb_inventory."tblTransaction"
-                    WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK')
+                    WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK', 'PURGE')
                       AND userid LIKE '%%@%%'
                     ORDER BY id DESC
                     LIMIT 1
                 """, (str(pcn_num),))
                 last_txn = cursor.fetchone()
-                if last_txn and last_txn[0] == 'RESTOCK':
+                # Defensive backstop: if there's no on-hand stock anywhere for
+                # this PCN, restock is always valid regardless of guard state —
+                # nothing in inventory means nothing was double-restocked.
+                cursor.execute("""
+                    SELECT COALESCE(SUM(onhandqty), 0) FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn::text = %s
+                """, (str(pcn_num),))
+                total_onhand = cursor.fetchone()[0] or 0
+                if last_txn and last_txn[0] == 'RESTOCK' and int(total_onhand) > 0:
                     conn.rollback()
                     return {
                         'success': False,
