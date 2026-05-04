@@ -594,36 +594,66 @@ function doLoad() {
 }
 
 // ====== Wire up events ======
-document.addEventListener('DOMContentLoaded', function() {
-    dbg('DOMContentLoaded - XLSX available: ' + (typeof XLSX !== 'undefined'));
+function wireUploadHandlers() {
+    dbg('wireUploadHandlers - XLSX available: ' + (typeof XLSX !== 'undefined'));
 
     if (typeof XLSX === 'undefined') {
         showStatus('SheetJS library failed to load. Please hard refresh (Ctrl+Shift+R).', 'danger');
         return;
     }
 
-    document.getElementById('bomUploadForm').addEventListener('submit', function(e) {
-        e.preventDefault();
-        dbg('Form submitted');
-
+    function startParse() {
+        dbg('startParse triggered');
         var fileInput = document.getElementById('bomFile');
-        if (!fileInput.files || !fileInput.files[0]) {
+        if (!fileInput || !fileInput.files || !fileInput.files[0]) {
             showStatus('Please select a file first', 'danger');
             return;
         }
-
         var uploadBtn = document.getElementById('uploadBtn');
-        uploadBtn.disabled = true;
-        uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
-        document.getElementById('previewSection').style.display = 'none';
-        document.getElementById('jobExistsBanner').style.cssText = 'display:none !important';
+        if (uploadBtn) {
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+        }
+        var ps = document.getElementById('previewSection');
+        if (ps) ps.style.display = 'none';
+        var jeb = document.getElementById('jobExistsBanner');
+        if (jeb) jeb.style.cssText = 'display:none !important';
+        try {
+            parseExcelLocally(fileInput.files[0]);
+        } catch (ex) {
+            dbg('startParse threw: ' + ex.message);
+            showStatus('Parse failed: ' + ex.message, 'danger');
+            resetUploadBtn();
+        }
+    }
 
-        // Parse Excel CLIENT-SIDE - no server upload needed!
-        parseExcelLocally(fileInput.files[0]);
-    });
+    var form = document.getElementById('bomUploadForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            dbg('Form submit event');
+            startParse();
+        });
+    }
+    var uploadBtn = document.getElementById('uploadBtn');
+    if (uploadBtn) {
+        uploadBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            dbg('Upload button click event');
+            startParse();
+        });
+    }
+    var fileInput = document.getElementById('bomFile');
+    if (fileInput) {
+        fileInput.addEventListener('change', function() {
+            dbg('File selected: ' + (this.files[0] ? this.files[0].name : 'none'));
+        });
+    }
 
-    document.getElementById('loadBtn').addEventListener('click', function() { doLoad(); });
-    document.getElementById('resetBtn').addEventListener('click', function() { resetForm(); });
+    var loadBtn = document.getElementById('loadBtn');
+    if (loadBtn) loadBtn.addEventListener('click', function() { doLoad(); });
+    var resetBtn = document.getElementById('resetBtn');
+    if (resetBtn) resetBtn.addEventListener('click', function() { resetForm(); });
 
     var revInput = document.getElementById('metaJobRevInput');
     if (revInput) {
@@ -636,6 +666,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     dbg('Ready. Excel will be parsed in browser (no upload to server).');
-});
+}
+
+// Run wiring whether DOMContentLoaded already fired or not
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wireUploadHandlers);
+} else {
+    wireUploadHandlers();
+}
 </script>
 {% endblock %}

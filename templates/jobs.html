@@ -292,10 +292,33 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
     // ==================== BOM Loader Logic ====================
     let parsedBomData = null;
 
-    document.addEventListener('DOMContentLoaded', function() {
+    function wireBomHandlers() {
+        if (typeof XLSX === 'undefined') {
+            showStatus('SheetJS library failed to load. Hard refresh (Ctrl+Shift+R).', 'danger');
+            return;
+        }
         const bomUploadForm = document.getElementById('bomUploadForm');
         const loadBtn = document.getElementById('loadBtn');
         const bomResetBtn = document.getElementById('bomResetBtn');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileInput = document.getElementById('bomFile');
+
+        function startParse() {
+            // Synthesize a submit-like event so we reuse the existing handler body.
+            if (bomUploadForm) bomUploadForm.dispatchEvent(new Event('submit', { cancelable: true }));
+        }
+        if (uploadBtn) {
+            uploadBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                startParse();
+            });
+        }
+        if (fileInput) {
+            fileInput.addEventListener('change', function() {
+                const sm = document.getElementById('statusMsg');
+                if (sm) { sm.style.display = 'none'; }
+            });
+        }
 
         bomUploadForm.addEventListener('submit', function(e) {
             e.preventDefault();
@@ -537,7 +560,13 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
         });
 
         bomResetBtn.addEventListener('click', resetBomForm);
-    });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wireBomHandlers);
+    } else {
+        wireBomHandlers();
+    }
 
     function displayPreview(data) {
         const { metadata, bom_items } = data;
