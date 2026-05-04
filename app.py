@@ -6134,6 +6134,15 @@ def api_generate_pcn():
             if not data.get(key) or str(data.get(key)).strip() == ''
         ]
         if missing:
+            received_keys = sorted([k for k in data.keys() if k != 'mpn_custom'])
+            field_summary = ', '.join(
+                f"{k}={('<empty>' if not data.get(k) or str(data.get(k)).strip() == '' else repr(str(data.get(k))[:40]))}"
+                for k, _ in required_fields
+            )
+            logger.warning(
+                f"PCN generate 400 — missing {missing} for user {session.get('username','?')}. "
+                f"Received keys: {received_keys}. Field values: {field_summary}"
+            )
             return jsonify({
                 'error': 'The following required field(s) are missing: ' + ', '.join(missing)
             }), 400
