@@ -365,26 +365,26 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
                     var headers = rows[0].map(function(h) { return String(h || '').trim().toUpperCase(); });
                     var headersNorm = headers.map(function(h) { return h.replace(/\s+/g, ' '); });
 
-                    // Build column map
+                    // Build column map (lenient — many MPN/LINE aliases accepted)
                     var col = {};
                     for (var i = 0; i < headersNorm.length; i++) {
                         var h = headersNorm[i];
-                        if (h === 'LINE' || h === 'LINE #' || h === 'LINE NO') col.line = i;
-                        else if (h.indexOf('DESC') >= 0) col.desc = i;
-                        else if (h === 'MAN' || h === 'MANUFACTURER' || h === 'MFG' || h === 'MFR') col.man = i;
-                        else if (h === 'MPN' || h === 'MFG PN' || h === 'MFG P/N' || h === 'MANUFACTURER PN') col.mpn = i;
-                        else if (h.indexOf('ACI') >= 0) col.aci_pn = i;
-                        else if (h.indexOf('QTY') >= 0 || h === 'QUANTITY') col.qty = i;
-                        else if (h.indexOf('POU') >= 0) col.pou = i;
-                        else if (h.indexOf('LOC') >= 0 && h.indexOf('LAST') < 0) col.loc = i;
-                        else if (h.indexOf('COST') >= 0 || h.indexOf('PRICE') >= 0) col.cost = i;
-                        else if (h.indexOf('JOB REV') >= 0 || h === 'JOBREV' || h === 'JOB REVISION') col.job_rev = i;
-                        else if (h.indexOf('LAST REV') >= 0 || h === 'LASTREV' || h === 'LAST REVISION') col.last_rev = i;
-                        else if (h.indexOf('CUST REV') >= 0 || h === 'CUSTREV' || h === 'CUSTOMER REV') col.cust_rev = i;
-                        else if (h.indexOf('CUST PN') >= 0 || h.indexOf('CUST P/N') >= 0 || h === 'CUSTOMER PN' || h === 'CUSTOMER P/N') col.cust_pn = i;
-                        else if ((h === 'CUST' || h === 'CUSTOMER') && col.cust === undefined) col.cust = i;
-                        else if (h === 'JOB' && col.job === undefined) col.job = i;
-                        else if (h === 'REV' && col.job_rev === undefined) col.job_rev = i;
+                        if (col.line === undefined && (h === 'LINE' || h === 'LINE #' || h === 'LINE NO' || h === 'LINE NUMBER' || h === 'ITEM' || h === 'ITEM #' || h === 'ITEM NO' || h === '#' || h === 'NO' || h === 'NO.' || h === 'ROW' || h === 'SEQ' || h === 'SR' || h === 'SR.' || h === 'SR NO' || h === 'S.NO' || h === 'S NO')) col.line = i;
+                        else if (col.desc === undefined && h.indexOf('DESC') >= 0) col.desc = i;
+                        else if (col.man === undefined && (h === 'MAN' || h === 'MANUFACTURER' || h === 'MFG' || h === 'MFR' || h === 'MAKER' || h === 'BRAND')) col.man = i;
+                        else if (col.mpn === undefined && (h === 'MPN' || h === 'MFG PN' || h === 'MFG P/N' || h === 'MANUFACTURER PN' || h === 'MANUFACTURER P/N' || h === 'MFR PN' || h === 'MFR P/N' || h === 'MFR PART' || h === 'MFR PART #' || h === 'MFR PART NO' || h === 'MFR PART NUMBER' || h === 'MFG PART' || h === 'MFG PART #' || h === 'MFG PART NO' || h === 'MFG PART NUMBER' || h === 'PART NUMBER' || h === 'PART #' || h === 'PART NO' || h === 'PART NO.' || h === 'PN' || h === 'P/N' || h === 'PART')) col.mpn = i;
+                        else if (col.aci_pn === undefined && h.indexOf('ACI') >= 0) col.aci_pn = i;
+                        else if (col.qty === undefined && (h.indexOf('QTY') >= 0 || h === 'QUANTITY' || h === 'QTY/UNIT' || h === 'QTY PER' || h === 'EXT QTY')) col.qty = i;
+                        else if (col.pou === undefined && h.indexOf('POU') >= 0) col.pou = i;
+                        else if (col.loc === undefined && h.indexOf('LOC') >= 0 && h.indexOf('LAST') < 0) col.loc = i;
+                        else if (col.cost === undefined && (h.indexOf('COST') >= 0 || h.indexOf('PRICE') >= 0)) col.cost = i;
+                        else if (col.job_rev === undefined && (h.indexOf('JOB REV') >= 0 || h === 'JOBREV' || h === 'JOB REVISION')) col.job_rev = i;
+                        else if (col.last_rev === undefined && (h.indexOf('LAST REV') >= 0 || h === 'LASTREV' || h === 'LAST REVISION')) col.last_rev = i;
+                        else if (col.cust_rev === undefined && (h.indexOf('CUST REV') >= 0 || h === 'CUSTREV' || h === 'CUSTOMER REV')) col.cust_rev = i;
+                        else if (col.cust_pn === undefined && (h.indexOf('CUST PN') >= 0 || h.indexOf('CUST P/N') >= 0 || h === 'CUSTOMER PN' || h === 'CUSTOMER P/N')) col.cust_pn = i;
+                        else if (col.cust === undefined && (h === 'CUST' || h === 'CUSTOMER')) col.cust = i;
+                        else if (col.job === undefined && h === 'JOB') col.job = i;
+                        else if (col.job_rev === undefined && h === 'REV') col.job_rev = i;
                     }
 
                     // Parse rows
@@ -392,17 +392,31 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
                     var bomItems = [];
                     var metaFields = { job: 'job', job_rev: 'job_rev', last_rev: 'last_rev', cust: 'customer', cust_pn: 'cust_pn', cust_rev: 'cust_rev' };
 
+                    var autoLine = 0;
                     for (var r = 1; r < rows.length; r++) {
                         var row = rows[r];
                         if (!row || row.length === 0) continue;
 
-                        var lineVal = col.line !== undefined ? row[col.line] : null;
-                        if (!lineVal) continue;
-                        var lineNum = parseInt(lineVal);
-                        if (isNaN(lineNum)) continue;
+                        var allEmpty = true;
+                        for (var ci = 0; ci < row.length; ci++) {
+                            if (row[ci] !== '' && row[ci] !== null && row[ci] !== undefined) { allEmpty = false; break; }
+                        }
+                        if (allEmpty) continue;
+
+                        var lineNum;
+                        if (col.line !== undefined) {
+                            var parsed = parseInt(row[col.line]);
+                            if (isNaN(parsed)) continue;
+                            lineNum = parsed;
+                        } else {
+                            autoLine += 1;
+                            lineNum = autoLine;
+                        }
 
                         var mpn = col.mpn !== undefined ? String(row[col.mpn] || '').trim() : '';
-                        if (!mpn) continue;
+                        var descVal = col.desc !== undefined ? String(row[col.desc] || '').trim() : '';
+                        var qtyValChk = col.qty !== undefined ? row[col.qty] : '';
+                        if (!mpn && !descVal && (qtyValChk === '' || qtyValChk === null || qtyValChk === undefined)) continue;
 
                         // Extract metadata from first rows
                         for (var mk in metaFields) {
@@ -454,7 +468,7 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
                     }
 
                     if (bomItems.length === 0) {
-                        showStatus('No BOM items found. Check that the sheet has Line # and MPN columns with data.', 'danger');
+                        showStatus('No BOM items found. Detected headers: ' + headersNorm.join(' | ') + '. Detected columns: ' + JSON.stringify(col), 'danger');
                         uploadBtn.disabled = false;
                         uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
                         return;
