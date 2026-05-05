@@ -18,6 +18,19 @@ if [[ "${1:-}" == "--skip-tests" ]]; then
     echo ">> --skip-tests passed; skipping regression suite. NOT recommended."
 fi
 
+# --- Deploy-gap guard ----------------------------------------------------
+# The May 4-5 2026 BOM Loader incident was caused by yesterday's fix sitting
+# on local main while production (Vercel) was still on origin/main. Refuse
+# to deploy if anything is uncommitted, and verify at the end that local
+# matches origin so Vercel actually got the changes.
+git fetch origin main --quiet 2>/dev/null || true
+if ! git diff-index --quiet HEAD -- ':!*.accdb' ':!*.mdb' ':!*.next' 2>/dev/null; then
+    echo "!! You have uncommitted code changes (excluding *.accdb/*.mdb)."
+    echo "   Commit them first — every deploy must be a known commit."
+    git status --short -- ':!*.accdb' ':!*.mdb' | head -20
+    exit 3
+fi
+
 if [[ "${SKIP_TESTS}" -eq 0 ]]; then
     echo ">> Running KOSH regression smoke tests against the running container…"
     if ! ./tests/run.sh; then
@@ -36,6 +49,14 @@ docker compose build --no-cache
 echo ""
 echo ">> docker compose up -d"
 docker compose up -d
+
+# The static_files named volume overlays /app/static and persists across
+# rebuilds, so the IMAGE's static files don't show up in the running
+# container. Sync from the freshly-rebuilt image into the volume.
+echo ">> Syncing /app/static from new image into static_files volume…"
+TMP_CID=$(docker create kosh-web_app)
+docker cp "${TMP_CID}:/app/static/." stockandpick_webapp:/app/static/
+docker rm "${TMP_CID}" >/dev/null
 
 # Wait for the new container to come up healthy before pushing Vercel
 echo ">> Waiting for container health…"
@@ -62,8 +83,21 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
 fi
 
 echo ""
-echo ">> vercel --prod --yes"
-vercel --prod --yes
+echo ">> Pushing to origin/main (this is what triggers Vercel — vercel CLI is unreliable for KOSH)"
+git push origin main
+
+# Final guard: confirm origin actually received what we have locally.
+git fetch origin main --quiet
+LOCAL=$(git rev-parse main)
+REMOTE=$(git rev-parse origin/main)
+if [[ "${LOCAL}" != "${REMOTE}" ]]; then
+    echo "!! origin/main (${REMOTE}) does not match local main (${LOCAL})."
+    echo "   Vercel will deploy stale code. Investigate before walking away."
+    exit 4
+fi
 
 echo ""
 echo ">> Deploy complete."
+echo "   local main:  ${LOCAL}"
+echo "   origin/main: ${REMOTE}"
+echo "   Vercel build will pick this up automatically (~2 min)."

@@ -19,7 +19,19 @@ if ! docker ps --filter "name=${CONTAINER}" --format '{{.Names}}' | grep -q "${C
     exit 99
 fi
 
-# Copy current test file in case it's newer than the image
-docker cp tests/regression_tests.py "${CONTAINER}:/app/tests/regression_tests.py"
+# --- BOM parser regression (runs on host, no container needed) ---
+# Catches the bug class that bit Preet on May 4-5 2026: parser changes
+# silently dropping rows from "BOM to Load" (e.g. ZSUB substitutes).
+if command -v node >/dev/null 2>&1; then
+    if [ ! -d /tmp/node_modules/xlsx ]; then
+        echo "Installing xlsx for parser test..."
+        (cd /tmp && npm install --silent xlsx >/dev/null 2>&1) || true
+    fi
+    NODE_PATH=/tmp/node_modules node tests/test_bom_parser.js
+else
+    echo "WARN: node not on PATH — skipping BOM parser regression test."
+fi
 
+# --- Postgres data-shape regressions (run inside the container) ---
+docker cp tests/regression_tests.py "${CONTAINER}:/app/tests/regression_tests.py"
 docker exec "${CONTAINER}" python /app/tests/regression_tests.py
