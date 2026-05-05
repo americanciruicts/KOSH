@@ -7114,15 +7114,9 @@ def api_pcn_assignment_history():
 @app.route('/bom-loader')
 @require_auth
 def bom_loader():
-    """BOM Loader page"""
-    if not can_access_tool('bom_loader'):
-        flash('You do not have access to this tool.', 'danger')
-        return redirect(url_for('index'))
-    response = make_response(render_template('bom_loader.html'))
-    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    return response
+    """Legacy BOM Loader URL — superseded by the /jobs page (May 5 2026).
+    Kept as a permanent redirect so any old bookmarks land in the right place."""
+    return redirect(url_for('jobs_list'), code=301)
 
 @app.route('/api/bom/parse', methods=['POST'])
 @require_auth

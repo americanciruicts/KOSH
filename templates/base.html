@@ -103,7 +103,7 @@
                     </li>
                     {% if can_access_tool('jobs') or can_access_tool('shortage_report') %}
                     <li class="nav-item dropdown">
-                        <a class="modern-nav-link dropdown-toggle {% if request.endpoint == 'bom_loader' or (request.endpoint and request.endpoint.startswith('job')) or (request.endpoint and request.endpoint.startswith('shortage')) %}active{% endif %}" href="#" id="jobsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <a class="modern-nav-link dropdown-toggle {% if (request.endpoint and request.endpoint.startswith('job')) or (request.endpoint and request.endpoint.startswith('shortage')) %}active{% endif %}" href="#" id="jobsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="bi bi-briefcase-fill"></i> Jobs
                         </a>
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="jobsDropdown">
@@ -111,11 +111,6 @@
                             <li>
                                 <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('job') %}active{% endif %}" href="{{ url_for('jobs_list') }}">
                                     <i class="bi bi-briefcase-fill me-2"></i> Jobs
-                                </a>
-                            </li>
-                            <li>
-                                <a class="dropdown-item {% if request.endpoint == 'bom_loader' %}active{% endif %}" href="{{ url_for('bom_loader') }}">
-                                    <i class="bi bi-file-earmark-plus-fill me-2"></i> Create New Job
                                 </a>
                             </li>
                             {% endif %}
