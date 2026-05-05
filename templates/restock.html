@@ -98,7 +98,7 @@
                             <div class="mb-3">
                                 {{ form.quantity.label(class="form-label fw-semibold text-dark") }}
                                 {{ form.quantity(class="form-control form-control-lg border-2", placeholder="Enter quantity") }}
-                                <small class="text-muted">Enter the quantity to restock</small>
+                                <small class="text-muted">Auto-filled from MFG floor balance — change only if you're leaving some on the floor.</small>
                             </div>
                         </div>
                     </div>
@@ -188,10 +188,58 @@
     pcnEl.value = '';
     itemEl.value = '';
     poEl.value = '';
-    document.getElementById('quantity').value = '';
+    var _q = document.getElementById('quantity');
+    if (_q) { _q.value = ''; delete _q.dataset.autofilled; }
     detailCard.style.display = 'none';
     window.history.replaceState({}, '', '/restock');
     {% endif %}
+
+    // Once the user types into the qty field, treat it as manual input.
+    // Subsequent PCN lookups will leave it alone unless the user clears it.
+    var _qtyEl = document.getElementById('quantity');
+    if (_qtyEl) {
+        _qtyEl.addEventListener('input', function() {
+            delete this.dataset.autofilled;
+        });
+    }
+
+    // Pre-submit confirmation. May 5 2026: PCN 45528 was restocked at qty 11
+    // when the user thought they entered 13 — silent browser autofill or a
+    // mis-typed digit. We now show the qty in big letters and require an
+    // explicit confirmation, so the value the user is about to commit is
+    // impossible to miss.
+    var _restockForm = document.getElementById('restockForm');
+    if (_restockForm) {
+        _restockForm.addEventListener('submit', function(e) {
+            // If we already confirmed, let the submit through.
+            if (this.dataset.confirmed === '1') return;
+
+            var qtyVal = (document.getElementById('quantity').value || '').trim();
+            var pcnVal = (document.getElementById('pcn').value || '').trim() || '(not set)';
+            var itemVal = (document.getElementById('item').value || '').trim() || '(not set)';
+            var mfgFloorTxt = (document.getElementById('detail-mfg').textContent || '0').replace(/[^0-9-]/g,'');
+            var mfgFloor = parseInt(mfgFloorTxt || '0', 10);
+            var qtyNum = parseInt(qtyVal, 10);
+
+            var msg = 'CONFIRM RESTOCK\n\n' +
+                'PCN: ' + pcnVal + '\n' +
+                'Item: ' + itemVal + '\n' +
+                'Quantity to restock: ' + qtyVal + '\n' +
+                'Currently on MFG floor: ' + (isNaN(mfgFloor) ? '?' : mfgFloor) + '\n\n' +
+                (isFinite(qtyNum) && isFinite(mfgFloor) && qtyNum < mfgFloor
+                    ? '⚠ You are restocking LESS than the floor balance — ' +
+                      (mfgFloor - qtyNum) + ' units will be left on MFG Floor.\n\n'
+                    : '') +
+                'Click OK to confirm, Cancel to fix the quantity.';
+
+            if (!window.confirm(msg)) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                return false;
+            }
+            this.dataset.confirmed = '1';
+        }, true);  // capture, run before the location-validation listener
+    }
 
     // Always focus PCN field
     pcnEl.focus();
@@ -223,6 +271,25 @@
                         detailCard.style.display = 'block';
                         itemEl.value = d.part_number || '';
                         poEl.value = d.po_number || '';
+
+                        // Auto-fill restock qty with the current MFG-floor balance.
+                        // The user almost always wants "restock everything off the
+                        // floor" — making them type it caused PCNs (e.g. 45528 on
+                        // May 5 2026) to be restocked at the wrong qty, which
+                        // forced them to re-pick + re-restock. We prefill from
+                        // mfg_qty unless the user has already typed something.
+                        var qtyEl = document.getElementById('quantity');
+                        var mfgFloorQty = parseInt(d.mfg_qty || 0, 10) || 0;
+                        if (qtyEl && mfgFloorQty > 0) {
+                            var existing = (qtyEl.value || '').trim();
+                            // Treat values we filled as still-prefillable so a new
+                            // PCN lookup updates the qty. Tag the field so we can
+                            // tell apart user input from our autofill.
+                            if (!existing || qtyEl.dataset.autofilled === '1') {
+                                qtyEl.value = mfgFloorQty;
+                                qtyEl.dataset.autofilled = '1';
+                            }
+                        }
 
                         // Check if already restocked
                         var restockWarning = document.getElementById('already-restocked-warning');
