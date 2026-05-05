@@ -52,11 +52,15 @@ docker compose up -d
 
 # The static_files named volume overlays /app/static and persists across
 # rebuilds, so the IMAGE's static files don't show up in the running
-# container. Sync from the freshly-rebuilt image into the volume.
+# container. Sync from the freshly-rebuilt image into the volume by
+# routing through a host tmpdir (docker cp can't go container-to-container).
 echo ">> Syncing /app/static from new image into static_files volume…"
 TMP_CID=$(docker create kosh-web_app)
-docker cp "${TMP_CID}:/app/static/." stockandpick_webapp:/app/static/
+SYNC_DIR=$(mktemp -d)
+docker cp "${TMP_CID}:/app/static/." "${SYNC_DIR}/"
 docker rm "${TMP_CID}" >/dev/null
+docker cp "${SYNC_DIR}/." stockandpick_webapp:/app/static/
+rm -rf "${SYNC_DIR}"
 
 # Wait for the new container to come up healthy before pushing Vercel
 echo ">> Waiting for container health…"
