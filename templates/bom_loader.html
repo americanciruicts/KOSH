@@ -6,7 +6,7 @@
 <!-- SheetJS for client-side Excel parsing (avoids 413 on Vercel) -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- Shared parse logic — also exercised by tests/test_bom_parser.js -->
-<script src="{{ url_for('static', filename='js/bom_parser.js') }}"></script>
+<script src="{{ url_for('static', filename='js/bom_parser.js') }}?v=8.0"></script>
 <!-- Backend URL: use tunnel when on Vercel, same-origin when local -->
 <script>
 var BACKEND_URL = '';
@@ -21,7 +21,7 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
     <div class="row">
         <div class="col-12">
             <h2><i class="bi bi-file-earmark-arrow-up-fill"></i> BOM Loader</h2>
-            <p class="text-muted">Upload and load Bill of Materials from Excel files <span class="badge bg-danger" style="font-size:14px">v7.1</span></p>
+            <p class="text-muted">Upload and load Bill of Materials from Excel files <span class="badge bg-danger" style="font-size:14px">v8.0</span></p>
         </div>
     </div>
 
@@ -29,7 +29,7 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
     <div class="row">
         <div class="col-12">
             <div id="debugLog" style="background:#111;color:#0f0;font-family:monospace;font-size:12px;padding:8px;max-height:120px;overflow-y:auto;border-radius:4px;margin-bottom:10px;">
-                <div>BOM Loader v7.1 - Client-side Excel parse</div>
+                <div>BOM Loader v8.0 - Client-side Excel parse</div>
             </div>
         </div>
     </div>
@@ -195,7 +195,7 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
 </div>
 
 <script>
-// ====== v7.1 - CLIENT-SIDE Excel parsing with SheetJS ======
+// ====== v8.0 - CLIENT-SIDE Excel parsing with SheetJS ======
 // The Excel file is parsed in the browser, NOT uploaded to the server.
 // Only the small JSON data gets sent to /api/bom/load.
 // This fixes the Vercel 413 "Content Too Large" error.
@@ -215,7 +215,7 @@ function dbg(msg) {
     } catch(e) {}
 }
 
-dbg('v7.1 script loaded, XLSX lib: ' + (typeof XLSX !== 'undefined' ? 'YES' : 'NO'));
+dbg('v8.0 script loaded, XLSX lib: ' + (typeof XLSX !== 'undefined' ? 'YES' : 'NO'));
 dbg('Backend: ' + (BACKEND_URL || 'same-origin (local)'));
 
 window.onerror = function(msg, url, line) {
@@ -352,8 +352,33 @@ function parseExcelLocally(file) {
             // Check if job exists in DB
             checkJobExists(result);
 
-            showStatus('Parsed ' + bomItems.length + ' items from Excel. Review below and click Load to Database.', 'success');
-            resetUploadBtn();
+            // After a successful parse, the upload button must NOT look like its
+            // idle state — otherwise users (Preet, May 5 2026) think nothing
+            // happened and never scroll down to the green "Load to Database"
+            // button. Keep it disabled with explicit success text until reset.
+            var ub = document.getElementById('uploadBtn');
+            if (ub) {
+                ub.disabled = true;
+                ub.classList.remove('btn-primary');
+                ub.classList.add('btn-success');
+                ub.innerHTML = '<i class="bi bi-check-circle-fill"></i> Parsed ' + bomItems.length + ' items — scroll down and click <u>Load to Database</u>';
+            }
+            showStatus('SUCCESS — parsed ' + bomItems.length + ' items for Job ' + (metadata.job || '(unknown)') + '. Now click the green "Load to Database" button below to save.', 'success');
+
+            // Visual nudge: pulse-flash the green Load button so it's impossible to miss
+            var lbn = document.getElementById('loadBtn');
+            if (lbn) {
+                lbn.style.boxShadow = '0 0 0 4px rgba(25,135,84,0.4)';
+                lbn.style.transition = 'box-shadow 0.6s ease-in-out';
+                var pulses = 0;
+                var pulseTimer = setInterval(function() {
+                    lbn.style.boxShadow = pulses % 2 === 0
+                        ? '0 0 0 12px rgba(25,135,84,0.0)'
+                        : '0 0 0 4px rgba(25,135,84,0.6)';
+                    pulses += 1;
+                    if (pulses > 8) { clearInterval(pulseTimer); lbn.style.boxShadow = ''; }
+                }, 500);
+            }
 
         } catch(ex) {
             dbg('Parse error: ' + ex.message);
@@ -375,6 +400,8 @@ function resetUploadBtn() {
     var btn = document.getElementById('uploadBtn');
     if (btn) {
         btn.disabled = false;
+        btn.classList.remove('btn-success');
+        btn.classList.add('btn-primary');
         btn.innerHTML = '<i class="bi bi-upload"></i> Upload and Parse';
     }
 }
@@ -390,6 +417,9 @@ function checkJobExists(result) {
     var xhr = new XMLHttpRequest();
     xhr.open('GET', BACKEND_URL + '/api/bom/job-check/' + encodeURIComponent(jobNum), true);
     xhr.setRequestHeader('X-CSRFToken', csrfToken);
+    xhr.onerror = function() { dbg('Job-check XHR network error for ' + jobNum + ' — preview still usable, click Load below to attempt save'); };
+    xhr.ontimeout = function() { dbg('Job-check XHR timeout for ' + jobNum); };
+    xhr.timeout = 10000;
     xhr.onload = function() {
         try {
             var checkResult = JSON.parse(xhr.responseText);
