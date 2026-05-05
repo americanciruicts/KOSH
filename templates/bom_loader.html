@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}BOM Loader - KOSH{% endblock %}
+{% block title %}Create New Job - KOSH{% endblock %}
 
 {% block content %}
 <!-- SheetJS for client-side Excel parsing (avoids 413 on Vercel) -->
@@ -20,7 +20,7 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
 <div class="container-fluid py-4">
     <div class="row">
         <div class="col-12">
-            <h2><i class="bi bi-file-earmark-arrow-up-fill"></i> BOM Loader</h2>
+            <h2><i class="bi bi-file-earmark-plus-fill"></i> Create New Job <small class="text-muted">(BOM Loader)</small></h2>
             <p class="text-muted">Upload and load Bill of Materials from Excel files <span class="badge bg-danger" style="font-size:14px">v8.0</span></p>
         </div>
     </div>
@@ -29,7 +29,7 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
     <div class="row">
         <div class="col-12">
             <div id="debugLog" style="background:#111;color:#0f0;font-family:monospace;font-size:12px;padding:8px;max-height:120px;overflow-y:auto;border-radius:4px;margin-bottom:10px;">
-                <div>BOM Loader v8.0 - Client-side Excel parse</div>
+                <div>Create New Job (BOM Loader) v8.0 - Client-side Excel parse</div>
             </div>
         </div>
     </div>

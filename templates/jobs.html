@@ -3,6 +3,8 @@
 
 {% block extra_css %}
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- Shared parser, also exercised by tests/test_bom_parser.js -->
+<script src="{{ url_for('static', filename='js/bom_parser.js') }}?v=8.0"></script>
 <script>
 var BACKEND_URL = '';
 {% if config.get('KOSH_BACKEND_URL') %}
@@ -248,7 +250,7 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
             <p class="text-muted">No jobs match "{{ search_query }}". <a href="{{ url_for('jobs_list') }}">View all jobs</a></p>
             {% else %}
             <h4 class="mt-3 text-muted">No Jobs Yet</h4>
-            <p class="text-muted">Use the BOM Loader above to upload a BOM and create your first job.</p>
+            <p class="text-muted">Click <strong>Create New Job</strong> in the Jobs menu to upload a BOM and create your first job.</p>
             {% endif %}
         </div>
         {% endif %}
@@ -336,7 +338,8 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
             uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
             if (previewSection) previewSection.style.display = 'none';
 
-            // Client-side Excel parsing with SheetJS (no file upload to server)
+            // Client-side Excel parsing via the shared module
+            // (static/js/bom_parser.js — exercised by tests/test_bom_parser.js).
             var file = fileInput.files[0];
             var reader = new FileReader();
             reader.onload = function(ev) {
@@ -344,137 +347,21 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
                     var data = new Uint8Array(ev.target.result);
                     var workbook = XLSX.read(data, { type: 'array', cellDates: true });
 
-                    if (workbook.SheetNames.indexOf('BOM to Load') === -1 && workbook.SheetNames.indexOf('Assy BOM') === -1) {
-                        showStatus('File must contain a sheet named "BOM to Load" or "Assy BOM". Found: ' + workbook.SheetNames.join(', '), 'danger');
+                    if (typeof KoshBomParser === 'undefined') {
+                        showStatus('Parser failed to load. Hard refresh (Ctrl+Shift+R).', 'danger');
                         uploadBtn.disabled = false;
-                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
+                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
                         return;
                     }
 
-                    function parseSheetJ(sheetName) {
-                        var ws = workbook.Sheets[sheetName];
-                        if (!ws) return null;
-                        var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-                        if (!rows || rows.length < 2) return null;
-                        var headerRowIdx = -1;
-                        var headersNorm = [];
-                        for (var hr = 0; hr < Math.min(rows.length, 30); hr++) {
-                            var candidate = (rows[hr] || []).map(function(h) { return String(h || '').trim().toUpperCase().replace(/\s+/g, ' '); });
-                            var hasLine = false, hasMpnish = false;
-                            for (var ci = 0; ci < candidate.length; ci++) {
-                                var c = candidate[ci];
-                                if (c === 'LINE' || c === 'LINE #' || c === 'LINE NO' || c === 'ITEM' || c === '#' || c === 'NO' || c === 'NO.' || c === 'SR' || c === 'SR NO' || c === 'S.NO' || c === 'S NO') hasLine = true;
-                                if (c === 'MPN' || c.indexOf('MFG PN') >= 0 || c.indexOf('MFR PN') >= 0 || c.indexOf('PART NUMBER') >= 0 || c === 'PN' || c === 'P/N' || c.indexOf('DESC') >= 0) hasMpnish = true;
-                            }
-                            if (hasLine && hasMpnish) { headerRowIdx = hr; headersNorm = candidate; break; }
-                        }
-                        if (headerRowIdx === -1) return null;
-                        var col = {};
-                        for (var i = 0; i < headersNorm.length; i++) {
-                            var h = headersNorm[i];
-                            if (col.line === undefined && (h === 'LINE' || h === 'LINE #' || h === 'LINE NO' || h === 'LINE NUMBER' || h === 'ITEM' || h === 'ITEM #' || h === 'ITEM NO' || h === '#' || h === 'NO' || h === 'NO.' || h === 'ROW' || h === 'SEQ' || h === 'SR' || h === 'SR.' || h === 'SR NO' || h === 'S.NO' || h === 'S NO')) col.line = i;
-                            else if (col.desc === undefined && h.indexOf('DESC') >= 0) col.desc = i;
-                            else if (col.man === undefined && (h === 'MAN' || h === 'MANUFACTURER' || h === 'MFG' || h === 'MFR' || h === 'MAKER' || h === 'BRAND')) col.man = i;
-                            else if (col.mpn === undefined && (h === 'MPN' || h === 'MFG PN' || h === 'MFG P/N' || h === 'MANUFACTURER PN' || h === 'MANUFACTURER P/N' || h === 'MFR PN' || h === 'MFR P/N' || h === 'MFR PART' || h === 'MFR PART #' || h === 'MFR PART NO' || h === 'MFR PART NUMBER' || h === 'MFG PART' || h === 'MFG PART #' || h === 'MFG PART NO' || h === 'MFG PART NUMBER' || h === 'PART NUMBER' || h === 'PART #' || h === 'PART NO' || h === 'PART NO.' || h === 'PN' || h === 'P/N' || h === 'PART')) col.mpn = i;
-                            else if (col.aci_pn === undefined && h.indexOf('ACI') >= 0) col.aci_pn = i;
-                            else if (col.qty === undefined && (h.indexOf('QTY') >= 0 || h === 'QUANTITY' || h === 'QTY/UNIT' || h === 'QTY PER' || h === 'EXT QTY')) col.qty = i;
-                            else if (col.pou === undefined && h.indexOf('POU') >= 0) col.pou = i;
-                            else if (col.loc === undefined && h.indexOf('LOC') >= 0 && h.indexOf('LAST') < 0) col.loc = i;
-                            else if (col.cost === undefined && (h.indexOf('COST') >= 0 || h.indexOf('PRICE') >= 0)) col.cost = i;
-                            else if (col.job_rev === undefined && (h.indexOf('JOB REV') >= 0 || h === 'JOBREV' || h === 'JOB REVISION')) col.job_rev = i;
-                            else if (col.last_rev === undefined && (h.indexOf('LAST REV') >= 0 || h === 'LASTREV' || h === 'LAST REVISION')) col.last_rev = i;
-                            else if (col.cust_rev === undefined && (h.indexOf('CUST REV') >= 0 || h === 'CUSTREV' || h === 'CUSTOMER REV')) col.cust_rev = i;
-                            else if (col.cust_pn === undefined && (h.indexOf('CUST PN') >= 0 || h.indexOf('CUST P/N') >= 0 || h === 'CUSTOMER PN' || h === 'CUSTOMER P/N')) col.cust_pn = i;
-                            else if (col.cust === undefined && (h === 'CUST' || h === 'CUSTOMER')) col.cust = i;
-                            else if (col.job === undefined && h === 'JOB') col.job = i;
-                            else if (col.job_rev === undefined && h === 'REV') col.job_rev = i;
-                        }
-                        var sheetMeta = {};
-                        var sheetItems = [];
-                        var metaFieldsLocal = { job: 'job', job_rev: 'job_rev', last_rev: 'last_rev', cust: 'customer', cust_pn: 'cust_pn', cust_rev: 'cust_rev' };
-                        var autoLineLocal = 0;
-                        for (var r = headerRowIdx + 1; r < rows.length; r++) {
-                            var row = rows[r];
-                            if (!row || row.length === 0) continue;
-                            var allEmpty = true;
-                            for (var ci2 = 0; ci2 < row.length; ci2++) {
-                                if (row[ci2] !== '' && row[ci2] !== null && row[ci2] !== undefined) { allEmpty = false; break; }
-                            }
-                            if (allEmpty) continue;
-                            var lineNum;
-                            if (col.line !== undefined) {
-                                var p = parseInt(row[col.line]);
-                                if (isNaN(p)) continue;
-                                lineNum = p;
-                            } else { autoLineLocal += 1; lineNum = autoLineLocal; }
-                            var mpnVal = col.mpn !== undefined ? String(row[col.mpn] || '').trim() : '';
-                            var descVal = col.desc !== undefined ? String(row[col.desc] || '').trim() : '';
-                            var qtyChk = col.qty !== undefined ? row[col.qty] : '';
-                            if (!mpnVal && !descVal && (qtyChk === '' || qtyChk === null || qtyChk === undefined)) continue;
-                            for (var mk in metaFieldsLocal) {
-                                var metaKey = metaFieldsLocal[mk];
-                                if (!sheetMeta[metaKey] && col[mk] !== undefined && row[col[mk]]) {
-                                    var v = row[col[mk]];
-                                    if (v instanceof Date) sheetMeta[metaKey] = v.toISOString().split('T')[0];
-                                    else sheetMeta[metaKey] = String(v).trim();
-                                }
-                            }
-                            var qty = parseInt(col.qty !== undefined ? row[col.qty] : 0) || 0;
-                            var cost = parseFloat(col.cost !== undefined ? row[col.cost] : 0) || 0;
-                            var rowLastRev = col.last_rev !== undefined ? row[col.last_rev] : '';
-                            if (rowLastRev instanceof Date) rowLastRev = rowLastRev.toISOString().split('T')[0];
-                            else rowLastRev = String(rowLastRev || '').trim();
-                            sheetItems.push({
-                                line: lineNum, desc: descVal,
-                                man: col.man !== undefined ? String(row[col.man] || '').trim() : '',
-                                mpn: mpnVal,
-                                aci_pn: col.aci_pn !== undefined ? String(row[col.aci_pn] || '').trim() : '',
-                                qty: qty,
-                                pou: col.pou !== undefined ? String(row[col.pou] || '').trim() : '',
-                                loc: col.loc !== undefined ? String(row[col.loc] || '').trim() : '',
-                                cost: cost,
-                                job: col.job !== undefined ? String(row[col.job] || '').trim() : '',
-                                job_rev: col.job_rev !== undefined ? String(row[col.job_rev] || '').trim() : '',
-                                last_rev: rowLastRev,
-                                cust: col.cust !== undefined ? String(row[col.cust] || '').trim() : '',
-                                cust_pn: col.cust_pn !== undefined ? String(row[col.cust_pn] || '').trim() : '',
-                                cust_rev: col.cust_rev !== undefined ? String(row[col.cust_rev] || '').trim() : ''
-                            });
-                        }
-                        return { items: sheetItems, metadata: sheetMeta };
-                    }
-
-                    // Walk every sheet, prefer "BOM to Load"; merge unique line numbers.
-                    var preferredOrder = ['BOM to Load'].concat(workbook.SheetNames.filter(function(n) { return n !== 'BOM to Load'; }));
-                    var bomItems = [];
-                    var seenLines = {};
-                    var metadata = {};
-                    for (var si = 0; si < preferredOrder.length; si++) {
-                        var sn = preferredOrder[si];
-                        var parsed = parseSheetJ(sn);
-                        if (!parsed) continue;
-                        for (var ii = 0; ii < parsed.items.length; ii++) {
-                            var it = parsed.items[ii];
-                            var key = String(it.line);
-                            if (seenLines[key]) continue;
-                            seenLines[key] = true;
-                            bomItems.push(it);
-                        }
-                        Object.keys(parsed.metadata || {}).forEach(function(k) {
-                            if (!metadata[k] && parsed.metadata[k]) metadata[k] = parsed.metadata[k];
-                        });
-                    }
-                    bomItems.sort(function(a, b) { return (a.line || 0) - (b.line || 0); });
-
-                    // Clean job number
-                    if (metadata.job && metadata.job.endsWith('.0')) {
-                        metadata.job = metadata.job.slice(0, -2);
-                    }
+                    var parsed = KoshBomParser.parseWorkbook(workbook, XLSX);
+                    var bomItems = parsed.bom_items;
+                    var metadata = parsed.metadata;
 
                     if (bomItems.length === 0) {
-                        showStatus('No BOM items found. Detected headers: ' + headersNorm.join(' | ') + '. Detected columns: ' + JSON.stringify(col), 'danger');
+                        showStatus('No BOM items found. Sheets seen: ' + workbook.SheetNames.join(', ') + '. Detected headers (BOM to Load): ' + (parsed.headers_norm || []).join(' | '), 'danger');
                         uploadBtn.disabled = false;
-                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
+                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
                         return;
                     }
 
@@ -511,19 +398,37 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
                         .catch(function(e) { console.warn('Job check failed (non-critical):', e); });
                     }
 
-                    showStatus('Successfully parsed ' + result.total_items + ' items from BOM', 'success');
+                    // Upload button must NOT look like its idle state — turn it
+                    // green and tell the user explicitly what to do next.
+                    uploadBtn.classList.remove('btn-primary');
+                    uploadBtn.classList.add('btn-success');
+                    uploadBtn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Parsed ' + bomItems.length + ' items — scroll down, click Load to Database';
+                    uploadBtn.disabled = true;
+                    showStatus('SUCCESS — parsed ' + bomItems.length + ' items for Job ' + (metadata.job || '(unknown)') + '. Scroll down and click the green "Load to Database" button to save.', 'success');
+
+                    // Pulse the green Load button so it's impossible to miss.
+                    var lbn = document.getElementById('loadBtn');
+                    if (lbn) {
+                        lbn.style.transition = 'box-shadow 0.6s ease-in-out';
+                        var pulses = 0;
+                        var pulseTimer = setInterval(function() {
+                            lbn.style.boxShadow = pulses % 2 === 0
+                                ? '0 0 0 12px rgba(25,135,84,0.0)'
+                                : '0 0 0 6px rgba(25,135,84,0.7)';
+                            pulses += 1;
+                            if (pulses > 8) { clearInterval(pulseTimer); lbn.style.boxShadow = ''; }
+                        }, 500);
+                    }
 
                 } catch (ex) {
                     showStatus('Failed to parse Excel: ' + ex.message, 'danger');
                     resetBomForm();
                 }
-                uploadBtn.disabled = false;
-                uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
             };
             reader.onerror = function() {
                 showStatus('Failed to read file', 'danger');
                 uploadBtn.disabled = false;
-                uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse';
+                uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
             };
             reader.readAsArrayBuffer(file);
         });
@@ -642,9 +547,14 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
         const previewSection = document.getElementById('previewSection');
         if (previewSection) previewSection.style.display = 'none';
         const uploadBtn = document.getElementById('uploadBtn');
-        if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload & Parse'; }
+        if (uploadBtn) {
+            uploadBtn.disabled = false;
+            uploadBtn.classList.remove('btn-success');
+            uploadBtn.classList.add('btn-primary');
+            uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
+        }
         const loadBtn = document.getElementById('loadBtn');
-        if (loadBtn) { loadBtn.disabled = false; loadBtn.innerHTML = '<i class="bi bi-database-add me-1"></i>Load to Database'; }
+        if (loadBtn) { loadBtn.disabled = false; loadBtn.style.boxShadow = ''; loadBtn.innerHTML = '<i class="bi bi-database-add me-1"></i>Load to Database'; }
         const bomResetBtn = document.getElementById('bomResetBtn');
         if (bomResetBtn) bomResetBtn.style.display = 'none';
         const statusMsg = document.getElementById('statusMsg');

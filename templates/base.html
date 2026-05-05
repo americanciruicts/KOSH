@@ -109,8 +109,13 @@
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="jobsDropdown">
                             {% if can_access_tool('jobs') %}
                             <li>
-                                <a class="dropdown-item {% if request.endpoint == 'bom_loader' or (request.endpoint and request.endpoint.startswith('job')) %}active{% endif %}" href="{{ url_for('jobs_list') }}">
+                                <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('job') %}active{% endif %}" href="{{ url_for('jobs_list') }}">
                                     <i class="bi bi-briefcase-fill me-2"></i> Jobs
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item {% if request.endpoint == 'bom_loader' %}active{% endif %}" href="{{ url_for('bom_loader') }}">
+                                    <i class="bi bi-file-earmark-plus-fill me-2"></i> Create New Job
                                 </a>
                             </li>
                             {% endif %}

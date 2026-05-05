@@ -19,6 +19,25 @@ if ! docker ps --filter "name=${CONTAINER}" --format '{{.Names}}' | grep -q "${C
     exit 99
 fi
 
+# --- Guard: only ONE place parses BOMs, the shared module ---
+# May 5 2026: we discovered /jobs had its OWN inline parser that none of
+# our fixes ever touched. From now on, the shared module is the only
+# allowed parser. If a template re-introduces inline XLSX parsing, fail
+# the deploy here so the user never gets two divergent parsers again.
+echo "[bom-parser-guard] checking for inline XLSX parsing in templates…"
+# XLSX.read (file -> workbook) is fine in templates; XLSX.utils.sheet_to_json
+# is what makes a parser a parser, and that must live in the shared module.
+LEAK=$(grep -ln "XLSX\.utils\.sheet_to_json" templates/ 2>/dev/null \
+       | grep -v "^templates/_test/" || true)
+if [ -n "${LEAK}" ]; then
+    echo "FAIL: inline Excel parsing found outside static/js/bom_parser.js:"
+    echo "${LEAK}" | sed 's/^/  /'
+    echo "Templates must call KoshBomParser.parseWorkbook(workbook, XLSX) instead."
+    echo "Move the logic into static/js/bom_parser.js so the test suite covers it."
+    exit 4
+fi
+echo "[bom-parser-guard] OK — only the shared module parses BOMs."
+
 # --- BOM parser regression (runs on host, no container needed) ---
 # Catches the bug class that bit Preet on May 4-5 2026: parser changes
 # silently dropping rows from "BOM to Load" (e.g. ZSUB substitutes).
