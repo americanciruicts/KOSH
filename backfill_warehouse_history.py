@@ -118,8 +118,16 @@ def main():
                 WHERE pcn::text = %s AND item::text = %s
                   AND trantype = 'ADJT'
                   AND COALESCE(userid,'') = %s
-                  AND COALESCE(tran_ts, NOW()) BETWEEN %s::timestamptz - INTERVAL '3 minutes'
-                                                   AND %s::timestamptz + INTERVAL '3 minutes'
+                  AND (
+                      CASE
+                          WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                               THEN tran_time::timestamptz
+                          WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\s+[0-9]{2}:[0-9]{2}'
+                               THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
+                          ELSE NULL
+                      END
+                  ) BETWEEN %s::timestamptz - INTERVAL '3 minutes'
+                        AND %s::timestamptz + INTERVAL '3 minutes'
                 LIMIT 1
             """, (pcn, item, username or '', created_at, created_at))
             if cur.fetchone():

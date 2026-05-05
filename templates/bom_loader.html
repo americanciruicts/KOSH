@@ -437,15 +437,20 @@ function parseExcelLocally(file) {
                 var parsed = parseSheet(sn);
                 if (!parsed) { perSheetCounts.push(sn + ':skip'); continue; }
                 if (sn === 'BOM to Load') { headersNorm = parsed.headersNorm; col = parsed.col; }
+                // Dedup is CROSS-SHEET only. Within a sheet, keep all rows so
+                // substitute lines (e.g. duplicate "Line 10" with "ZSUB FOR ABOVE")
+                // are preserved instead of silently dropped.
                 var added = 0;
+                var sheetLines = {};
                 for (var ii = 0; ii < parsed.items.length; ii++) {
                     var it = parsed.items[ii];
                     var key = String(it.line);
-                    if (seenLines[key]) continue;
-                    seenLines[key] = true;
+                    if (seenLines[key] && !sheetLines[key]) continue;
+                    sheetLines[key] = true;
                     bomItems.push(it);
                     added += 1;
                 }
+                Object.keys(sheetLines).forEach(function(k) { seenLines[k] = true; });
                 perSheetCounts.push(sn + ':+' + added + '/' + parsed.items.length);
                 Object.keys(parsed.metadata || {}).forEach(function(k) {
                     if (!metadata[k] && parsed.metadata[k]) metadata[k] = parsed.metadata[k];
