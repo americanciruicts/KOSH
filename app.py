@@ -9020,6 +9020,115 @@ def api_reel_change_check():
             db_manager.return_connection(conn)
 
 
+@app.route('/api/reel-change/lookup', methods=['GET'])
+@require_auth
+def api_reel_change_lookup():
+    """Look up a single PCN and return its MPN/Item for live form preview."""
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    pcn = (request.args.get('pcn') or '').strip()
+    if not pcn:
+        return jsonify({'success': False, 'error': 'pcn required'}), 400
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor() as cursor:
+            mpn, item = _lookup_pcn_mpn_item(cursor, pcn)
+            if mpn is None and item is None:
+                return jsonify({'success': True, 'found': False, 'pcn': pcn})
+            return jsonify({
+                'success': True,
+                'found': True,
+                'pcn': pcn,
+                'mpn': mpn or '',
+                'item': item or '',
+            })
+    except Exception as e:
+        logger.error(f"Error in reel-change lookup: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/api/reel-change/demo', methods=['GET'])
+@require_auth
+def api_reel_change_demo():
+    """Return two real PCNs from inventory for the on-page demo button.
+
+    `pair=match` (default) returns two PCNs that share the same MPN (PASS demo).
+    `pair=sub`   returns two PCNs that share Item but different MPN (SUB demo).
+    `pair=fail`  returns two unrelated PCNs (FAIL demo).
+    """
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    pair = (request.args.get('pair') or 'match').lower()
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor() as cursor:
+            if pair == 'match':
+                # Two distinct PCNs that point at the same MPN
+                cursor.execute("""
+                    SELECT a.pcn::text AS old_pcn, b.pcn::text AS new_pcn,
+                           a.mpn AS old_mpn, b.mpn AS new_mpn,
+                           a.item AS old_item, b.item AS new_item
+                    FROM pcb_inventory."tblWhse_Inventory" a
+                    JOIN pcb_inventory."tblWhse_Inventory" b
+                      ON LOWER(TRIM(a.mpn)) = LOWER(TRIM(b.mpn))
+                     AND a.pcn::text < b.pcn::text
+                    WHERE a.mpn IS NOT NULL AND TRIM(a.mpn) <> ''
+                      AND b.mpn IS NOT NULL AND TRIM(b.mpn) <> ''
+                    LIMIT 1
+                """)
+            elif pair == 'sub':
+                cursor.execute("""
+                    SELECT a.pcn::text AS old_pcn, b.pcn::text AS new_pcn,
+                           a.mpn AS old_mpn, b.mpn AS new_mpn,
+                           a.item AS old_item, b.item AS new_item
+                    FROM pcb_inventory."tblWhse_Inventory" a
+                    JOIN pcb_inventory."tblWhse_Inventory" b
+                      ON LOWER(TRIM(a.item)) = LOWER(TRIM(b.item))
+                     AND LOWER(TRIM(COALESCE(a.mpn,''))) <> LOWER(TRIM(COALESCE(b.mpn,'')))
+                     AND a.pcn::text < b.pcn::text
+                    WHERE a.item IS NOT NULL AND TRIM(a.item) <> ''
+                    LIMIT 1
+                """)
+            else:  # fail
+                cursor.execute("""
+                    SELECT a.pcn::text AS old_pcn, b.pcn::text AS new_pcn,
+                           a.mpn AS old_mpn, b.mpn AS new_mpn,
+                           a.item AS old_item, b.item AS new_item
+                    FROM pcb_inventory."tblWhse_Inventory" a
+                    JOIN pcb_inventory."tblWhse_Inventory" b
+                      ON LOWER(TRIM(COALESCE(a.item,''))) <> LOWER(TRIM(COALESCE(b.item,'')))
+                     AND LOWER(TRIM(COALESCE(a.mpn,''))) <> LOWER(TRIM(COALESCE(b.mpn,'')))
+                     AND a.pcn::text < b.pcn::text
+                    WHERE a.item IS NOT NULL AND a.mpn IS NOT NULL
+                    LIMIT 1
+                """)
+            row = cursor.fetchone()
+            if not row:
+                return jsonify({'success': False, 'error': f'No {pair} sample available in inventory.'}), 404
+            return jsonify({
+                'success': True,
+                'pair': pair,
+                'job': f'DEMO-{pair.upper()}',
+                'old_pcn': row[0],
+                'new_pcn': row[1],
+                'old_mpn': row[2] or '',
+                'new_mpn': row[3] or '',
+                'old_item': row[4] or '',
+                'new_item': row[5] or '',
+            })
+    except Exception as e:
+        logger.error(f"Error fetching demo sample: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
 @app.route('/api/reel-change/recent', methods=['GET'])
 @require_auth
 def api_reel_change_recent():

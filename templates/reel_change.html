@@ -2,117 +2,234 @@
 
 {% block title %}Reel Change - KOSH{% endblock %}
 
+{% block extra_css %}
+<style>
+.rc-page { max-width: 1400px; }
+.rc-header h2 { margin-bottom: .25rem; }
+.rc-step-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: #0d6efd; color: #fff; font-weight: 700; margin-right: .5rem;
+}
+.rc-input { font-size: 1.5rem; padding: .75rem 1rem; font-family: ui-monospace, monospace; letter-spacing: 1px; }
+.rc-pcn-card { border: 2px solid #dee2e6; border-radius: .75rem; transition: all .15s ease; }
+.rc-pcn-card.is-old { border-left: 6px solid #6c757d; }
+.rc-pcn-card.is-new { border-left: 6px solid #0d6efd; }
+.rc-pcn-card.found { border-color: #198754; }
+.rc-pcn-card.notfound { border-color: #dc3545; }
+.rc-meta { font-size: .9rem; }
+.rc-meta dt { color: #6c757d; font-weight: 500; }
+.rc-meta dd { margin-bottom: .25rem; font-weight: 600; word-break: break-word; }
+.rc-status-pill {
+    font-size: .75rem; padding: .15rem .5rem; border-radius: 999px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+}
+.rc-compare-arrow { font-size: 2.5rem; color: #adb5bd; }
+@media (max-width: 991px) { .rc-compare-arrow { transform: rotate(90deg); } }
+
+/* Full-screen result overlay */
+.rc-result-overlay {
+    position: fixed; inset: 0; z-index: 2000;
+    display: none; align-items: center; justify-content: center;
+    padding: 2rem; backdrop-filter: blur(2px);
+}
+.rc-result-overlay.show { display: flex; }
+.rc-result-overlay.pass { background: rgba(25,135,84,.95); }
+.rc-result-overlay.sub  { background: rgba(255,193,7,.97); color: #000; }
+.rc-result-overlay.fail { background: rgba(220,53,69,.96); }
+.rc-result-card {
+    background: #fff; color: #212529;
+    border-radius: 1rem; padding: 2rem 2.5rem; max-width: 900px; width: 100%;
+    box-shadow: 0 25px 60px rgba(0,0,0,.4);
+}
+.rc-result-big {
+    font-size: clamp(5rem, 14vw, 11rem); font-weight: 800; line-height: 1;
+    text-align: center; letter-spacing: 4px; margin: 0;
+}
+.rc-result-big.pass { color: #198754; }
+.rc-result-big.sub  { color: #b58a00; }
+.rc-result-big.fail { color: #dc3545; }
+.rc-result-msg { font-size: 1.4rem; text-align: center; margin: 1rem 0 1.5rem; }
+.rc-compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.rc-compare-grid .rc-side { background: #f8f9fa; border-radius: .5rem; padding: 1rem; }
+.rc-compare-grid .rc-side h6 { color: #6c757d; margin-bottom: .5rem; text-transform: uppercase; font-size: .75rem; letter-spacing: 1px; }
+.rc-compare-grid .rc-side .rc-val { font-weight: 600; font-family: ui-monospace, monospace; word-break: break-word; }
+.rc-result-actions { text-align: center; margin-top: 1.5rem; }
+.rc-result-actions .btn { font-size: 1.1rem; padding: .75rem 2.5rem; }
+.rc-result-tag { text-align: center; font-size: 1rem; color: #6c757d; }
+
+.rc-demo-strip { background: #f1f3f5; border-radius: .5rem; padding: .75rem 1rem; }
+.rc-demo-strip .badge { font-size: .8rem; }
+
+.rc-history-row.fail-row { background-color: rgba(220,53,69,.06); }
+.rc-history-row.sub-row  { background-color: rgba(255,193,7,.08); }
+
+kbd {
+    background:#212529; color:#fff; padding:2px 6px; border-radius:4px;
+    font-family: ui-monospace, monospace; font-size: .8rem;
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container py-4">
-    <div class="row mb-3">
-        <div class="col-12">
-            <h2><i class="bi bi-arrow-repeat"></i> Reel Change</h2>
-            <p class="text-muted">
-                Verify a reel swap on the SMT line. Scan <strong>Job</strong>, <strong>Old Reel PCN</strong>, then
-                <strong>New Reel PCN</strong>. The system compares MPN/Item and logs each scan.
-            </p>
-        </div>
+<div class="container rc-page py-4">
+    <div class="rc-header mb-3">
+        <h2><i class="bi bi-arrow-repeat"></i> Reel Change</h2>
+        <p class="text-muted mb-0">
+            Verify a reel swap on the SMT line. Workflow:
+            <span class="rc-step-badge">1</span>Job&nbsp;
+            <span class="rc-step-badge">2</span>Old Reel&nbsp;
+            <span class="rc-step-badge">3</span>New Reel&nbsp;
+            → press <kbd>Enter</kbd> to compare. Result:
+            <span class="badge bg-success">PASS</span>
+            <span class="badge bg-warning text-dark">SUB</span>
+            <span class="badge bg-danger">FAIL</span>
+        </p>
     </div>
 
-    <div class="row">
-        <!-- Scan kiosk -->
-        <div class="col-lg-5">
-            <div class="card shadow-sm">
-                <div class="card-header bg-dark text-white">
-                    <h5 class="mb-0"><i class="bi bi-upc-scan me-2"></i>Reel Checker</h5>
-                </div>
-                <div class="card-body">
-                    <form id="reelForm" autocomplete="off">
-                        <div class="mb-3">
-                            <label for="jobInput" class="form-label fw-bold">Job #</label>
-                            <input type="text" class="form-control form-control-lg" id="jobInput"
-                                   placeholder="Scan or type job #" autofocus>
-                        </div>
-                        <div class="mb-3">
-                            <label for="oldReelInput" class="form-label fw-bold">Old Reel Scan (PCN)</label>
-                            <input type="text" class="form-control form-control-lg" id="oldReelInput"
-                                   placeholder="Scan old reel PCN">
-                        </div>
-                        <div class="mb-3">
-                            <label for="newReelInput" class="form-label fw-bold">New Reel Scan (PCN)</label>
-                            <input type="text" class="form-control form-control-lg" id="newReelInput"
-                                   placeholder="Scan new reel PCN">
-                        </div>
-                        <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-primary btn-lg" id="compareBtn">
-                                <i class="bi bi-check2-circle me-2"></i>Compare
-                            </button>
-                            <button type="button" class="btn btn-outline-secondary" id="clearBtn">
-                                <i class="bi bi-eraser me-2"></i>Clear
-                            </button>
-                        </div>
-                    </form>
+    <!-- Demo strip -->
+    <div class="rc-demo-strip mb-3 d-flex flex-wrap align-items-center gap-2">
+        <strong class="me-2"><i class="bi bi-stars"></i> Try Demo:</strong>
+        <button type="button" class="btn btn-sm btn-outline-success" data-demo="match">Load PASS sample</button>
+        <button type="button" class="btn btn-sm btn-outline-warning" data-demo="sub">Load SUB sample</button>
+        <button type="button" class="btn btn-sm btn-outline-danger"  data-demo="fail">Load FAIL sample</button>
+        <span class="text-muted small ms-auto">
+            Pulls two real PCNs from inventory and pre-fills the form so you can see the comparison live.
+        </span>
+    </div>
+
+    <form id="reelForm" autocomplete="off">
+        <div class="row g-3">
+            <!-- Job # -->
+            <div class="col-12">
+                <label for="jobInput" class="form-label">
+                    <span class="rc-step-badge">1</span> Job #
+                </label>
+                <input type="text" class="form-control rc-input" id="jobInput"
+                       placeholder="Scan or type job #" autofocus>
+            </div>
+
+            <!-- Old reel card -->
+            <div class="col-lg-5">
+                <div class="rc-pcn-card is-old p-3 h-100" id="oldCard">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label for="oldReelInput" class="form-label mb-0">
+                            <span class="rc-step-badge">2</span> Old Reel (PCN)
+                        </label>
+                        <span class="rc-status-pill bg-secondary text-white" id="oldStatus">waiting</span>
+                    </div>
+                    <input type="text" class="form-control rc-input mb-2" id="oldReelInput"
+                           placeholder="Scan old reel PCN">
+                    <dl class="row rc-meta mb-0">
+                        <dt class="col-4">MPN</dt><dd class="col-8" id="oldMpnPreview">—</dd>
+                        <dt class="col-4">Item</dt><dd class="col-8" id="oldItemPreview">—</dd>
+                    </dl>
                 </div>
             </div>
 
-            <div class="alert alert-info mt-3 small mb-0">
-                <strong>Tip:</strong> Press <kbd>Enter</kbd> after each scan to advance. After comparing,
-                press <kbd>Enter</kbd> to dismiss the result and start the next swap.
+            <!-- Compare arrow -->
+            <div class="col-lg-2 d-flex align-items-center justify-content-center">
+                <i class="bi bi-arrow-right-circle rc-compare-arrow"></i>
+            </div>
+
+            <!-- New reel card -->
+            <div class="col-lg-5">
+                <div class="rc-pcn-card is-new p-3 h-100" id="newCard">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label for="newReelInput" class="form-label mb-0">
+                            <span class="rc-step-badge">3</span> New Reel (PCN)
+                        </label>
+                        <span class="rc-status-pill bg-secondary text-white" id="newStatus">waiting</span>
+                    </div>
+                    <input type="text" class="form-control rc-input mb-2" id="newReelInput"
+                           placeholder="Scan new reel PCN">
+                    <dl class="row rc-meta mb-0">
+                        <dt class="col-4">MPN</dt><dd class="col-8" id="newMpnPreview">—</dd>
+                        <dt class="col-4">Item</dt><dd class="col-8" id="newItemPreview">—</dd>
+                    </dl>
+                </div>
+            </div>
+
+            <!-- Buttons -->
+            <div class="col-12 d-flex gap-2 mt-2">
+                <button type="submit" class="btn btn-primary btn-lg flex-grow-1" id="compareBtn">
+                    <i class="bi bi-check2-circle me-2"></i>Compare (Enter)
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-lg" id="clearBtn">
+                    <i class="bi bi-eraser me-2"></i>Clear
+                </button>
             </div>
         </div>
+    </form>
 
-        <!-- Recent scans -->
-        <div class="col-lg-7">
-            <div class="card shadow-sm">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Recent Scans</h5>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshHistoryBtn">
-                        <i class="bi bi-arrow-clockwise"></i> Refresh
-                    </button>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive" style="max-height: 480px;">
-                        <table class="table table-sm table-hover mb-0">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th>When</th>
-                                    <th>Job</th>
-                                    <th>Old PCN</th>
-                                    <th>Old MPN</th>
-                                    <th>New PCN</th>
-                                    <th>New MPN</th>
-                                    <th>Result</th>
-                                    <th>User</th>
-                                </tr>
-                            </thead>
-                            <tbody id="historyBody">
-                                <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+    <!-- Recent scans -->
+    <div class="card shadow-sm mt-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Recent Scans</h5>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshHistoryBtn">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive" style="max-height: 360px;">
+                <table class="table table-sm table-hover mb-0 align-middle">
+                    <thead class="table-light sticky-top">
+                        <tr>
+                            <th style="width:160px">When</th>
+                            <th>Job</th>
+                            <th>Old PCN</th>
+                            <th>Old MPN</th>
+                            <th>New PCN</th>
+                            <th>New MPN</th>
+                            <th style="width:80px">Result</th>
+                            <th>User</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyBody">
+                        <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Result modal -->
-<div class="modal fade" id="resultModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content" id="resultModalContent">
-            <div class="modal-body text-center py-5">
-                <div id="resultBig" class="display-1 fw-bold mb-3" style="font-size: 8rem;">—</div>
-                <p id="resultMessage" class="lead mb-3"></p>
-                <table class="table table-bordered table-sm w-auto mx-auto mb-4">
-                    <tbody>
-                        <tr><th class="text-end">Job</th><td id="rJob" class="text-start"></td></tr>
-                        <tr><th class="text-end">Old PCN</th><td id="rOldPcn" class="text-start"></td>
-                            <th class="text-end">Old MPN</th><td id="rOldMpn" class="text-start"></td></tr>
-                        <tr><th class="text-end">New PCN</th><td id="rNewPcn" class="text-start"></td>
-                            <th class="text-end">New MPN</th><td id="rNewMpn" class="text-start"></td></tr>
-                        <tr><th class="text-end">Old Item</th><td id="rOldItem" class="text-start"></td>
-                            <th class="text-end">New Item</th><td id="rNewItem" class="text-start"></td></tr>
-                    </tbody>
-                </table>
-                <button type="button" class="btn btn-lg btn-dark px-5" id="dismissResultBtn">
-                    OK (Enter)
-                </button>
+<!-- Full-screen result overlay -->
+<div class="rc-result-overlay" id="resultOverlay" tabindex="-1">
+    <div class="rc-result-card">
+        <p class="rc-result-tag mb-1">Reel Change Result</p>
+        <h1 class="rc-result-big" id="resultBig">—</h1>
+        <p class="rc-result-msg" id="resultMessage"></p>
+
+        <div class="rc-compare-grid">
+            <div class="rc-side">
+                <h6>Old Reel</h6>
+                <div class="small text-muted">PCN</div>
+                <div class="rc-val mb-2" id="rOldPcn">—</div>
+                <div class="small text-muted">MPN</div>
+                <div class="rc-val mb-2" id="rOldMpn">—</div>
+                <div class="small text-muted">Item</div>
+                <div class="rc-val" id="rOldItem">—</div>
             </div>
+            <div class="rc-side">
+                <h6>New Reel</h6>
+                <div class="small text-muted">PCN</div>
+                <div class="rc-val mb-2" id="rNewPcn">—</div>
+                <div class="small text-muted">MPN</div>
+                <div class="rc-val mb-2" id="rNewMpn">—</div>
+                <div class="small text-muted">Item</div>
+                <div class="rc-val" id="rNewItem">—</div>
+            </div>
+        </div>
+
+        <div class="text-center mt-3">
+            <span class="text-muted small">Job: </span><strong id="rJob">—</strong>
+        </div>
+
+        <div class="rc-result-actions">
+            <button type="button" class="btn btn-dark btn-lg" id="dismissResultBtn">
+                OK <kbd>Enter</kbd>
+            </button>
         </div>
     </div>
 </div>
@@ -122,6 +239,7 @@
 <script>
 (function () {
     const csrfToken = '{{ csrf_token() }}';
+
     const jobInput = document.getElementById('jobInput');
     const oldReelInput = document.getElementById('oldReelInput');
     const newReelInput = document.getElementById('newReelInput');
@@ -132,22 +250,92 @@
     const historyBody = document.getElementById('historyBody');
     const dismissResultBtn = document.getElementById('dismissResultBtn');
 
-    const resultModalEl = document.getElementById('resultModal');
-    const resultModal = new bootstrap.Modal(resultModalEl);
-    const resultModalContent = document.getElementById('resultModalContent');
+    const oldCard = document.getElementById('oldCard');
+    const newCard = document.getElementById('newCard');
+    const oldStatus = document.getElementById('oldStatus');
+    const newStatus = document.getElementById('newStatus');
+    const oldMpnPreview = document.getElementById('oldMpnPreview');
+    const oldItemPreview = document.getElementById('oldItemPreview');
+    const newMpnPreview = document.getElementById('newMpnPreview');
+    const newItemPreview = document.getElementById('newItemPreview');
+
+    const resultOverlay = document.getElementById('resultOverlay');
     const resultBig = document.getElementById('resultBig');
     const resultMessage = document.getElementById('resultMessage');
 
+    function escapeHtml(s) {
+        return (s == null ? '' : String(s))
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function setStatus(side, kind, label) {
+        const pill = side === 'old' ? oldStatus : newStatus;
+        const card = side === 'old' ? oldCard : newCard;
+        pill.className = 'rc-status-pill ' + ({
+            wait:  'bg-secondary text-white',
+            check: 'bg-info text-dark',
+            ok:    'bg-success text-white',
+            miss:  'bg-danger text-white',
+        }[kind] || 'bg-secondary text-white');
+        pill.textContent = label;
+        card.classList.remove('found', 'notfound');
+        if (kind === 'ok')   card.classList.add('found');
+        if (kind === 'miss') card.classList.add('notfound');
+    }
+
+    function clearPreview(side) {
+        const mpn  = side === 'old' ? oldMpnPreview  : newMpnPreview;
+        const item = side === 'old' ? oldItemPreview : newItemPreview;
+        mpn.textContent = '—';
+        item.textContent = '—';
+        setStatus(side, 'wait', 'waiting');
+    }
+
+    // Debounced live PCN lookup
+    const debounceTimers = { old: null, new: null };
+    function scheduleLookup(side, value) {
+        clearTimeout(debounceTimers[side]);
+        const v = (value || '').trim();
+        if (!v) { clearPreview(side); return; }
+        setStatus(side, 'check', 'checking…');
+        debounceTimers[side] = setTimeout(() => doLookup(side, v), 250);
+    }
+
+    async function doLookup(side, pcn) {
+        try {
+            const resp = await fetch('/api/reel-change/lookup?pcn=' + encodeURIComponent(pcn));
+            const data = await resp.json();
+            if (!data.success) {
+                setStatus(side, 'miss', 'error');
+                return;
+            }
+            const mpn  = side === 'old' ? oldMpnPreview  : newMpnPreview;
+            const item = side === 'old' ? oldItemPreview : newItemPreview;
+            if (!data.found) {
+                mpn.textContent  = 'not found';
+                item.textContent = 'not found';
+                setStatus(side, 'miss', 'not found');
+            } else {
+                mpn.textContent  = data.mpn  || '—';
+                item.textContent = data.item || '—';
+                setStatus(side, 'ok', 'found');
+            }
+        } catch (err) {
+            setStatus(side, 'miss', 'network err');
+        }
+    }
+
+    oldReelInput.addEventListener('input', e => scheduleLookup('old', e.target.value));
+    newReelInput.addEventListener('input', e => scheduleLookup('new', e.target.value));
+
+    // Enter advances fields
     function advanceOnEnter(input, next) {
         input.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                if (next === 'submit') {
-                    form.requestSubmit();
-                } else {
-                    next.focus();
-                    next.select();
-                }
+                if (next === 'submit') form.requestSubmit();
+                else { next.focus(); next.select(); }
             }
         });
     }
@@ -155,66 +343,50 @@
     advanceOnEnter(oldReelInput, newReelInput);
     advanceOnEnter(newReelInput, 'submit');
 
-    function resetForm(focusJob) {
+    function resetForm(includeJob) {
         oldReelInput.value = '';
         newReelInput.value = '';
-        if (focusJob) {
+        clearPreview('old');
+        clearPreview('new');
+        if (includeJob) {
             jobInput.value = '';
             jobInput.focus();
         } else {
-            jobInput.focus();
-            jobInput.select();
+            oldReelInput.focus();
         }
     }
+    clearBtn.addEventListener('click', () => resetForm(true));
 
-    clearBtn.addEventListener('click', function () { resetForm(true); });
-
-    function applyResultStyle(result) {
-        resultModalContent.classList.remove('border-success', 'border-danger', 'border-warning', 'border-5');
-        resultModalContent.classList.add('border-5');
-        resultBig.classList.remove('text-success', 'text-danger', 'text-warning');
-        if (result === 'PASS') {
-            resultBig.classList.add('text-success');
-            resultModalContent.classList.add('border-success');
-        } else if (result === 'SUB') {
-            resultBig.classList.add('text-warning');
-            resultModalContent.classList.add('border-warning');
-        } else {
-            resultBig.classList.add('text-danger');
-            resultModalContent.classList.add('border-danger');
-        }
-    }
-
+    // Result overlay
     function showResult(payload) {
-        applyResultStyle(payload.result);
+        resultOverlay.className = 'rc-result-overlay show ' + payload.result.toLowerCase();
+        resultBig.className = 'rc-result-big ' + payload.result.toLowerCase();
         resultBig.textContent = payload.result;
         resultMessage.textContent = payload.message || '';
-        document.getElementById('rJob').textContent = payload.job || '';
-        document.getElementById('rOldPcn').textContent = payload.old_pcn || '';
-        document.getElementById('rOldMpn').textContent = payload.old_mpn || '—';
+        document.getElementById('rJob').textContent     = payload.job || '—';
+        document.getElementById('rOldPcn').textContent  = payload.old_pcn || '—';
+        document.getElementById('rOldMpn').textContent  = payload.old_mpn || '—';
         document.getElementById('rOldItem').textContent = payload.old_item || '—';
-        document.getElementById('rNewPcn').textContent = payload.new_pcn || '';
-        document.getElementById('rNewMpn').textContent = payload.new_mpn || '—';
+        document.getElementById('rNewPcn').textContent  = payload.new_pcn || '—';
+        document.getElementById('rNewMpn').textContent  = payload.new_mpn || '—';
         document.getElementById('rNewItem').textContent = payload.new_item || '—';
-        resultModal.show();
-        setTimeout(() => dismissResultBtn.focus(), 100);
+        setTimeout(() => dismissResultBtn.focus(), 80);
     }
 
     function dismissResult() {
-        resultModal.hide();
+        resultOverlay.classList.remove('show', 'pass', 'sub', 'fail');
         resetForm(false);
         loadHistory();
     }
     dismissResultBtn.addEventListener('click', dismissResult);
-
-    // Enter while modal is open dismisses it
-    resultModalEl.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
+    document.addEventListener('keydown', function (e) {
+        if (resultOverlay.classList.contains('show') && (e.key === 'Enter' || e.key === 'Escape')) {
             e.preventDefault();
             dismissResult();
         }
     });
 
+    // Submit
     form.addEventListener('submit', async function (e) {
         e.preventDefault();
         const job = jobInput.value.trim();
@@ -228,11 +400,8 @@
         try {
             const resp = await fetch('/api/reel-change/check', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken
-                },
-                body: JSON.stringify({ job: job, old_pcn: oldPcn, new_pcn: newPcn })
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ job, old_pcn: oldPcn, new_pcn: newPcn }),
             });
             const data = await resp.json();
             if (!resp.ok || !data.success) {
@@ -247,37 +416,70 @@
         }
     });
 
+    // Demo loaders
+    document.querySelectorAll('[data-demo]').forEach(btn => {
+        btn.addEventListener('click', async function () {
+            const pair = this.getAttribute('data-demo');
+            this.disabled = true;
+            const original = this.innerHTML;
+            this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading…';
+            try {
+                const resp = await fetch('/api/reel-change/demo?pair=' + encodeURIComponent(pair));
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    alert(data.error || 'Could not load demo sample.');
+                    return;
+                }
+                jobInput.value = data.job || '';
+                oldReelInput.value = data.old_pcn || '';
+                newReelInput.value = data.new_pcn || '';
+                // populate the live preview without another fetch
+                oldMpnPreview.textContent  = data.old_mpn  || '—';
+                oldItemPreview.textContent = data.old_item || '—';
+                newMpnPreview.textContent  = data.new_mpn  || '—';
+                newItemPreview.textContent = data.new_item || '—';
+                setStatus('old', 'ok', 'found');
+                setStatus('new', 'ok', 'found');
+                compareBtn.focus();
+            } catch (err) {
+                alert('Network error: ' + err.message);
+            } finally {
+                this.disabled = false;
+                this.innerHTML = original;
+            }
+        });
+    });
+
+    // History
     function badgeForResult(result) {
         if (result === 'PASS') return '<span class="badge bg-success">PASS</span>';
         if (result === 'SUB')  return '<span class="badge bg-warning text-dark">SUB</span>';
         return '<span class="badge bg-danger">FAIL</span>';
     }
-
-    function escapeHtml(s) {
-        return (s == null ? '' : String(s))
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    function rowClassFor(result) {
+        if (result === 'FAIL') return 'rc-history-row fail-row';
+        if (result === 'SUB')  return 'rc-history-row sub-row';
+        return 'rc-history-row';
     }
-
     async function loadHistory() {
         try {
-            const resp = await fetch('/api/reel-change/recent?limit=15');
+            const resp = await fetch('/api/reel-change/recent?limit=20');
             const data = await resp.json();
             if (!data.success) {
                 historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load history.</td></tr>';
                 return;
             }
             if (!data.entries.length) {
-                historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No scans yet.</td></tr>';
+                historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No scans yet — try the demo above.</td></tr>';
                 return;
             }
             historyBody.innerHTML = data.entries.map(e => `
-                <tr>
-                    <td class="small">${escapeHtml(e.created_at)}</td>
+                <tr class="${rowClassFor(e.result)}">
+                    <td class="small text-nowrap">${escapeHtml(e.created_at)}</td>
                     <td>${escapeHtml(e.job)}</td>
-                    <td>${escapeHtml(e.old_pcn)}</td>
+                    <td><code>${escapeHtml(e.old_pcn)}</code></td>
                     <td class="small">${escapeHtml(e.old_mpn)}</td>
-                    <td>${escapeHtml(e.new_pcn)}</td>
+                    <td><code>${escapeHtml(e.new_pcn)}</code></td>
                     <td class="small">${escapeHtml(e.new_mpn)}</td>
                     <td>${badgeForResult(e.result)}</td>
                     <td class="small">${escapeHtml(e.username)}</td>
