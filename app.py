@@ -2774,6 +2774,52 @@ def _ensure_aci_partnumbers_table():
 threading.Thread(target=_ensure_aci_partnumbers_table, daemon=True).start()
 
 
+def _ensure_reel_change_log_table():
+    """Create tblReelChangeLog if needed for SMT line reel-swap verification log."""
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'pcb_inventory' AND table_name = 'tblReelChangeLog'
+        """)
+        if cur.fetchone():
+            db_manager.return_connection(conn)
+            return
+
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS pcb_inventory."tblReelChangeLog" (
+                id SERIAL PRIMARY KEY,
+                job VARCHAR(100),
+                old_pcn VARCHAR(50),
+                old_mpn VARCHAR(255),
+                old_item VARCHAR(255),
+                new_pcn VARCHAR(50),
+                new_mpn VARCHAR(255),
+                new_item VARCHAR(255),
+                result VARCHAR(10),
+                user_id INTEGER,
+                username VARCHAR(100),
+                created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')
+            )
+        ''')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_reel_change_log_created ON pcb_inventory."tblReelChangeLog" (created_at DESC)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_reel_change_log_job ON pcb_inventory."tblReelChangeLog" (job)')
+        conn.commit()
+        logger.info("tblReelChangeLog table created")
+    except Exception as e:
+        logger.error(f"Failed to ensure tblReelChangeLog: {e}")
+    finally:
+        if conn:
+            try:
+                db_manager.return_connection(conn)
+            except:
+                pass
+
+threading.Thread(target=_ensure_reel_change_log_table, daemon=True).start()
+
+
 # Background sync: apply ADJT part number changes from Access to inventory
 def _sync_adjt_to_inventory():
     """Periodically apply ADJT (part number change) transactions to tblWhse_Inventory.
@@ -8845,6 +8891,169 @@ def admin_delete_location(location_id):
             db_manager.return_connection(conn)
 
     return redirect(url_for('admin_locations'))
+
+
+# ──────────────────────────────────────────────
+# Reel Change (SMT line reel-swap verification)
+# ──────────────────────────────────────────────
+
+@app.route('/reel-change')
+@require_auth
+def reel_change():
+    """Kiosk page for SMT operators to verify a reel swap (Old PCN vs New PCN)."""
+    if not can_manage_parts():
+        flash('Access denied. You do not have permission to access Reel Change.', 'danger')
+        return redirect(url_for('index'))
+    response = make_response(render_template('reel_change.html'))
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return response
+
+
+def _lookup_pcn_mpn_item(cursor, pcn):
+    """Return (mpn, item) for a PCN, or (None, None) if not found."""
+    pcn_clean = (pcn or '').strip()
+    if not pcn_clean:
+        return None, None
+    cursor.execute("""
+        SELECT mpn, item
+        FROM pcb_inventory."tblWhse_Inventory"
+        WHERE pcn::text = %s
+        LIMIT 1
+    """, (pcn_clean,))
+    row = cursor.fetchone()
+    if not row:
+        return None, None
+    return (row[0] or '').strip(), (row[1] or '').strip()
+
+
+@app.route('/api/reel-change/check', methods=['POST'])
+@require_auth
+def api_reel_change_check():
+    """Compare two reel PCNs and log the result.
+
+    Request JSON: {job, old_pcn, new_pcn}
+    Response JSON: {success, result, old_pcn, old_mpn, old_item, new_pcn, new_mpn, new_item, message}
+
+    Result rules (mirror the legacy reelChange desktop tool):
+      - newMPN == oldMPN  → PASS
+      - newItem == oldItem (approved substitute) → SUB
+      - otherwise → FAIL
+      - any PCN not found in tblWhse_Inventory → FAIL with explanation
+    """
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+
+    data = request.get_json(silent=True) or {}
+    job = (data.get('job') or '').strip()
+    old_pcn = (data.get('old_pcn') or '').strip()
+    new_pcn = (data.get('new_pcn') or '').strip()
+
+    if not old_pcn or not new_pcn:
+        return jsonify({'success': False, 'error': 'Old PCN and New PCN are required.'}), 400
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor() as cursor:
+            old_mpn, old_item = _lookup_pcn_mpn_item(cursor, old_pcn)
+            new_mpn, new_item = _lookup_pcn_mpn_item(cursor, new_pcn)
+
+            missing = []
+            if old_mpn is None and old_item is None:
+                missing.append(f'Old PCN {old_pcn}')
+            if new_mpn is None and new_item is None:
+                missing.append(f'New PCN {new_pcn}')
+
+            if missing:
+                result = 'FAIL'
+                message = ' and '.join(missing) + ' not found in warehouse inventory.'
+            elif old_mpn and new_mpn and new_mpn.lower() == old_mpn.lower():
+                result = 'PASS'
+                message = 'MPN match — reel swap verified.'
+            elif old_item and new_item and new_item.lower() == old_item.lower():
+                result = 'SUB'
+                message = 'Item match (approved substitute).'
+            else:
+                result = 'FAIL'
+                message = 'MPN and Item do not match — do NOT load this reel.'
+
+            cursor.execute("""
+                INSERT INTO pcb_inventory."tblReelChangeLog"
+                    (job, old_pcn, old_mpn, old_item, new_pcn, new_mpn, new_item, result, user_id, username)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                job or None,
+                old_pcn,
+                old_mpn,
+                old_item,
+                new_pcn,
+                new_mpn,
+                new_item,
+                result,
+                session.get('user_id'),
+                session.get('username'),
+            ))
+            conn.commit()
+
+        return jsonify({
+            'success': True,
+            'result': result,
+            'message': message,
+            'job': job,
+            'old_pcn': old_pcn,
+            'old_mpn': old_mpn or '',
+            'old_item': old_item or '',
+            'new_pcn': new_pcn,
+            'new_mpn': new_mpn or '',
+            'new_item': new_item or '',
+        })
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.error(f"Error in reel change check: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/api/reel-change/recent', methods=['GET'])
+@require_auth
+def api_reel_change_recent():
+    """Return the last N reel-change log entries (for the on-page history strip)."""
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    try:
+        limit = int(request.args.get('limit', 10))
+    except ValueError:
+        limit = 10
+    limit = max(1, min(limit, 50))
+
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+            cursor.execute("""
+                SELECT id, job, old_pcn, old_mpn, new_pcn, new_mpn, result,
+                       username, created_at
+                FROM pcb_inventory."tblReelChangeLog"
+                ORDER BY id DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+            for r in rows:
+                if r.get('created_at'):
+                    r['created_at'] = r['created_at'].strftime('%Y-%m-%d %I:%M:%S %p')
+        return jsonify({'success': True, 'entries': rows})
+    except Exception as e:
+        logger.error(f"Error fetching recent reel changes: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
 
 
 # ──────────────────────────────────────────────

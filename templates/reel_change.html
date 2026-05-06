@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+
+{% block title %}Reel Change - KOSH{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row mb-3">
+        <div class="col-12">
+            <h2><i class="bi bi-arrow-repeat"></i> Reel Change</h2>
+            <p class="text-muted">
+                Verify a reel swap on the SMT line. Scan <strong>Job</strong>, <strong>Old Reel PCN</strong>, then
+                <strong>New Reel PCN</strong>. The system compares MPN/Item and logs each scan.
+            </p>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Scan kiosk -->
+        <div class="col-lg-5">
+            <div class="card shadow-sm">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0"><i class="bi bi-upc-scan me-2"></i>Reel Checker</h5>
+                </div>
+                <div class="card-body">
+                    <form id="reelForm" autocomplete="off">
+                        <div class="mb-3">
+                            <label for="jobInput" class="form-label fw-bold">Job #</label>
+                            <input type="text" class="form-control form-control-lg" id="jobInput"
+                                   placeholder="Scan or type job #" autofocus>
+                        </div>
+                        <div class="mb-3">
+                            <label for="oldReelInput" class="form-label fw-bold">Old Reel Scan (PCN)</label>
+                            <input type="text" class="form-control form-control-lg" id="oldReelInput"
+                                   placeholder="Scan old reel PCN">
+                        </div>
+                        <div class="mb-3">
+                            <label for="newReelInput" class="form-label fw-bold">New Reel Scan (PCN)</label>
+                            <input type="text" class="form-control form-control-lg" id="newReelInput"
+                                   placeholder="Scan new reel PCN">
+                        </div>
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg" id="compareBtn">
+                                <i class="bi bi-check2-circle me-2"></i>Compare
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="clearBtn">
+                                <i class="bi bi-eraser me-2"></i>Clear
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <div class="alert alert-info mt-3 small mb-0">
+                <strong>Tip:</strong> Press <kbd>Enter</kbd> after each scan to advance. After comparing,
+                press <kbd>Enter</kbd> to dismiss the result and start the next swap.
+            </div>
+        </div>
+
+        <!-- Recent scans -->
+        <div class="col-lg-7">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>Recent Scans</h5>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshHistoryBtn">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive" style="max-height: 480px;">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>When</th>
+                                    <th>Job</th>
+                                    <th>Old PCN</th>
+                                    <th>Old MPN</th>
+                                    <th>New PCN</th>
+                                    <th>New MPN</th>
+                                    <th>Result</th>
+                                    <th>User</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyBody">
+                                <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Result modal -->
+<div class="modal fade" id="resultModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content" id="resultModalContent">
+            <div class="modal-body text-center py-5">
+                <div id="resultBig" class="display-1 fw-bold mb-3" style="font-size: 8rem;">—</div>
+                <p id="resultMessage" class="lead mb-3"></p>
+                <table class="table table-bordered table-sm w-auto mx-auto mb-4">
+                    <tbody>
+                        <tr><th class="text-end">Job</th><td id="rJob" class="text-start"></td></tr>
+                        <tr><th class="text-end">Old PCN</th><td id="rOldPcn" class="text-start"></td>
+                            <th class="text-end">Old MPN</th><td id="rOldMpn" class="text-start"></td></tr>
+                        <tr><th class="text-end">New PCN</th><td id="rNewPcn" class="text-start"></td>
+                            <th class="text-end">New MPN</th><td id="rNewMpn" class="text-start"></td></tr>
+                        <tr><th class="text-end">Old Item</th><td id="rOldItem" class="text-start"></td>
+                            <th class="text-end">New Item</th><td id="rNewItem" class="text-start"></td></tr>
+                    </tbody>
+                </table>
+                <button type="button" class="btn btn-lg btn-dark px-5" id="dismissResultBtn">
+                    OK (Enter)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const csrfToken = '{{ csrf_token() }}';
+    const jobInput = document.getElementById('jobInput');
+    const oldReelInput = document.getElementById('oldReelInput');
+    const newReelInput = document.getElementById('newReelInput');
+    const form = document.getElementById('reelForm');
+    const clearBtn = document.getElementById('clearBtn');
+    const compareBtn = document.getElementById('compareBtn');
+    const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
+    const historyBody = document.getElementById('historyBody');
+    const dismissResultBtn = document.getElementById('dismissResultBtn');
+
+    const resultModalEl = document.getElementById('resultModal');
+    const resultModal = new bootstrap.Modal(resultModalEl);
+    const resultModalContent = document.getElementById('resultModalContent');
+    const resultBig = document.getElementById('resultBig');
+    const resultMessage = document.getElementById('resultMessage');
+
+    function advanceOnEnter(input, next) {
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (next === 'submit') {
+                    form.requestSubmit();
+                } else {
+                    next.focus();
+                    next.select();
+                }
+            }
+        });
+    }
+    advanceOnEnter(jobInput, oldReelInput);
+    advanceOnEnter(oldReelInput, newReelInput);
+    advanceOnEnter(newReelInput, 'submit');
+
+    function resetForm(focusJob) {
+        oldReelInput.value = '';
+        newReelInput.value = '';
+        if (focusJob) {
+            jobInput.value = '';
+            jobInput.focus();
+        } else {
+            jobInput.focus();
+            jobInput.select();
+        }
+    }
+
+    clearBtn.addEventListener('click', function () { resetForm(true); });
+
+    function applyResultStyle(result) {
+        resultModalContent.classList.remove('border-success', 'border-danger', 'border-warning', 'border-5');
+        resultModalContent.classList.add('border-5');
+        resultBig.classList.remove('text-success', 'text-danger', 'text-warning');
+        if (result === 'PASS') {
+            resultBig.classList.add('text-success');
+            resultModalContent.classList.add('border-success');
+        } else if (result === 'SUB') {
+            resultBig.classList.add('text-warning');
+            resultModalContent.classList.add('border-warning');
+        } else {
+            resultBig.classList.add('text-danger');
+            resultModalContent.classList.add('border-danger');
+        }
+    }
+
+    function showResult(payload) {
+        applyResultStyle(payload.result);
+        resultBig.textContent = payload.result;
+        resultMessage.textContent = payload.message || '';
+        document.getElementById('rJob').textContent = payload.job || '';
+        document.getElementById('rOldPcn').textContent = payload.old_pcn || '';
+        document.getElementById('rOldMpn').textContent = payload.old_mpn || '—';
+        document.getElementById('rOldItem').textContent = payload.old_item || '—';
+        document.getElementById('rNewPcn').textContent = payload.new_pcn || '';
+        document.getElementById('rNewMpn').textContent = payload.new_mpn || '—';
+        document.getElementById('rNewItem').textContent = payload.new_item || '—';
+        resultModal.show();
+        setTimeout(() => dismissResultBtn.focus(), 100);
+    }
+
+    function dismissResult() {
+        resultModal.hide();
+        resetForm(false);
+        loadHistory();
+    }
+    dismissResultBtn.addEventListener('click', dismissResult);
+
+    // Enter while modal is open dismisses it
+    resultModalEl.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            dismissResult();
+        }
+    });
+
+    form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        const job = jobInput.value.trim();
+        const oldPcn = oldReelInput.value.trim();
+        const newPcn = newReelInput.value.trim();
+        if (!oldPcn || !newPcn) {
+            alert('Please scan both Old Reel and New Reel PCNs.');
+            return;
+        }
+        compareBtn.disabled = true;
+        try {
+            const resp = await fetch('/api/reel-change/check', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({ job: job, old_pcn: oldPcn, new_pcn: newPcn })
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                alert(data.error || 'Compare failed.');
+                return;
+            }
+            showResult(data);
+        } catch (err) {
+            alert('Network error: ' + err.message);
+        } finally {
+            compareBtn.disabled = false;
+        }
+    });
+
+    function badgeForResult(result) {
+        if (result === 'PASS') return '<span class="badge bg-success">PASS</span>';
+        if (result === 'SUB')  return '<span class="badge bg-warning text-dark">SUB</span>';
+        return '<span class="badge bg-danger">FAIL</span>';
+    }
+
+    function escapeHtml(s) {
+        return (s == null ? '' : String(s))
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    async function loadHistory() {
+        try {
+            const resp = await fetch('/api/reel-change/recent?limit=15');
+            const data = await resp.json();
+            if (!data.success) {
+                historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load history.</td></tr>';
+                return;
+            }
+            if (!data.entries.length) {
+                historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No scans yet.</td></tr>';
+                return;
+            }
+            historyBody.innerHTML = data.entries.map(e => `
+                <tr>
+                    <td class="small">${escapeHtml(e.created_at)}</td>
+                    <td>${escapeHtml(e.job)}</td>
+                    <td>${escapeHtml(e.old_pcn)}</td>
+                    <td class="small">${escapeHtml(e.old_mpn)}</td>
+                    <td>${escapeHtml(e.new_pcn)}</td>
+                    <td class="small">${escapeHtml(e.new_mpn)}</td>
+                    <td>${badgeForResult(e.result)}</td>
+                    <td class="small">${escapeHtml(e.username)}</td>
+                </tr>
+            `).join('');
+        } catch (err) {
+            historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Network error loading history.</td></tr>';
+        }
+    }
+    refreshHistoryBtn.addEventListener('click', loadHistory);
+    loadHistory();
+})();
+</script>
+{% endblock %}

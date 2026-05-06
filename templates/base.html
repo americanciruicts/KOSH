@@ -230,7 +230,7 @@
                     {% endif %}
                     {% if can_manage %}
                     <li class="nav-item dropdown">
-                        <a class="modern-nav-link dropdown-toggle {% if request.endpoint in ['aci_numbers', 'admin_locations'] %}active{% endif %}" href="#" id="manageDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <a class="modern-nav-link dropdown-toggle {% if request.endpoint in ['aci_numbers', 'admin_locations', 'reel_change'] %}active{% endif %}" href="#" id="manageDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             <i class="bi bi-gear-fill"></i> Manage
                         </a>
                         <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="manageDropdown">
@@ -242,6 +242,11 @@
                             <li>
                                 <a class="dropdown-item {% if request.endpoint == 'admin_locations' %}active{% endif %}" href="{{ url_for('admin_locations') }}">
                                     <i class="bi bi-geo-alt-fill me-2"></i> Locations
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item {% if request.endpoint == 'reel_change' %}active{% endif %}" href="{{ url_for('reel_change') }}">
+                                    <i class="bi bi-arrow-repeat me-2"></i> Reel Change
                                 </a>
                             </li>
                         </ul>
