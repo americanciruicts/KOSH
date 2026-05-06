@@ -2775,19 +2775,11 @@ threading.Thread(target=_ensure_aci_partnumbers_table, daemon=True).start()
 
 
 def _ensure_reel_change_log_table():
-    """Create tblReelChangeLog if needed for SMT line reel-swap verification log."""
+    """Create / migrate tblReelChangeLog (SMT reel-swap verification log)."""
     conn = None
     try:
         conn = db_manager.get_connection()
         cur = conn.cursor()
-        cur.execute("""
-            SELECT 1 FROM information_schema.tables
-            WHERE table_schema = 'pcb_inventory' AND table_name = 'tblReelChangeLog'
-        """)
-        if cur.fetchone():
-            db_manager.return_connection(conn)
-            return
-
         cur.execute('''
             CREATE TABLE IF NOT EXISTS pcb_inventory."tblReelChangeLog" (
                 id SERIAL PRIMARY KEY,
@@ -2795,19 +2787,24 @@ def _ensure_reel_change_log_table():
                 old_pcn VARCHAR(50),
                 old_mpn VARCHAR(255),
                 old_item VARCHAR(255),
+                old_job VARCHAR(100),
                 new_pcn VARCHAR(50),
                 new_mpn VARCHAR(255),
                 new_item VARCHAR(255),
+                new_job VARCHAR(100),
                 result VARCHAR(10),
                 user_id INTEGER,
                 username VARCHAR(100),
                 created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')
             )
         ''')
+        # Idempotent column adds for installs created before old_job/new_job existed
+        cur.execute('ALTER TABLE pcb_inventory."tblReelChangeLog" ADD COLUMN IF NOT EXISTS old_job VARCHAR(100)')
+        cur.execute('ALTER TABLE pcb_inventory."tblReelChangeLog" ADD COLUMN IF NOT EXISTS new_job VARCHAR(100)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_reel_change_log_created ON pcb_inventory."tblReelChangeLog" (created_at DESC)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_reel_change_log_job ON pcb_inventory."tblReelChangeLog" (job)')
         conn.commit()
-        logger.info("tblReelChangeLog table created")
+        logger.info("tblReelChangeLog table ready")
     except Exception as e:
         logger.error(f"Failed to ensure tblReelChangeLog: {e}")
     finally:
@@ -8909,11 +8906,15 @@ def reel_change():
     return response
 
 
-def _lookup_pcn_mpn_item(cursor, pcn):
-    """Return (mpn, item) for a PCN, or (None, None) if not found."""
+def _lookup_pcn_full(cursor, pcn):
+    """Return dict {found, pcn, mpn, item, job} for a PCN.
+
+    `job` is derived from tblBOM by matching aci_pn → tblWhse_Inventory.item,
+    picking the most recently loaded BOM. Empty string if no job link found.
+    """
     pcn_clean = (pcn or '').strip()
     if not pcn_clean:
-        return None, None
+        return {'found': False, 'pcn': '', 'mpn': '', 'item': '', 'job': ''}
     cursor.execute("""
         SELECT mpn, item
         FROM pcb_inventory."tblWhse_Inventory"
@@ -8922,8 +8923,25 @@ def _lookup_pcn_mpn_item(cursor, pcn):
     """, (pcn_clean,))
     row = cursor.fetchone()
     if not row:
-        return None, None
-    return (row[0] or '').strip(), (row[1] or '').strip()
+        return {'found': False, 'pcn': pcn_clean, 'mpn': '', 'item': '', 'job': ''}
+    mpn = (row[0] or '').strip()
+    item = (row[1] or '').strip()
+
+    job = ''
+    if item:
+        # Find the most recent job that uses this Item (aci_pn). If multiple
+        # match, prefer the one with the latest tblBOM.date_loaded.
+        cursor.execute("""
+            SELECT job::text
+            FROM pcb_inventory."tblBOM"
+            WHERE aci_pn = %s
+            ORDER BY date_loaded DESC NULLS LAST, id DESC
+            LIMIT 1
+        """, (item,))
+        jrow = cursor.fetchone()
+        if jrow and jrow[0]:
+            job = jrow[0].strip()
+    return {'found': True, 'pcn': pcn_clean, 'mpn': mpn, 'item': item, 'job': job}
 
 
 @app.route('/api/reel-change/check', methods=['POST'])
@@ -8955,40 +8973,45 @@ def api_reel_change_check():
     try:
         conn = db_manager.get_connection()
         with conn.cursor() as cursor:
-            old_mpn, old_item = _lookup_pcn_mpn_item(cursor, old_pcn)
-            new_mpn, new_item = _lookup_pcn_mpn_item(cursor, new_pcn)
+            old = _lookup_pcn_full(cursor, old_pcn)
+            new = _lookup_pcn_full(cursor, new_pcn)
 
             missing = []
-            if old_mpn is None and old_item is None:
+            if not old['found']:
                 missing.append(f'Old PCN {old_pcn}')
-            if new_mpn is None and new_item is None:
+            if not new['found']:
                 missing.append(f'New PCN {new_pcn}')
 
             if missing:
                 result = 'FAIL'
                 message = ' and '.join(missing) + ' not found in warehouse inventory.'
-            elif old_mpn and new_mpn and new_mpn.lower() == old_mpn.lower():
+            elif old['mpn'] and new['mpn'] and new['mpn'].lower() == old['mpn'].lower():
                 result = 'PASS'
                 message = 'MPN match — reel swap verified.'
-            elif old_item and new_item and new_item.lower() == old_item.lower():
+            elif old['item'] and new['item'] and new['item'].lower() == old['item'].lower():
                 result = 'SUB'
                 message = 'Item match (approved substitute).'
             else:
                 result = 'FAIL'
                 message = 'MPN and Item do not match — do NOT load this reel.'
 
+            # The "job" for the swap is the job the OLD reel was running (the
+            # one currently on the machine). If unavailable, fall back to any
+            # explicit job the operator typed, then to new reel's job.
+            swap_job = old['job'] or job or new['job']
+
             cursor.execute("""
                 INSERT INTO pcb_inventory."tblReelChangeLog"
-                    (job, old_pcn, old_mpn, old_item, new_pcn, new_mpn, new_item, result, user_id, username)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (job, old_pcn, old_mpn, old_item, old_job,
+                          new_pcn, new_mpn, new_item, new_job,
+                     result, user_id, username)
+                VALUES (%s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s)
             """, (
-                job or None,
-                old_pcn,
-                old_mpn,
-                old_item,
-                new_pcn,
-                new_mpn,
-                new_item,
+                swap_job or None,
+                old_pcn, old['mpn'], old['item'], old['job'],
+                new_pcn, new['mpn'], new['item'], new['job'],
                 result,
                 session.get('user_id'),
                 session.get('username'),
@@ -8999,13 +9022,15 @@ def api_reel_change_check():
             'success': True,
             'result': result,
             'message': message,
-            'job': job,
+            'job': swap_job,
             'old_pcn': old_pcn,
-            'old_mpn': old_mpn or '',
-            'old_item': old_item or '',
+            'old_mpn': old['mpn'] or '',
+            'old_item': old['item'] or '',
+            'old_job': old['job'] or '',
             'new_pcn': new_pcn,
-            'new_mpn': new_mpn or '',
-            'new_item': new_item or '',
+            'new_mpn': new['mpn'] or '',
+            'new_item': new['item'] or '',
+            'new_job': new['job'] or '',
         })
     except Exception as e:
         if conn:
@@ -9033,15 +9058,14 @@ def api_reel_change_lookup():
     try:
         conn = db_manager.get_connection()
         with conn.cursor() as cursor:
-            mpn, item = _lookup_pcn_mpn_item(cursor, pcn)
-            if mpn is None and item is None:
-                return jsonify({'success': True, 'found': False, 'pcn': pcn})
+            info = _lookup_pcn_full(cursor, pcn)
             return jsonify({
                 'success': True,
-                'found': True,
-                'pcn': pcn,
-                'mpn': mpn or '',
-                'item': item or '',
+                'found': info['found'],
+                'pcn': info['pcn'],
+                'mpn': info['mpn'],
+                'item': info['item'],
+                'job': info['job'],
             })
     except Exception as e:
         logger.error(f"Error in reel-change lookup: {e}")
@@ -9110,16 +9134,19 @@ def api_reel_change_demo():
             row = cursor.fetchone()
             if not row:
                 return jsonify({'success': False, 'error': f'No {pair} sample available in inventory.'}), 404
+            old_info = _lookup_pcn_full(cursor, row[0])
+            new_info = _lookup_pcn_full(cursor, row[1])
             return jsonify({
                 'success': True,
                 'pair': pair,
-                'job': f'DEMO-{pair.upper()}',
-                'old_pcn': row[0],
-                'new_pcn': row[1],
-                'old_mpn': row[2] or '',
-                'new_mpn': row[3] or '',
-                'old_item': row[4] or '',
-                'new_item': row[5] or '',
+                'old_pcn': old_info['pcn'],
+                'new_pcn': new_info['pcn'],
+                'old_mpn': old_info['mpn'],
+                'new_mpn': new_info['mpn'],
+                'old_item': old_info['item'],
+                'new_item': new_info['item'],
+                'old_job': old_info['job'],
+                'new_job': new_info['job'],
             })
     except Exception as e:
         logger.error(f"Error fetching demo sample: {e}")
@@ -9146,8 +9173,10 @@ def api_reel_change_recent():
         conn = db_manager.get_connection()
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("""
-                SELECT id, job, old_pcn, old_mpn, new_pcn, new_mpn, result,
-                       username, created_at
+                SELECT id, job, old_job, new_job,
+                       old_pcn, old_mpn, old_item,
+                       new_pcn, new_mpn, new_item,
+                       result, username, created_at
                 FROM pcb_inventory."tblReelChangeLog"
                 ORDER BY id DESC
                 LIMIT %s
@@ -9159,6 +9188,36 @@ def api_reel_change_recent():
         return jsonify({'success': True, 'entries': rows})
     except Exception as e:
         logger.error(f"Error fetching recent reel changes: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
+
+
+@app.route('/api/reel-change/<int:entry_id>', methods=['DELETE'])
+@require_auth
+def api_reel_change_delete(entry_id):
+    """Delete a single reel-change log row."""
+    if not can_manage_parts():
+        return jsonify({'success': False, 'error': 'Access denied'}), 403
+    conn = None
+    try:
+        conn = db_manager.get_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                'DELETE FROM pcb_inventory."tblReelChangeLog" WHERE id = %s',
+                (entry_id,)
+            )
+            deleted = cursor.rowcount
+            conn.commit()
+        if deleted == 0:
+            return jsonify({'success': False, 'error': 'Entry not found'}), 404
+        return jsonify({'success': True, 'deleted_id': entry_id})
+    except Exception as e:
+        if conn:
+            try: conn.rollback()
+            except Exception: pass
+        logger.error(f"Error deleting reel-change entry {entry_id}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         if conn:

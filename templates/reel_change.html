@@ -8,11 +8,12 @@
 .rc-header h2 { margin-bottom: .25rem; }
 .rc-step-badge {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 32px; height: 32px; border-radius: 50%;
-    background: #0d6efd; color: #fff; font-weight: 700; margin-right: .5rem;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #0d6efd; color: #fff; font-weight: 700; margin-right: .4rem;
+    font-size: .9rem;
 }
 .rc-input { font-size: 1.5rem; padding: .75rem 1rem; font-family: ui-monospace, monospace; letter-spacing: 1px; }
-.rc-pcn-card { border: 2px solid #dee2e6; border-radius: .75rem; transition: all .15s ease; }
+.rc-pcn-card { border: 2px solid #dee2e6; border-radius: .75rem; transition: all .15s ease; background:#fff; }
 .rc-pcn-card.is-old { border-left: 6px solid #6c757d; }
 .rc-pcn-card.is-new { border-left: 6px solid #0d6efd; }
 .rc-pcn-card.found { border-color: #198754; }
@@ -20,6 +21,10 @@
 .rc-meta { font-size: .9rem; }
 .rc-meta dt { color: #6c757d; font-weight: 500; }
 .rc-meta dd { margin-bottom: .25rem; font-weight: 600; word-break: break-word; }
+.rc-job-pill {
+    display: inline-block; background: #0d6efd; color: #fff;
+    padding: 1px 8px; border-radius: 999px; font-family: ui-monospace, monospace;
+}
 .rc-status-pill {
     font-size: .75rem; padding: .15rem .5rem; border-radius: 999px;
     font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
@@ -27,47 +32,137 @@
 .rc-compare-arrow { font-size: 2.5rem; color: #adb5bd; }
 @media (max-width: 991px) { .rc-compare-arrow { transform: rotate(90deg); } }
 
-/* Full-screen result overlay */
-.rc-result-overlay {
-    position: fixed; inset: 0; z-index: 2000;
-    display: none; align-items: center; justify-content: center;
-    padding: 2rem; backdrop-filter: blur(2px);
+/* Inline result panel (replaces popup) */
+.rc-result-panel {
+    border-radius: .75rem; padding: 1.25rem 1.5rem; margin-top: 1.5rem;
+    border: 3px solid transparent; display: none;
 }
-.rc-result-overlay.show { display: flex; }
-.rc-result-overlay.pass { background: rgba(25,135,84,.95); }
-.rc-result-overlay.sub  { background: rgba(255,193,7,.97); color: #000; }
-.rc-result-overlay.fail { background: rgba(220,53,69,.96); }
-.rc-result-card {
-    background: #fff; color: #212529;
-    border-radius: 1rem; padding: 2rem 2.5rem; max-width: 900px; width: 100%;
-    box-shadow: 0 25px 60px rgba(0,0,0,.4);
-}
+.rc-result-panel.show { display: block; }
+.rc-result-panel.pass { background: #d1f4e0; border-color: #198754; color: #0a3622; }
+.rc-result-panel.sub  { background: #fff3cd; border-color: #b58a00; color: #5a3d00; }
+.rc-result-panel.fail { background: #ffd6d6; border-color: #dc3545; color: #5a0a13; }
+.rc-result-banner { display: flex; align-items: center; gap: 1rem; margin-bottom: .75rem; }
 .rc-result-big {
-    font-size: clamp(5rem, 14vw, 11rem); font-weight: 800; line-height: 1;
-    text-align: center; letter-spacing: 4px; margin: 0;
+    font-size: clamp(2.5rem, 6vw, 4rem); font-weight: 800; line-height: 1;
+    letter-spacing: 3px; margin: 0;
 }
 .rc-result-big.pass { color: #198754; }
 .rc-result-big.sub  { color: #b58a00; }
 .rc-result-big.fail { color: #dc3545; }
-.rc-result-msg { font-size: 1.4rem; text-align: center; margin: 1rem 0 1.5rem; }
+.rc-result-msg { font-size: 1.1rem; margin: 0; }
 .rc-compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-.rc-compare-grid .rc-side { background: #f8f9fa; border-radius: .5rem; padding: 1rem; }
-.rc-compare-grid .rc-side h6 { color: #6c757d; margin-bottom: .5rem; text-transform: uppercase; font-size: .75rem; letter-spacing: 1px; }
+.rc-compare-grid .rc-side { background: rgba(255,255,255,.6); border-radius: .5rem; padding: .9rem 1rem; }
+.rc-compare-grid .rc-side h6 { color: #495057; margin-bottom: .5rem; text-transform: uppercase; font-size: .75rem; letter-spacing: 1px; }
 .rc-compare-grid .rc-side .rc-val { font-weight: 600; font-family: ui-monospace, monospace; word-break: break-word; }
-.rc-result-actions { text-align: center; margin-top: 1.5rem; }
-.rc-result-actions .btn { font-size: 1.1rem; padding: .75rem 2.5rem; }
-.rc-result-tag { text-align: center; font-size: 1rem; color: #6c757d; }
+.rc-compare-grid .rc-side .rc-label { font-size: .75rem; color: #6c757d; }
 
 .rc-demo-strip { background: #f1f3f5; border-radius: .5rem; padding: .75rem 1rem; }
-.rc-demo-strip .badge { font-size: .8rem; }
 
 .rc-history-row.fail-row { background-color: rgba(220,53,69,.06); }
 .rc-history-row.sub-row  { background-color: rgba(255,193,7,.08); }
+.rc-history-row .rc-delete-btn { opacity: .5; }
+.rc-history-row:hover .rc-delete-btn { opacity: 1; }
 
 kbd {
     background:#212529; color:#fff; padding:2px 6px; border-radius:4px;
     font-family: ui-monospace, monospace; font-size: .8rem;
 }
+
+/* ──────────── Dark theme overrides ──────────── */
+[data-theme="dark"] .rc-pcn-card {
+    background-color: #1e2530;
+    border-color: #2d3748;
+    color: #e9ecef;
+}
+[data-theme="dark"] .rc-pcn-card.is-old { border-left-color: #adb5bd; }
+[data-theme="dark"] .rc-pcn-card.is-new { border-left-color: #4dabf7; }
+[data-theme="dark"] .rc-pcn-card.found    { border-color: #2f9e44; }
+[data-theme="dark"] .rc-pcn-card.notfound { border-color: #e03131; }
+[data-theme="dark"] .rc-pcn-card .form-label { color: #e9ecef; }
+[data-theme="dark"] .rc-meta dt { color: #adb5bd; }
+[data-theme="dark"] .rc-meta dd { color: #f1f3f5; }
+[data-theme="dark"] .rc-input {
+    background-color: #11161e;
+    color: #e9ecef;
+    border: 1px solid #2d3748;
+}
+[data-theme="dark"] .rc-input:focus {
+    background-color: #11161e;
+    color: #fff;
+    border-color: #4dabf7;
+    box-shadow: 0 0 0 .2rem rgba(77,171,247,.25);
+}
+[data-theme="dark"] .rc-input::placeholder { color: #6c757d; }
+
+[data-theme="dark"] .rc-step-badge { background: #4dabf7; color: #11161e; }
+[data-theme="dark"] .rc-compare-arrow { color: #495057; }
+
+[data-theme="dark"] .rc-demo-strip {
+    background-color: #1a1f2a;
+    border: 1px solid #2d3748;
+    color: #e9ecef;
+}
+[data-theme="dark"] .rc-demo-strip .text-muted { color: #adb5bd !important; }
+
+[data-theme="dark"] .rc-header h2,
+[data-theme="dark"] .rc-header .text-muted { color: #e9ecef !important; }
+
+[data-theme="dark"] .card {
+    background-color: #1e2530;
+    border-color: #2d3748;
+    color: #e9ecef;
+}
+[data-theme="dark"] .card-header {
+    background-color: #1a1f2a;
+    border-bottom-color: #2d3748;
+    color: #e9ecef;
+}
+[data-theme="dark"] .table {
+    --bs-table-bg: transparent;
+    color: #e9ecef;
+}
+[data-theme="dark"] .table > :not(caption) > * > * {
+    background-color: transparent;
+    color: #e9ecef;
+    border-bottom-color: #2d3748;
+}
+[data-theme="dark"] .table-light,
+[data-theme="dark"] .table-light > th {
+    background-color: #1a1f2a !important;
+    color: #e9ecef !important;
+    border-color: #2d3748 !important;
+}
+[data-theme="dark"] .table-hover > tbody > tr:hover > * {
+    background-color: rgba(77,171,247,.08);
+    color: #fff;
+}
+[data-theme="dark"] .rc-history-row.fail-row { background-color: rgba(220,53,69,.18); }
+[data-theme="dark"] .rc-history-row.sub-row  { background-color: rgba(255,193,7,.18); }
+[data-theme="dark"] .rc-history-row.fail-row > *,
+[data-theme="dark"] .rc-history-row.sub-row  > * { background-color: transparent; }
+
+[data-theme="dark"] code { color: #ffd866; background: transparent; }
+[data-theme="dark"] .rc-status-pill.bg-secondary { background-color: #495057 !important; }
+
+/* Inline result panel — dark variants (slightly muted) */
+[data-theme="dark"] .rc-result-panel.pass {
+    background: rgba(25,135,84,.18); border-color: #2f9e44; color: #a3e9c2;
+}
+[data-theme="dark"] .rc-result-panel.sub {
+    background: rgba(255,193,7,.18); border-color: #d39e00; color: #ffe28a;
+}
+[data-theme="dark"] .rc-result-panel.fail {
+    background: rgba(220,53,69,.18); border-color: #e03131; color: #ff9aa2;
+}
+[data-theme="dark"] .rc-result-big.pass { color: #69db7c; }
+[data-theme="dark"] .rc-result-big.sub  { color: #ffd43b; }
+[data-theme="dark"] .rc-result-big.fail { color: #ff8787; }
+[data-theme="dark"] .rc-compare-grid .rc-side {
+    background: rgba(0,0,0,.25);
+}
+[data-theme="dark"] .rc-compare-grid .rc-side h6,
+[data-theme="dark"] .rc-compare-grid .rc-side .rc-label { color: #adb5bd; }
+[data-theme="dark"] .rc-compare-grid .rc-side .rc-val { color: #e9ecef; }
 </style>
 {% endblock %}
 
@@ -76,14 +171,10 @@ kbd {
     <div class="rc-header mb-3">
         <h2><i class="bi bi-arrow-repeat"></i> Reel Change</h2>
         <p class="text-muted mb-0">
-            Verify a reel swap on the SMT line. Workflow:
-            <span class="rc-step-badge">1</span>Job&nbsp;
-            <span class="rc-step-badge">2</span>Old Reel&nbsp;
-            <span class="rc-step-badge">3</span>New Reel&nbsp;
-            → press <kbd>Enter</kbd> to compare. Result:
-            <span class="badge bg-success">PASS</span>
-            <span class="badge bg-warning text-dark">SUB</span>
-            <span class="badge bg-danger">FAIL</span>
+            Just scan two PCNs — KOSH looks up MPN, Item, and Job for each, then compares.
+            Results: <span class="badge bg-success">PASS</span> same MPN ·
+            <span class="badge bg-warning text-dark">SUB</span> approved substitute ·
+            <span class="badge bg-danger">FAIL</span> do not load.
         </p>
     </div>
 
@@ -100,27 +191,19 @@ kbd {
 
     <form id="reelForm" autocomplete="off">
         <div class="row g-3">
-            <!-- Job # -->
-            <div class="col-12">
-                <label for="jobInput" class="form-label">
-                    <span class="rc-step-badge">1</span> Job #
-                </label>
-                <input type="text" class="form-control rc-input" id="jobInput"
-                       placeholder="Scan or type job #" autofocus>
-            </div>
-
             <!-- Old reel card -->
             <div class="col-lg-5">
                 <div class="rc-pcn-card is-old p-3 h-100" id="oldCard">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <label for="oldReelInput" class="form-label mb-0">
-                            <span class="rc-step-badge">2</span> Old Reel (PCN)
+                            <span class="rc-step-badge">1</span> Old Reel (PCN)
                         </label>
                         <span class="rc-status-pill bg-secondary text-white" id="oldStatus">waiting</span>
                     </div>
                     <input type="text" class="form-control rc-input mb-2" id="oldReelInput"
-                           placeholder="Scan old reel PCN">
+                           placeholder="Scan old reel PCN" autofocus>
                     <dl class="row rc-meta mb-0">
+                        <dt class="col-4">Job</dt><dd class="col-8" id="oldJobPreview">—</dd>
                         <dt class="col-4">MPN</dt><dd class="col-8" id="oldMpnPreview">—</dd>
                         <dt class="col-4">Item</dt><dd class="col-8" id="oldItemPreview">—</dd>
                     </dl>
@@ -137,13 +220,14 @@ kbd {
                 <div class="rc-pcn-card is-new p-3 h-100" id="newCard">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <label for="newReelInput" class="form-label mb-0">
-                            <span class="rc-step-badge">3</span> New Reel (PCN)
+                            <span class="rc-step-badge">2</span> New Reel (PCN)
                         </label>
                         <span class="rc-status-pill bg-secondary text-white" id="newStatus">waiting</span>
                     </div>
                     <input type="text" class="form-control rc-input mb-2" id="newReelInput"
                            placeholder="Scan new reel PCN">
                     <dl class="row rc-meta mb-0">
+                        <dt class="col-4">Job</dt><dd class="col-8" id="newJobPreview">—</dd>
                         <dt class="col-4">MPN</dt><dd class="col-8" id="newMpnPreview">—</dd>
                         <dt class="col-4">Item</dt><dd class="col-8" id="newItemPreview">—</dd>
                     </dl>
@@ -162,6 +246,35 @@ kbd {
         </div>
     </form>
 
+    <!-- Inline result panel (no popup) -->
+    <div class="rc-result-panel" id="resultPanel">
+        <div class="rc-result-banner">
+            <h2 class="rc-result-big mb-0" id="resultBig">—</h2>
+            <p class="rc-result-msg" id="resultMessage"></p>
+        </div>
+        <div class="rc-compare-grid">
+            <div class="rc-side">
+                <h6>Old Reel</h6>
+                <div class="rc-label">PCN</div>  <div class="rc-val mb-2" id="rOldPcn">—</div>
+                <div class="rc-label">Job</div>  <div class="rc-val mb-2" id="rOldJob">—</div>
+                <div class="rc-label">MPN</div>  <div class="rc-val mb-2" id="rOldMpn">—</div>
+                <div class="rc-label">Item</div> <div class="rc-val" id="rOldItem">—</div>
+            </div>
+            <div class="rc-side">
+                <h6>New Reel</h6>
+                <div class="rc-label">PCN</div>  <div class="rc-val mb-2" id="rNewPcn">—</div>
+                <div class="rc-label">Job</div>  <div class="rc-val mb-2" id="rNewJob">—</div>
+                <div class="rc-label">MPN</div>  <div class="rc-val mb-2" id="rNewMpn">—</div>
+                <div class="rc-label">Item</div> <div class="rc-val" id="rNewItem">—</div>
+            </div>
+        </div>
+        <div class="text-end mt-2">
+            <button type="button" class="btn btn-sm btn-outline-dark" id="dismissResultBtn">
+                <i class="bi bi-x-lg"></i> Dismiss
+            </button>
+        </div>
+    </div>
+
     <!-- Recent scans -->
     <div class="card shadow-sm mt-4">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -176,60 +289,22 @@ kbd {
                     <thead class="table-light sticky-top">
                         <tr>
                             <th style="width:160px">When</th>
-                            <th>Job</th>
+                            <th>Old Job</th>
                             <th>Old PCN</th>
                             <th>Old MPN</th>
+                            <th>New Job</th>
                             <th>New PCN</th>
                             <th>New MPN</th>
                             <th style="width:80px">Result</th>
                             <th>User</th>
+                            <th style="width:50px"></th>
                         </tr>
                     </thead>
                     <tbody id="historyBody">
-                        <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
+                        <tr><td colspan="10" class="text-center text-muted py-3">Loading…</td></tr>
                     </tbody>
                 </table>
             </div>
-        </div>
-    </div>
-</div>
-
-<!-- Full-screen result overlay -->
-<div class="rc-result-overlay" id="resultOverlay" tabindex="-1">
-    <div class="rc-result-card">
-        <p class="rc-result-tag mb-1">Reel Change Result</p>
-        <h1 class="rc-result-big" id="resultBig">—</h1>
-        <p class="rc-result-msg" id="resultMessage"></p>
-
-        <div class="rc-compare-grid">
-            <div class="rc-side">
-                <h6>Old Reel</h6>
-                <div class="small text-muted">PCN</div>
-                <div class="rc-val mb-2" id="rOldPcn">—</div>
-                <div class="small text-muted">MPN</div>
-                <div class="rc-val mb-2" id="rOldMpn">—</div>
-                <div class="small text-muted">Item</div>
-                <div class="rc-val" id="rOldItem">—</div>
-            </div>
-            <div class="rc-side">
-                <h6>New Reel</h6>
-                <div class="small text-muted">PCN</div>
-                <div class="rc-val mb-2" id="rNewPcn">—</div>
-                <div class="small text-muted">MPN</div>
-                <div class="rc-val mb-2" id="rNewMpn">—</div>
-                <div class="small text-muted">Item</div>
-                <div class="rc-val" id="rNewItem">—</div>
-            </div>
-        </div>
-
-        <div class="text-center mt-3">
-            <span class="text-muted small">Job: </span><strong id="rJob">—</strong>
-        </div>
-
-        <div class="rc-result-actions">
-            <button type="button" class="btn btn-dark btn-lg" id="dismissResultBtn">
-                OK <kbd>Enter</kbd>
-            </button>
         </div>
     </div>
 </div>
@@ -240,7 +315,6 @@ kbd {
 (function () {
     const csrfToken = '{{ csrf_token() }}';
 
-    const jobInput = document.getElementById('jobInput');
     const oldReelInput = document.getElementById('oldReelInput');
     const newReelInput = document.getElementById('newReelInput');
     const form = document.getElementById('reelForm');
@@ -254,12 +328,14 @@ kbd {
     const newCard = document.getElementById('newCard');
     const oldStatus = document.getElementById('oldStatus');
     const newStatus = document.getElementById('newStatus');
-    const oldMpnPreview = document.getElementById('oldMpnPreview');
+    const oldMpnPreview  = document.getElementById('oldMpnPreview');
     const oldItemPreview = document.getElementById('oldItemPreview');
-    const newMpnPreview = document.getElementById('newMpnPreview');
+    const oldJobPreview  = document.getElementById('oldJobPreview');
+    const newMpnPreview  = document.getElementById('newMpnPreview');
     const newItemPreview = document.getElementById('newItemPreview');
+    const newJobPreview  = document.getElementById('newJobPreview');
 
-    const resultOverlay = document.getElementById('resultOverlay');
+    const resultPanel = document.getElementById('resultPanel');
     const resultBig = document.getElementById('resultBig');
     const resultMessage = document.getElementById('resultMessage');
 
@@ -267,6 +343,10 @@ kbd {
         return (s == null ? '' : String(s))
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function jobPill(job) {
+        const j = (job || '').trim();
+        return j ? `<span class="rc-job-pill">${escapeHtml(j)}</span>` : '—';
     }
 
     function setStatus(side, kind, label) {
@@ -283,12 +363,11 @@ kbd {
         if (kind === 'ok')   card.classList.add('found');
         if (kind === 'miss') card.classList.add('notfound');
     }
-
     function clearPreview(side) {
+        const job  = side === 'old' ? oldJobPreview  : newJobPreview;
         const mpn  = side === 'old' ? oldMpnPreview  : newMpnPreview;
         const item = side === 'old' ? oldItemPreview : newItemPreview;
-        mpn.textContent = '—';
-        item.textContent = '—';
+        job.textContent = '—'; mpn.textContent = '—'; item.textContent = '—';
         setStatus(side, 'wait', 'waiting');
     }
 
@@ -301,95 +380,64 @@ kbd {
         setStatus(side, 'check', 'checking…');
         debounceTimers[side] = setTimeout(() => doLookup(side, v), 250);
     }
-
     async function doLookup(side, pcn) {
         try {
             const resp = await fetch('/api/reel-change/lookup?pcn=' + encodeURIComponent(pcn));
             const data = await resp.json();
-            if (!data.success) {
-                setStatus(side, 'miss', 'error');
-                return;
-            }
+            if (!data.success) { setStatus(side, 'miss', 'error'); return; }
+            const job  = side === 'old' ? oldJobPreview  : newJobPreview;
             const mpn  = side === 'old' ? oldMpnPreview  : newMpnPreview;
             const item = side === 'old' ? oldItemPreview : newItemPreview;
             if (!data.found) {
-                mpn.textContent  = 'not found';
-                item.textContent = 'not found';
+                job.textContent = 'not found'; mpn.textContent = 'not found'; item.textContent = 'not found';
                 setStatus(side, 'miss', 'not found');
             } else {
-                mpn.textContent  = data.mpn  || '—';
+                job.innerHTML   = jobPill(data.job);
+                mpn.textContent = data.mpn  || '—';
                 item.textContent = data.item || '—';
                 setStatus(side, 'ok', 'found');
             }
-        } catch (err) {
-            setStatus(side, 'miss', 'network err');
-        }
+        } catch (err) { setStatus(side, 'miss', 'network err'); }
     }
-
     oldReelInput.addEventListener('input', e => scheduleLookup('old', e.target.value));
     newReelInput.addEventListener('input', e => scheduleLookup('new', e.target.value));
-
-    // Enter advances fields
-    function advanceOnEnter(input, next) {
-        input.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                if (next === 'submit') form.requestSubmit();
-                else { next.focus(); next.select(); }
-            }
-        });
-    }
-    advanceOnEnter(jobInput, oldReelInput);
-    advanceOnEnter(oldReelInput, newReelInput);
-    advanceOnEnter(newReelInput, 'submit');
-
-    function resetForm(includeJob) {
-        oldReelInput.value = '';
-        newReelInput.value = '';
-        clearPreview('old');
-        clearPreview('new');
-        if (includeJob) {
-            jobInput.value = '';
-            jobInput.focus();
-        } else {
-            oldReelInput.focus();
-        }
-    }
-    clearBtn.addEventListener('click', () => resetForm(true));
-
-    // Result overlay
-    function showResult(payload) {
-        resultOverlay.className = 'rc-result-overlay show ' + payload.result.toLowerCase();
-        resultBig.className = 'rc-result-big ' + payload.result.toLowerCase();
-        resultBig.textContent = payload.result;
-        resultMessage.textContent = payload.message || '';
-        document.getElementById('rJob').textContent     = payload.job || '—';
-        document.getElementById('rOldPcn').textContent  = payload.old_pcn || '—';
-        document.getElementById('rOldMpn').textContent  = payload.old_mpn || '—';
-        document.getElementById('rOldItem').textContent = payload.old_item || '—';
-        document.getElementById('rNewPcn').textContent  = payload.new_pcn || '—';
-        document.getElementById('rNewMpn').textContent  = payload.new_mpn || '—';
-        document.getElementById('rNewItem').textContent = payload.new_item || '—';
-        setTimeout(() => dismissResultBtn.focus(), 80);
-    }
-
-    function dismissResult() {
-        resultOverlay.classList.remove('show', 'pass', 'sub', 'fail');
-        resetForm(false);
-        loadHistory();
-    }
-    dismissResultBtn.addEventListener('click', dismissResult);
-    document.addEventListener('keydown', function (e) {
-        if (resultOverlay.classList.contains('show') && (e.key === 'Enter' || e.key === 'Escape')) {
-            e.preventDefault();
-            dismissResult();
-        }
+    oldReelInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); newReelInput.focus(); newReelInput.select(); }
+    });
+    newReelInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); form.requestSubmit(); }
     });
 
-    // Submit
+    function resetForm() {
+        oldReelInput.value = ''; newReelInput.value = '';
+        clearPreview('old'); clearPreview('new');
+        oldReelInput.focus();
+    }
+    clearBtn.addEventListener('click', resetForm);
+
+    function showResult(payload) {
+        const cls = payload.result.toLowerCase();
+        resultPanel.className = 'rc-result-panel show ' + cls;
+        resultBig.className = 'rc-result-big mb-0 ' + cls;
+        resultBig.textContent = payload.result;
+        resultMessage.textContent = payload.message || '';
+        document.getElementById('rOldPcn').textContent  = payload.old_pcn  || '—';
+        document.getElementById('rOldMpn').textContent  = payload.old_mpn  || '—';
+        document.getElementById('rOldItem').textContent = payload.old_item || '—';
+        document.getElementById('rOldJob').innerHTML    = jobPill(payload.old_job);
+        document.getElementById('rNewPcn').textContent  = payload.new_pcn  || '—';
+        document.getElementById('rNewMpn').textContent  = payload.new_mpn  || '—';
+        document.getElementById('rNewItem').textContent = payload.new_item || '—';
+        document.getElementById('rNewJob').innerHTML    = jobPill(payload.new_job);
+        // Scroll into view so the result is visible without scrolling
+        resultPanel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    dismissResultBtn.addEventListener('click', function () {
+        resultPanel.className = 'rc-result-panel';
+    });
+
     form.addEventListener('submit', async function (e) {
         e.preventDefault();
-        const job = jobInput.value.trim();
         const oldPcn = oldReelInput.value.trim();
         const newPcn = newReelInput.value.trim();
         if (!oldPcn || !newPcn) {
@@ -401,22 +449,16 @@ kbd {
             const resp = await fetch('/api/reel-change/check', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-                body: JSON.stringify({ job, old_pcn: oldPcn, new_pcn: newPcn }),
+                body: JSON.stringify({ old_pcn: oldPcn, new_pcn: newPcn }),
             });
             const data = await resp.json();
-            if (!resp.ok || !data.success) {
-                alert(data.error || 'Compare failed.');
-                return;
-            }
+            if (!resp.ok || !data.success) { alert(data.error || 'Compare failed.'); return; }
             showResult(data);
-        } catch (err) {
-            alert('Network error: ' + err.message);
-        } finally {
-            compareBtn.disabled = false;
-        }
+            loadHistory();
+        } catch (err) { alert('Network error: ' + err.message); }
+        finally { compareBtn.disabled = false; }
     });
 
-    // Demo loaders
     document.querySelectorAll('[data-demo]').forEach(btn => {
         btn.addEventListener('click', async function () {
             const pair = this.getAttribute('data-demo');
@@ -426,31 +468,23 @@ kbd {
             try {
                 const resp = await fetch('/api/reel-change/demo?pair=' + encodeURIComponent(pair));
                 const data = await resp.json();
-                if (!resp.ok || !data.success) {
-                    alert(data.error || 'Could not load demo sample.');
-                    return;
-                }
-                jobInput.value = data.job || '';
+                if (!resp.ok || !data.success) { alert(data.error || 'Could not load demo sample.'); return; }
                 oldReelInput.value = data.old_pcn || '';
                 newReelInput.value = data.new_pcn || '';
-                // populate the live preview without another fetch
+                oldJobPreview.innerHTML  = jobPill(data.old_job);
                 oldMpnPreview.textContent  = data.old_mpn  || '—';
                 oldItemPreview.textContent = data.old_item || '—';
+                newJobPreview.innerHTML  = jobPill(data.new_job);
                 newMpnPreview.textContent  = data.new_mpn  || '—';
                 newItemPreview.textContent = data.new_item || '—';
                 setStatus('old', 'ok', 'found');
                 setStatus('new', 'ok', 'found');
                 compareBtn.focus();
-            } catch (err) {
-                alert('Network error: ' + err.message);
-            } finally {
-                this.disabled = false;
-                this.innerHTML = original;
-            }
+            } catch (err) { alert('Network error: ' + err.message); }
+            finally { this.disabled = false; this.innerHTML = original; }
         });
     });
 
-    // History
     function badgeForResult(result) {
         if (result === 'PASS') return '<span class="badge bg-success">PASS</span>';
         if (result === 'SUB')  return '<span class="badge bg-warning text-dark">SUB</span>';
@@ -461,32 +495,59 @@ kbd {
         if (result === 'SUB')  return 'rc-history-row sub-row';
         return 'rc-history-row';
     }
+    async function deleteEntry(id, btn) {
+        if (!confirm('Delete this scan record?')) return;
+        btn.disabled = true;
+        try {
+            const resp = await fetch('/api/reel-change/' + id, {
+                method: 'DELETE',
+                headers: { 'X-CSRFToken': csrfToken },
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) { alert(data.error || 'Delete failed.'); btn.disabled = false; return; }
+            loadHistory();
+        } catch (err) { alert('Network error: ' + err.message); btn.disabled = false; }
+    }
+    historyBody.addEventListener('click', function (e) {
+        const btn = e.target.closest('.rc-delete-btn');
+        if (!btn) return;
+        const id = btn.getAttribute('data-id');
+        if (id) deleteEntry(id, btn);
+    });
+
     async function loadHistory() {
         try {
             const resp = await fetch('/api/reel-change/recent?limit=20');
             const data = await resp.json();
             if (!data.success) {
-                historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load history.</td></tr>';
+                historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">Failed to load history.</td></tr>';
                 return;
             }
             if (!data.entries.length) {
-                historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No scans yet — try the demo above.</td></tr>';
+                historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">No scans yet — try the demo above.</td></tr>';
                 return;
             }
             historyBody.innerHTML = data.entries.map(e => `
                 <tr class="${rowClassFor(e.result)}">
                     <td class="small text-nowrap">${escapeHtml(e.created_at)}</td>
-                    <td>${escapeHtml(e.job)}</td>
+                    <td>${escapeHtml(e.old_job)}</td>
                     <td><code>${escapeHtml(e.old_pcn)}</code></td>
                     <td class="small">${escapeHtml(e.old_mpn)}</td>
+                    <td>${escapeHtml(e.new_job)}</td>
                     <td><code>${escapeHtml(e.new_pcn)}</code></td>
                     <td class="small">${escapeHtml(e.new_mpn)}</td>
                     <td>${badgeForResult(e.result)}</td>
                     <td class="small">${escapeHtml(e.username)}</td>
+                    <td>
+                        <button type="button" class="btn btn-sm btn-outline-danger rc-delete-btn"
+                                data-id="${e.id}" title="Delete this scan">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
                 </tr>
             `).join('');
         } catch (err) {
-            historyBody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Network error loading history.</td></tr>';
+            historyBody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">Network error loading history.</td></tr>';
         }
     }
     refreshHistoryBtn.addEventListener('click', loadHistory);
