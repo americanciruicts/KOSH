@@ -278,6 +278,7 @@ def inject_current_time():
         'user_can_see_itar': g.get('user_can_see_itar', False),
         'is_admin': is_admin_user(),
         'can_manage': can_manage_parts(),
+        'can_use_reel_change': can_use_reel_change(),
         'can_access_tool': can_access_tool,
         'can_view_notifications': can_view_notifications(),
         'cache_version': APP_START_TIME
@@ -434,10 +435,11 @@ USER_TOOL_ACCESS = {
         'reports', 'manage'
     },
     # Jay: everything except pcb_inventory, manage, and part_number_change
+    # — but explicitly granted reel_change (the SMT line tool)
     'jayt@americancircuits.com': {
         'dashboard', 'generate_pcn', 'stock', 'pick', 'restock',
         'jobs', 'shortage_report', 'warehouse_inventory', 'print_label',
-        'pcn_history', 'po_history', 'bom_loader', 'reports'
+        'pcn_history', 'po_history', 'bom_loader', 'reports', 'reel_change'
     },
 }
 
@@ -460,11 +462,27 @@ def can_access_tool(tool_name):
 # Users allowed to access ACI Numbers and Locations (in addition to admins)
 MANAGE_AUTHORIZED_USERS = {'parts@americancircuits.com'}
 
+# Users allowed to use Reel Change. Admins + Theresa always; Jay added so the
+# SMT line gets the tool without seeing ACI Numbers / Locations.
+REEL_CHANGE_AUTHORIZED_USERS = {'parts@americancircuits.com', 'jayt@americancircuits.com'}
+
 def can_manage_parts():
     """Check if user can access ACI Numbers and Locations (admins + Theresa)."""
     if is_admin_user():
         return True
     return session.get('username', '').lower() in MANAGE_AUTHORIZED_USERS
+
+def can_use_reel_change():
+    """Check if user can access Reel Change (admins + Theresa + Jay + anyone
+    with 'reel_change' in their per-user tool allowlist)."""
+    if is_admin_user():
+        return True
+    username = session.get('username', '').lower()
+    if username in REEL_CHANGE_AUTHORIZED_USERS:
+        return True
+    if username in USER_TOOL_ACCESS:
+        return 'reel_change' in USER_TOOL_ACCESS[username]
+    return True  # unrestricted users get everything
 
 LOCATION_RANGES = [
     ('1000-1999', '1000-1999'),
@@ -8898,7 +8916,7 @@ def admin_delete_location(location_id):
 @require_auth
 def reel_change():
     """Kiosk page for SMT operators to verify a reel swap (Old PCN vs New PCN)."""
-    if not can_manage_parts():
+    if not can_use_reel_change():
         flash('Access denied. You do not have permission to access Reel Change.', 'danger')
         return redirect(url_for('index'))
     response = make_response(render_template('reel_change.html'))
@@ -8958,7 +8976,7 @@ def api_reel_change_check():
       - otherwise → FAIL
       - any PCN not found in tblWhse_Inventory → FAIL with explanation
     """
-    if not can_manage_parts():
+    if not can_use_reel_change():
         return jsonify({'success': False, 'error': 'Access denied'}), 403
 
     data = request.get_json(silent=True) or {}
@@ -9049,7 +9067,7 @@ def api_reel_change_check():
 @require_auth
 def api_reel_change_lookup():
     """Look up a single PCN and return its MPN/Item for live form preview."""
-    if not can_manage_parts():
+    if not can_use_reel_change():
         return jsonify({'success': False, 'error': 'Access denied'}), 403
     pcn = (request.args.get('pcn') or '').strip()
     if not pcn:
@@ -9084,7 +9102,7 @@ def api_reel_change_demo():
     `pair=sub`   returns two PCNs that share Item but different MPN (SUB demo).
     `pair=fail`  returns two unrelated PCNs (FAIL demo).
     """
-    if not can_manage_parts():
+    if not can_use_reel_change():
         return jsonify({'success': False, 'error': 'Access denied'}), 403
     pair = (request.args.get('pair') or 'match').lower()
     conn = None
@@ -9160,7 +9178,7 @@ def api_reel_change_demo():
 @require_auth
 def api_reel_change_recent():
     """Return the last N reel-change log entries (for the on-page history strip)."""
-    if not can_manage_parts():
+    if not can_use_reel_change():
         return jsonify({'success': False, 'error': 'Access denied'}), 403
     try:
         limit = int(request.args.get('limit', 10))
@@ -9198,7 +9216,7 @@ def api_reel_change_recent():
 @require_auth
 def api_reel_change_delete(entry_id):
     """Delete a single reel-change log row."""
-    if not can_manage_parts():
+    if not can_use_reel_change():
         return jsonify({'success': False, 'error': 'Access denied'}), 403
     conn = None
     try:
