@@ -8995,10 +8995,10 @@ def api_reel_change_check():
                 result = 'FAIL'
                 message = 'MPN and Item do not match — do NOT load this reel.'
 
-            # The "job" for the swap is the job the OLD reel was running (the
-            # one currently on the machine). If unavailable, fall back to any
-            # explicit job the operator typed, then to new reel's job.
-            swap_job = old['job'] or job or new['job']
+            # If the operator typed a Job #, that wins (manual override).
+            # Otherwise prefer the OLD reel's derived job (the one currently
+            # running on the machine), falling back to the new reel's job.
+            swap_job = job or old['job'] or new['job']
 
             cursor.execute("""
                 INSERT INTO pcb_inventory."tblReelChangeLog"
