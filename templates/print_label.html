@@ -103,6 +103,18 @@
             font-weight: 700;
         }
 
+        /* MPN spans the full label width and wraps so long part numbers
+           are never truncated — operators need the full string for verification. */
+        .mpn-line {
+            grid-column: 1 / -1;
+            white-space: normal;
+            overflow: visible;
+            text-overflow: clip;
+            word-break: break-all;
+            font-size: 9px;
+            line-height: 1.1;
+        }
+
         /* Control buttons (screen only) */
         .controls {
             text-align: center;
@@ -207,14 +219,13 @@
             </div>
         </div>
 
-        <!-- Bottom section: 2-column, 3-row details -->
+        <!-- Bottom section: 2-column grid with MPN given a full-width row so it never truncates -->
         <div class="label-details">
             <div class="detail-line"><strong>Item No:</strong> {{ data.item or '-' }}</div>
             <div class="detail-line"><strong>DCC:</strong> {{ data.date_code or '-' }}</div>
-            <div class="detail-line"><strong>MPN:</strong> {{ data.mpn or '-' }}</div>
+            <div class="detail-line mpn-line"><strong>MPN:</strong> {{ data.mpn or '-' }}</div>
             <div class="detail-line"><strong>MSD:</strong> {{ data.msd.replace('Level ', '') if data.msd and 'Level' in data.msd else (data.msd or '-') }}</div>
             <div class="detail-line"><strong>PO:</strong> {{ data.po_number or '-' }}</div>
-            <div class="detail-line"></div>
         </div>
     </div>
 

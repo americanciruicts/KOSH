@@ -6928,13 +6928,13 @@ def generate_zpl_label(pcn_number):
 
 ^FO15,58^GB579,0,2^FS
 
-^FO35,65^A0N,22,22^FDItem No: {data.get('item', 'N/A')}^FS
-^FO320,65^A0N,22,22^FDDCC: {data.get('date_code', 'N/A')}^FS
+^FO35,65^A0N,20,20^FDItem No: {data.get('item', 'N/A')}^FS
+^FO320,65^A0N,20,20^FDDCC: {data.get('date_code', 'N/A')}^FS
 
-^FO35,88^A0N,22,22^FDMPN: {data.get('mpn', 'N/A')}^FS
-^FO320,88^A0N,22,22^FDMSD: {data.get('msd', 'N/A')}^FS
+^FO35,88^A0N,18,18^FB560,2,0,L,0^FDMPN: {data.get('mpn', 'N/A')}^FS
 
-^FO35,111^A0N,22,22^FDPO: {data.get('po_number', 'N/A')}^FS
+^FO35,140^A0N,20,20^FDMSD: {data.get('msd', 'N/A')}^FS
+^FO320,140^A0N,20,20^FDPO: {data.get('po_number', 'N/A')}^FS
 
 ^XZ"""
 
