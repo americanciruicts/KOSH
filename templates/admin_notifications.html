@@ -221,6 +221,18 @@
         });
     }
 
+    // Auto-refresh every 60s so the page stays current without a manual reload.
+    // Skipped if a confirm()/prompt() is open or the tab is hidden — no point
+    // refreshing a backgrounded tab, and we don't want to interrupt a user
+    // who's in the middle of confirming "Clear Old".
+    (function() {
+        var REFRESH_MS = 60000;
+        setInterval(function() {
+            if (document.hidden) return;
+            location.reload();
+        }, REFRESH_MS);
+    })();
+
     function clearOldNotifications() {
         if (!confirm('This will delete notifications older than 7 days. Continue?')) {
             return;
