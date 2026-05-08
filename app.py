@@ -553,8 +553,8 @@ class RestockForm(FlaskForm):
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
     po = StringField('PO Number', validators=[Optional(), Length(max=50)])
     quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
-    location_from = StringField('Source Location', validators=[Optional(), Length(max=50), validate_location_field], default='Count Area')
-    location_to = StringField('Destination Location (Optional)', validators=[Optional(), Length(max=50), validate_location_field])
+    location_from = StringField('Source Location', validators=[DataRequired(), Length(max=50), validate_location_field], default='MFG Floor')
+    location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50), validate_location_field], default='Count Area')
     submit = SubmitField('Restock Parts')
 
     def validate(self, extra_validators=None):
@@ -3678,9 +3678,12 @@ def restock():
         return redirect(url_for('index'))
     form = RestockForm()
 
-    # Set default source location on GET request (destination is left blank)
+    # Set default source/destination on GET — source is fixed to MFG Floor,
+    # destination defaults to Count Area (the typical restock target).
     if not form.location_from.data:
-        form.location_from.data = 'Count Area'
+        form.location_from.data = 'MFG Floor'
+    if not form.location_to.data:
+        form.location_to.data = 'Count Area'
 
     if form.validate_on_submit():
         logger.info(f"Restock form validation passed - PCN={form.pcn.data}, Item={form.item.data}, Quantity={form.quantity.data}, Location={form.location_to.data}")
