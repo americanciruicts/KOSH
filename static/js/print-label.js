@@ -15,28 +15,29 @@
         const dc = data.date_code || '';
         const msd = data.msd || data.msd_level || '';
 
+        // Uniform 26pt body text across every detail line, each printed twice
+        // with a 1-dot x-offset for a bold weight on Zebra output.
+        const F = '^A0N,26,26';
+        const stamp = (x, y, text) => `^FO${x},${y}${F}^FD${text}^FS\n^FO${x + 1},${y}${F}^FD${text}^FS`;
+
         let zpl = `^XA
-^FO15,6^A0N,26,26^FDPCN: ${pcn}^FS
+${stamp(15, 6, `PCN: ${pcn}`)}
 
 ^FO170,4^BY2,2,45^BCN,45,N,N,N^FD${pcn}^FS
 
-^FO490,6^A0N,14,14^FDQTY^FS
-^FO490,22^A0N,28,28^FD${qty}^FS
+${stamp(490, 6, 'QTY')}
+${stamp(490, 34, `${qty}`)}
 
-^FO15,58^GB579,0,2^FS
+^FO15,68^GB579,0,2^FS
 
-^FO20,65^A0N,22,22^FDJob: ${item}^FS
-${dc ? `^FO240,65^A0N,22,22^FDDCC: ${dc}^FS` : ''}
-${vendor ? `^FO440,65^A0N,22,22^FDVendor: ${vendor}^FS` : ''}
+${stamp(20, 75, `Job: ${item}`)}
+${dc ? stamp(240, 75, `DCC: ${dc}`) : ''}
+${vendor ? stamp(440, 75, `Vendor: ${vendor}`) : ''}
 
-${mpn ? `^FO20,92^A0N,22,22^FDMPN: ${mpn}^FS` : ''}
+${mpn ? stamp(20, 108, `MPN: ${mpn}`) : ''}
 
-${po ? `^FO20,118^A0N,42,42^FDPO: ${po}^FS
-^FO21,118^A0N,42,42^FDPO: ${po}^FS
-^FO22,118^A0N,42,42^FDPO: ${po}^FS` : ''}
-${msd ? `^FO400,118^A0N,42,42^FDMSD: ${msd}^FS
-^FO401,118^A0N,42,42^FDMSD: ${msd}^FS
-^FO402,118^A0N,42,42^FDMSD: ${msd}^FS` : ''}
+${po ? stamp(20, 141, `PO: ${po}`) : ''}
+${msd ? stamp(420, 141, `MSD: ${msd}`) : ''}
 
 ^XZ`;
         return zpl;
