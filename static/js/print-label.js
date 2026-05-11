@@ -31,8 +31,7 @@ ${stamp(490, 34, `${qty}`)}
 ^FO15,68^GB579,0,2^FS
 
 ${stamp(20, 75, `Job: ${item}`)}
-${dc ? stamp(240, 75, `DCC: ${dc}`) : ''}
-${vendor ? stamp(440, 75, `Vendor: ${vendor}`) : ''}
+${dc ? stamp(400, 75, `DCC: ${dc}`) : ''}
 
 ${mpn ? stamp(20, 108, `MPN: ${mpn}`) : ''}
 
