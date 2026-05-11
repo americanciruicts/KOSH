@@ -15,10 +15,10 @@
         const dc = data.date_code || '';
         const msd = data.msd || data.msd_level || '';
 
-        // Uniform 26pt body text across every detail line. Single stamp
-        // (no bold double-print) so long values like Item No don't overflow.
-        const F = '^A0N,26,26';
-        const stamp = (x, y, text) => `^FO${x},${y}${F}^FD${text}^FS`;
+        // Uniform 20pt body text, double-stamped with a 1-dot x-offset for a
+        // mild bold weight (lighter than a 2-dot offset which made values clip).
+        const F = '^A0N,20,20';
+        const stamp = (x, y, text) => `^FO${x},${y}${F}^FD${text}^FS\n^FO${x + 1},${y}${F}^FD${text}^FS`;
 
         let zpl = `^XA
 ${stamp(15, 6, `PCN: ${pcn}`)}
