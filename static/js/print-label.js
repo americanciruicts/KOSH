@@ -23,10 +23,10 @@
         let zpl = `^XA
 ${stamp(15, 6, `PCN: ${pcn}`)}
 
-^FO170,4^BY2,2,45^BCN,45,N,N,N^FD${pcn}^FS
+^FO210,2^BY2,2,60^BCN,60,N,N,N^FD${pcn}^FS
 
-${stamp(490, 6, 'QTY')}
-${stamp(490, 34, `${qty}`)}
+${stamp(470, 6, 'QTY')}
+${stamp(470, 34, `${qty}`)}
 
 ^FO15,68^GB579,0,2^FS
 
