@@ -17,7 +17,7 @@
 
         // Uniform 20pt body text, double-stamped with a 1-dot x-offset for a
         // mild bold weight (lighter than a 2-dot offset which made values clip).
-        const F = '^A0N,20,20';
+        const F = '^A0N,22,22';
         const stamp = (x, y, text) => `^FO${x},${y}${F}^FD${text}^FS\n^FO${x + 1},${y}${F}^FD${text}^FS`;
 
         let zpl = `^XA
