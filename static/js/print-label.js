@@ -27,11 +27,16 @@
 
 ^FO20,65^A0N,22,22^FDJob: ${item}^FS
 ${dc ? `^FO240,65^A0N,22,22^FDDCC: ${dc}^FS` : ''}
-${msd ? `^FO440,65^A0N,22,22^FDMSD: ${msd}^FS` : ''}
+${vendor ? `^FO440,65^A0N,22,22^FDVendor: ${vendor}^FS` : ''}
 
 ${mpn ? `^FO20,92^A0N,22,22^FDMPN: ${mpn}^FS` : ''}
-${po ? `^FO440,92^A0N,22,22^FDPO: ${po}^FS` : ''}
-${vendor ? `^FO20,119^A0N,22,22^FDVendor: ${vendor}^FS` : ''}
+
+${po ? `^FO20,118^A0N,42,42^FDPO: ${po}^FS
+^FO21,118^A0N,42,42^FDPO: ${po}^FS
+^FO22,118^A0N,42,42^FDPO: ${po}^FS` : ''}
+${msd ? `^FO400,118^A0N,42,42^FDMSD: ${msd}^FS
+^FO401,118^A0N,42,42^FDMSD: ${msd}^FS
+^FO402,118^A0N,42,42^FDMSD: ${msd}^FS` : ''}
 
 ^XZ`;
         return zpl;
