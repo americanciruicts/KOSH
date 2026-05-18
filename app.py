@@ -1570,39 +1570,42 @@ class DatabaseManager:
                 # Use COALESCE to handle NULL onhandqty
                 # Cast mfg_qty to integer for arithmetic, then back to text
                 # SECURE: Use conditional query execution
+                # Restock always clears the MFG floor balance for this PCN.
+                # Any difference between picked qty and restocked qty was
+                # consumed in production and should not remain on the floor.
                 if pcn and item:
                     update_query = """
                         UPDATE pcb_inventory."tblWhse_Inventory"
-                        SET mfg_qty = GREATEST(0, CASE WHEN mfg_qty ~ '^\-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END - %s)::text,
+                        SET mfg_qty = '0',
                             onhandqty = COALESCE(onhandqty, 0) + %s,
                             loc_from = %s,
                             loc_to = %s,
                             migrated_at = CURRENT_TIMESTAMP
                         WHERE pcn::text = %s AND item::text ILIKE %s
                     """
-                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, str(pcn), item))
+                    cursor.execute(update_query, (quantity, location_from, location_to, str(pcn), item))
                 elif pcn:
                     update_query = """
                         UPDATE pcb_inventory."tblWhse_Inventory"
-                        SET mfg_qty = GREATEST(0, CASE WHEN mfg_qty ~ '^\-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END - %s)::text,
+                        SET mfg_qty = '0',
                             onhandqty = COALESCE(onhandqty, 0) + %s,
                             loc_from = %s,
                             loc_to = %s,
                             migrated_at = CURRENT_TIMESTAMP
                         WHERE pcn::text = %s
                     """
-                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, str(pcn)))
+                    cursor.execute(update_query, (quantity, location_from, location_to, str(pcn)))
                 else:
                     update_query = """
                         UPDATE pcb_inventory."tblWhse_Inventory"
-                        SET mfg_qty = GREATEST(0, CASE WHEN mfg_qty ~ '^\-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END - %s)::text,
+                        SET mfg_qty = '0',
                             onhandqty = COALESCE(onhandqty, 0) + %s,
                             loc_from = %s,
                             loc_to = %s,
                             migrated_at = CURRENT_TIMESTAMP
                         WHERE item = %s
                     """
-                    cursor.execute(update_query, (quantity, quantity, location_from, location_to, item))
+                    cursor.execute(update_query, (quantity, location_from, location_to, item))
 
                 updated_rows = cursor.rowcount
 
@@ -3282,7 +3285,7 @@ def login():
 
         if not username or not password:
             flash('Please provide both username and password.', 'danger')
-            return render_template('login.html')
+            return render_template('auth/login.html')
 
         # Get user from database
         conn = None
@@ -3386,7 +3389,7 @@ def login():
             if conn:
                 db_manager.return_connection(conn)
 
-    return render_template('login.html')
+    return render_template('auth/login.html')
 
 @app.route('/logout')
 def logout():
@@ -3572,7 +3575,7 @@ def stock():
                 for error in errors:
                     flash(f"{field}: {error}", 'error')
 
-    return render_template('stock.html', form=form)
+    return render_template('inventory_ops/stock.html', form=form)
 
 @app.route('/pick', methods=['GET', 'POST'])
 @require_auth
@@ -3647,7 +3650,7 @@ def pick():
                     flash(f"{field}: {error}", 'error')
 
     recent_picks = db_manager.get_recent_picks(limit=50)
-    return render_template('pick.html', form=form, recent_picks=recent_picks)
+    return render_template('inventory_ops/pick.html', form=form, recent_picks=recent_picks)
 
 
 @app.route('/api/reverse-pick/<int:transaction_id>', methods=['POST'])
@@ -3745,7 +3748,7 @@ def restock():
                 for error in errors:
                     flash(f"{field}: {error}", 'error')
 
-    response = make_response(render_template('restock.html', form=form))
+    response = make_response(render_template('inventory_ops/restock.html', form=form))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
@@ -3834,7 +3837,7 @@ def part_number_change():
 
         if not pcn or not new_part_number:
             flash('PCN and new part number are required.', 'danger')
-            return render_template('part_number_change.html')
+            return render_template('inventory_ops/part_number_change.html')
 
         conn = None
         try:
@@ -3852,14 +3855,14 @@ def part_number_change():
 
             if not item:
                 flash(f'PCN {pcn} not found in inventory.', 'danger')
-                return render_template('part_number_change.html')
+                return render_template('inventory_ops/part_number_change.html')
 
             old_part_number = item['item']
 
             # Check if new part number is the same
             if old_part_number == new_part_number:
                 flash(f'New part number is the same as current part number ({old_part_number}).', 'warning')
-                return render_template('part_number_change.html', item=item)
+                return render_template('inventory_ops/part_number_change.html', item=item)
 
             # Update part number in inventory
             cursor.execute('''
@@ -3873,7 +3876,7 @@ def part_number_change():
             if rows_updated == 0:
                 conn.rollback()
                 flash(f'Failed to update PCN {pcn}. No rows were modified.', 'danger')
-                return render_template('part_number_change.html')
+                return render_template('inventory_ops/part_number_change.html')
 
             # Log the change in transaction table
             cursor.execute('''
@@ -3896,19 +3899,19 @@ def part_number_change():
             ''', (pcn,))
             updated_item = cursor.fetchone()
 
-            return render_template('part_number_change.html', item=updated_item, show_print=True)
+            return render_template('inventory_ops/part_number_change.html', item=updated_item, show_print=True)
 
         except Exception as e:
             if conn:
                 conn.rollback()
             logger.error(f"Error changing part number: {e}")
             flash(f'Error changing part number: {str(e)}', 'danger')
-            return render_template('part_number_change.html')
+            return render_template('inventory_ops/part_number_change.html')
         finally:
             if conn:
                 db_manager.return_connection(conn)
 
-    return render_template('part_number_change.html')
+    return render_template('inventory_ops/part_number_change.html')
 
 @app.route('/api/search-inventory', methods=['GET'])
 @require_auth
@@ -4187,7 +4190,7 @@ def pcb_inventory():
             'pages': list(range(max(1, page - 2), min(total_pages + 1, page + 3)))
         }
 
-        return render_template('inventory.html',
+        return render_template('inventory/inventory.html',
                              inventory=paginated_inventory,
                              pagination=pagination,
                              pcb_types=PCB_TYPES,
@@ -4207,7 +4210,7 @@ def pcb_inventory():
         logger.error(f"Error loading inventory: {e}")
         logger.error(traceback.format_exc())
         flash('Error loading inventory. Please try again.', 'error')
-        return render_template('inventory.html', inventory=[], pagination={'total': 0},
+        return render_template('inventory/inventory.html', inventory=[], pagination={'total': 0},
                              pcb_types=PCB_TYPES, locations=[], search_job='', search_pcb_type='',
                              search_location='', search_pcn='', search_date_from='', search_date_to='',
                              search_min_qty='', search_max_qty='', sort_by='job', sort_order='asc')
@@ -4324,7 +4327,7 @@ def warehouse_inventory():
             'pages': list(range(max(1, page - 2), min(total_pages + 1, page + 3)))
         }
 
-        return render_template('warehouse_inventory.html',
+        return render_template('inventory/warehouse_inventory.html',
                              inventory=inventory,
                              pagination=pagination,
                              total_records=total_records,
@@ -4337,7 +4340,7 @@ def warehouse_inventory():
     except Exception as e:
         logger.error(f"Error loading warehouse inventory: {e}")
         flash('Error loading warehouse inventory. Please try again.', 'error')
-        return render_template('warehouse_inventory.html', inventory=[],
+        return render_template('inventory/warehouse_inventory.html', inventory=[],
                              pagination={'total': 0, 'page': 1, 'total_pages': 1, 'per_page': 10},
                              total_records=0)
     finally:
@@ -4769,13 +4772,13 @@ def reports():
             """)
             audit_log = [dict(row) for row in cur.fetchall()]
 
-        return render_template('reports.html',
+        return render_template('reports/reports.html',
                              summary=summary,
                              audit_log=audit_log)
     except Exception as e:
         logger.error(f"Error loading reports: {e}")
         flash('Error loading reports. Please try again.', 'error')
-        return render_template('reports.html', summary=[], audit_log=[])
+        return render_template('reports/reports.html', summary=[], audit_log=[])
     finally:
         if conn:
             db_manager.return_connection(conn)
@@ -4814,14 +4817,14 @@ def shortage_report():
         """)
         available_jobs = [row['job'] for row in cursor.fetchall()]
 
-        return render_template('shortage_report.html',
+        return render_template('reports/shortage_report.html',
                              saved_reports=saved_reports,
                              available_jobs=available_jobs,
                              column_definitions=SHORTAGE_EXPORT_COLUMNS)
     except Exception as e:
         logger.error(f"Error loading shortage report page: {e}")
         flash('Error loading page. Please try again.', 'error')
-        return render_template('shortage_report.html', saved_reports=[], available_jobs=[],
+        return render_template('reports/shortage_report.html', saved_reports=[], available_jobs=[],
                              column_definitions=SHORTAGE_EXPORT_COLUMNS)
     finally:
         if conn:
@@ -5035,7 +5038,7 @@ def view_shortage_report(report_id):
         """, (report_id,))
         items = cursor.fetchall()
 
-        return render_template('shortage_report_view.html', report=report, items=items,
+        return render_template('reports/shortage_report_view.html', report=report, items=items,
                                        column_definitions=SHORTAGE_EXPORT_COLUMNS)
 
     except Exception as e:
@@ -5330,12 +5333,12 @@ def sources():
         cursor.close()
         db_manager.return_connection(conn)
 
-        return render_template('sources.html', tables=table_info)
+        return render_template('source/sources.html', tables=table_info)
         
     except Exception as e:
         logger.error(f"Error loading sources: {e}")
         flash('Error loading sources. Please try again.', 'error')
-        return render_template('sources.html', tables=[])
+        return render_template('source/sources.html', tables=[])
 
 @app.route('/sources/<table_name>')
 @require_auth
@@ -5394,7 +5397,7 @@ def view_source_table(table_name):
         cursor.close()
         db_manager.return_connection(conn)
 
-        return render_template('source_table.html',
+        return render_template('source/source_table.html',
                              table_name=table_name,
                              records=records,
                              columns=columns,
@@ -5438,7 +5441,7 @@ def stats():
         # Get location breakdown  
         location_breakdown = db_manager.get_location_breakdown()
         
-        return render_template('stats.html',
+        return render_template('reports/stats.html',
                              source_stats=source_stats,
                              postgres_stats=postgres_stats,
                              integrity_check=integrity_check,
@@ -5775,12 +5778,12 @@ def source_access():
         with AccessDBManager(access_db_path) as access_db:
             db_info = access_db.get_database_info()
             
-        return render_template('source_access.html', 
+        return render_template('source/source_access.html', 
                              db_info=db_info,
                              page_title="Source (Access) Database")
     except Exception as e:
         flash(f'Error accessing Access database: {str(e)}', 'error')
-        return render_template('source_access.html', 
+        return render_template('source/source_access.html', 
                              db_info=None,
                              error=str(e),
                              page_title="Source (Access) Database")
@@ -5823,7 +5826,7 @@ def source_table_view(table_name):
                 'next_page': page + 1 if has_next else None
             }
             
-        return render_template('source_table_view.html',
+        return render_template('source/source_table_view.html',
                              table_name=table_name,
                              schema=schema,
                              data=data,
@@ -5909,7 +5912,7 @@ def generate_pcn():
     if not can_access_tool('generate_pcn'):
         flash('You do not have access to this tool.', 'danger')
         return redirect(url_for('index'))
-    return render_template('generate_pcn.html')
+    return render_template('pcn/generate_pcn.html')
 
 @app.route('/po-history')
 @require_auth
@@ -6010,7 +6013,7 @@ def po_history():
                 'pages': list(range(max(1, page - 2), min(total_pages + 1, page + 3)))
             }
 
-            return render_template('po_history.html',
+            return render_template('pcn/po_history.html',
                                  receipts=receipts,
                                  pagination=pagination,
                                  search_po=search_po,
@@ -6022,7 +6025,7 @@ def po_history():
     except Exception as e:
         logger.error(f"Error loading PO history: {e}")
         flash('Error loading PO history. Please try again.', 'error')
-        return render_template('po_history.html', receipts=[], pagination={'total': 0})
+        return render_template('pcn/po_history.html', receipts=[], pagination={'total': 0})
     finally:
         if conn:
             db_manager.return_connection(conn)
@@ -6118,13 +6121,13 @@ def pcn_history():
                 if result:
                     pcn_info = dict(result)
 
-            return render_template('pcn_history.html',
+            return render_template('pcn/pcn_history.html',
                                  transactions=transactions,
                                  pcn_info=pcn_info,
                                  search_pcn=search_pcn)
         else:
             # No PCN provided, just show the search form
-            return render_template('pcn_history.html',
+            return render_template('pcn/pcn_history.html',
                                  transactions=[],
                                  pcn_info=None,
                                  search_pcn='')
@@ -6132,7 +6135,7 @@ def pcn_history():
     except Exception as e:
         logger.error(f"Error loading PCN history: {e}")
         flash('Error loading PCN history. Please try again.', 'error')
-        return render_template('pcn_history.html', transactions=[], pcn_info=None, search_pcn=search_pcn)
+        return render_template('pcn/pcn_history.html', transactions=[], pcn_info=None, search_pcn=search_pcn)
     finally:
         if conn:
             db_manager.return_connection(conn)
@@ -6191,7 +6194,7 @@ def stock_alerts():
             'pages': list(range(max(1, page - 2), min(total_pages + 1, page + 3)))
         }
 
-        return render_template('stock_alerts.html',
+        return render_template('inventory/stock_alerts.html',
                              low_stock_items=low_stock_items,
                              low_stock_threshold=LOW_STOCK_THRESHOLD,
                              pagination=pagination,
@@ -6200,7 +6203,7 @@ def stock_alerts():
     except Exception as e:
         logger.error(f"Error loading stock alerts: {e}")
         flash('Error loading stock alerts. Please try again.', 'error')
-        return render_template('stock_alerts.html',
+        return render_template('inventory/stock_alerts.html',
                              low_stock_items=[],
                              low_stock_threshold=10,
                              pagination={'total': 0, 'page': 1, 'total_pages': 1, 'per_page': 25},
@@ -6892,7 +6895,7 @@ def print_label(pcn_number):
                 return "PCN not found", 404
 
             log_user_activity('PRINT_LABEL', f"Printed label for PCN {pcn_number}", f"Item: {pcn_data.get('item', '')}")
-            response = make_response(render_template('print_label.html', data=dict(pcn_data)))
+            response = make_response(render_template('pcn/print_label.html', data=dict(pcn_data)))
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
             response.headers['Pragma'] = 'no-cache'
             response.headers['Expires'] = '0'
@@ -7568,7 +7571,7 @@ def api_bom_load():
 @require_auth
 def inventory_history_page():
     """Inventory history page showing all changes"""
-    return render_template('history.html')
+    return render_template('reports/history.html')
 
 # Admin Login Notifications
 @app.route('/admin/notifications')
@@ -7689,7 +7692,7 @@ def admin_notifications():
             """)
         unseen_count = cursor.fetchone()['count']
 
-        return render_template('admin_notifications.html',
+        return render_template('admin/admin_notifications.html',
                              notifications=notifications,
                              unseen_count=unseen_count)
 
@@ -7847,12 +7850,12 @@ def jobs_list():
             """)
         jobs = cursor.fetchall()
 
-        return render_template('jobs.html', jobs=jobs, search_query=search_query)
+        return render_template('jobs/jobs.html', jobs=jobs, search_query=search_query)
 
     except Exception as e:
         logger.error(f"Error loading jobs list: {e}")
         flash('Error loading jobs. Please try again.', 'danger')
-        return render_template('jobs.html', jobs=[], search_query=search_query)
+        return render_template('jobs/jobs.html', jobs=[], search_query=search_query)
     finally:
         if conn:
             db_manager.return_connection(conn)
@@ -8035,7 +8038,7 @@ def job_detail(job_number):
         """, (job_number,))
         related_reports = cursor.fetchall()
 
-        return render_template('job_detail.html',
+        return render_template('jobs/job_detail.html',
                              job=job,
                              lines=job_lines,
                              shortage_count=shortage_count,
@@ -8654,7 +8657,7 @@ def admin_users():
                 ORDER BY id
             """)
             users = cursor.fetchall()
-        return render_template('user_management.html', users=users)
+        return render_template('admin/user_management.html', users=users)
     except Exception as e:
         logger.error(f"Error loading users: {e}")
         flash('Error loading users.', 'danger')
@@ -8846,11 +8849,11 @@ def handle_csrf_error(e):
 
 @app.errorhandler(404)
 def not_found_error(error):
-    return render_template('404.html'), 404
+    return render_template('errors/404.html'), 404
 
 @app.errorhandler(500)
 def internal_error(error):
-    return render_template('500.html'), 500
+    return render_template('errors/500.html'), 500
 
 # ==================== Location Management (All Users) ====================
 
@@ -8880,7 +8883,7 @@ def admin_locations():
             """)
             areas = [r['area'] for r in cursor.fetchall()]
 
-        return render_template('location_management.html', locations=locations, areas=areas)
+        return render_template('admin/location_management.html', locations=locations, areas=areas)
     except Exception as e:
         logger.error(f"Error loading locations: {e}")
         flash('Error loading locations.', 'danger')
@@ -8996,7 +8999,7 @@ def reel_change():
     if not can_use_reel_change():
         flash('Access denied. You do not have permission to access Reel Change.', 'danger')
         return redirect(url_for('index'))
-    response = make_response(render_template('reel_change.html'))
+    response = make_response(render_template('misc/reel_change.html'))
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return response
 
@@ -9330,7 +9333,7 @@ def aci_numbers():
     if not can_manage_parts():
         flash('Access denied. You do not have permission to access ACI Numbers.', 'danger')
         return redirect(url_for('index'))
-    response = make_response(render_template('aci_numbers.html'))
+    response = make_response(render_template('misc/aci_numbers.html'))
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     return response
 

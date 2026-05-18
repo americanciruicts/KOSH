@@ -1,0 +1,431 @@
+{% extends "base.html" %}
+
+{% block page_header %}
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-arrow-counterclockwise" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Restock Parts</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Return parts from MFG floor to Count Area</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <a href="{{ url_for('pcb_inventory') }}" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
+                <i class="bi bi-table"></i> View Inventory
+            </a>
+            <a href="{{ url_for('pick') }}" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
+                <i class="bi bi-dash-circle" style="color: white !important;"></i> Pick Parts
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Print label preview after successful restock -->
+    {% if request.args.get('restocked_pcn') %}
+    <div class="card border-success shadow mb-3" id="printLabelCard">
+        <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-check-circle-fill me-2"></i><strong>Restock Complete!</strong> PCN {{ request.args.get('restocked_pcn') }} — Print label below</span>
+            <button type="button" class="btn btn-sm btn-outline-light" onclick="document.getElementById('printLabelCard').remove(); document.getElementById('pcn').focus();">
+                <i class="bi bi-x-lg"></i> Close
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <iframe src="/print-label/{{ request.args.get('restocked_pcn') }}" style="width:100%; height:350px; border:none;"></iframe>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="row g-4">
+        <!-- Restock Form -->
+        <div class="col-xl-7">
+            <div class="card border-0 shadow-lg">
+                <div class="card-header border-0 pb-0">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div>
+                            <h4 class="text-success mb-1">
+                                <i class="bi bi-arrow-counterclockwise me-2"></i> Restock from MFG Floor
+                            </h4>
+                            <p class="text-muted small mb-0">Return parts to specified location after job completion</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body pt-4">
+                <form method="POST" id="restockForm">
+                    {{ form.hidden_tag() }}
+
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-success border-bottom pb-2 mb-3">
+                                <i class="bi bi-search me-2"></i> Identify Parts to Restock
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.pcn.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.pcn(class="form-control form-control-lg border-2", placeholder="Scan or type PCN") }}
+                                <small class="text-muted">Scan PCN barcode or type PCN number</small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.item.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.item(class="form-control form-control-lg border-2", placeholder="Auto-filled from PCN") }}
+                                <small class="text-muted">Auto-filled when PCN is entered</small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.po.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.po(class="form-control form-control-lg border-2", placeholder="Auto-filled", readonly="readonly") }}
+                                <small class="text-muted">Auto-filled from part lookup</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-success border-bottom pb-2 mb-3">
+                                <i class="bi bi-123 me-2"></i> Restock Quantity
+                            </h6>
+                        </div>
+                        <div class="col-md-12">
+                            <div class="mb-3">
+                                {{ form.quantity.label(class="form-label fw-semibold text-dark") }}
+                                {{ form.quantity(class="form-control form-control-lg border-2", placeholder="Enter quantity") }}
+                                <small class="text-muted">Auto-filled from MFG floor balance — change only if you're leaving some on the floor.</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <h6 class="text-success border-bottom pb-2 mb-3">
+                                <i class="bi bi-geo-alt-fill me-2"></i> Location Movement
+                            </h6>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.location_from.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    <span class="input-group-text bg-secondary text-white"><i class="bi bi-box-arrow-up-right"></i></span>
+                                    {{ form.location_from(class="form-control form-control-lg border-2 bg-light", readonly="readonly") }}
+                                </div>
+                                <small class="text-muted">Source location (fixed)</small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                {{ form.location_to.label(class="form-label fw-semibold text-dark") }}
+                                <div class="input-group">
+                                    <span class="input-group-text bg-success text-white"><i class="bi bi-geo-alt-fill"></i></span>
+                                    {{ form.location_to(class="form-control form-control-lg border-2 location-input", placeholder="e.g., 1101101", inputmode="numeric") }}
+                                </div>
+                                <small class="text-muted">7-digit location code</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12">
+                            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                                <button type="reset" class="btn btn-light btn-lg px-5">
+                                    <i class="bi bi-arrow-counterclockwise"></i> Clear
+                                </button>
+                                {{ form.submit(class="btn btn-success btn-lg px-5 shadow") }}
+                            </div>
+                        </div>
+                    </div>
+                </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Part Details Panel -->
+        <div class="col-xl-5">
+            <div class="card border-0 shadow-sm mb-4" id="partDetailsCard" style="display: none;">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i> Part Details</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row mb-2"><div class="col-6"><strong>PCN:</strong></div><div class="col-6 text-end" id="detail-pcn">-</div></div>
+                    <div class="row mb-2"><div class="col-6"><strong>Item:</strong></div><div class="col-6 text-end" id="detail-item">-</div></div>
+                    <div class="row mb-2"><div class="col-6"><strong>MPN:</strong></div><div class="col-6 text-end" id="detail-mpn">-</div></div>
+                    <div class="row mb-2"><div class="col-6"><strong>Date Code:</strong></div><div class="col-6 text-end" id="detail-dc">-</div></div>
+                    <div class="row mb-2 pb-2 border-bottom"><div class="col-6"><strong>Location:</strong></div><div class="col-6 text-end" id="detail-location">-</div></div>
+                    <div class="row mb-2 mt-3"><div class="col-6"><strong>On Hand:</strong></div><div class="col-6 text-end"><span class="badge bg-info" id="detail-onhand">0</span></div></div>
+                    <div class="row mb-2"><div class="col-6"><strong>MFG Qty:</strong></div><div class="col-6 text-end"><span class="badge bg-warning" id="detail-mfg">0</span></div></div>
+                    <div class="alert alert-danger mt-3 mb-0" id="already-restocked-warning" style="display: none;">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i><strong>Already Restocked!</strong> This PCN must be picked again before it can be restocked.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.form-control:focus { border-color: #10b981; box-shadow: 0 0 0 0.2rem rgba(16, 185, 129, 0.25); }
+.btn-success { background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); border: none; }
+.btn-success:hover { background: linear-gradient(135deg, #4c1d95 0%, #5b21b6 100%); }
+</style>
+
+<script>
+(function() {
+    var pcnEl = document.getElementById('pcn');
+    var itemEl = document.getElementById('item');
+    var poEl = document.getElementById('po');
+    var detailCard = document.getElementById('partDetailsCard');
+    var lastPcn = '';
+
+    // After successful restock: clear all fields
+    {% if request.args.get('restocked_pcn') %}
+    pcnEl.value = '';
+    itemEl.value = '';
+    poEl.value = '';
+    var _q = document.getElementById('quantity');
+    if (_q) { _q.value = ''; delete _q.dataset.autofilled; }
+    detailCard.style.display = 'none';
+    window.history.replaceState({}, '', '/restock');
+    {% endif %}
+
+    // Once the user types into the qty field, treat it as manual input.
+    // Subsequent PCN lookups will leave it alone unless the user clears it.
+    var _qtyEl = document.getElementById('quantity');
+    if (_qtyEl) {
+        _qtyEl.addEventListener('input', function() {
+            delete this.dataset.autofilled;
+        });
+    }
+
+    // Pre-submit confirmation. May 5 2026: PCN 45528 was restocked at qty 11
+    // when the user thought they entered 13 — silent browser autofill or a
+    // mis-typed digit. We now show the qty in big letters and require an
+    // explicit confirmation, so the value the user is about to commit is
+    // impossible to miss.
+    var _restockForm = document.getElementById('restockForm');
+    if (_restockForm) {
+        _restockForm.addEventListener('submit', function(e) {
+            // If we already confirmed, let the submit through.
+            if (this.dataset.confirmed === '1') return;
+
+            var qtyVal = (document.getElementById('quantity').value || '').trim();
+            var pcnVal = (document.getElementById('pcn').value || '').trim() || '(not set)';
+            var itemVal = (document.getElementById('item').value || '').trim() || '(not set)';
+            var mfgFloorTxt = (document.getElementById('detail-mfg').textContent || '0').replace(/[^0-9-]/g,'');
+            var mfgFloor = parseInt(mfgFloorTxt || '0', 10);
+            var qtyNum = parseInt(qtyVal, 10);
+
+            var msg = 'CONFIRM RESTOCK\n\n' +
+                'PCN: ' + pcnVal + '\n' +
+                'Item: ' + itemVal + '\n' +
+                'Quantity to restock: ' + qtyVal + '\n' +
+                'Currently on MFG floor: ' + (isNaN(mfgFloor) ? '?' : mfgFloor) + '\n\n' +
+                (isFinite(qtyNum) && isFinite(mfgFloor) && qtyNum < mfgFloor
+                    ? '⚠ You are restocking LESS than the floor balance — ' +
+                      (mfgFloor - qtyNum) + ' units will be left on MFG Floor.\n\n'
+                    : '') +
+                'Click OK to confirm, Cancel to fix the quantity.';
+
+            if (!window.confirm(msg)) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                return false;
+            }
+            this.dataset.confirmed = '1';
+        }, true);  // capture, run before the location-validation listener
+    }
+
+    // Always focus PCN field
+    pcnEl.focus();
+
+    // PCN lookup function
+    function lookupPcn(val) {
+        detailCard.style.display = 'block';
+        document.getElementById('detail-pcn').textContent = 'Loading...';
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', '/api/pcn/details/' + encodeURIComponent(val));
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status === 200) {
+                try {
+                    var data = JSON.parse(xhr.responseText);
+                    if (data.success) {
+                        var d = data;
+                        if (data.multiple && data.matches && data.matches.length > 0) {
+                            d = data.matches[0];
+                        }
+                        document.getElementById('detail-pcn').textContent = d.pcn_number || '-';
+                        document.getElementById('detail-item').textContent = d.part_number || '-';
+                        document.getElementById('detail-mpn').textContent = d.mpn || '-';
+                        document.getElementById('detail-dc').textContent = d.date_code || '-';
+                        document.getElementById('detail-location').textContent = d.location || '-';
+                        document.getElementById('detail-onhand').textContent = (d.quantity || 0).toLocaleString();
+                        document.getElementById('detail-mfg').textContent = (d.mfg_qty || 0).toLocaleString();
+                        detailCard.style.display = 'block';
+                        itemEl.value = d.part_number || '';
+                        poEl.value = d.po_number || '';
+
+                        // Quantity to restock must be entered manually — autofill
+                        // (previously prefilled from mfg_qty) caused wrong-qty
+                        // restocks because users restock less than was picked
+                        // when some units were consumed in production.
+
+                        // Check if already restocked
+                        var restockWarning = document.getElementById('already-restocked-warning');
+                        var submitBtn = document.getElementById('submit');
+                        var isRestocked = data.already_restocked;
+                        if (isRestocked) {
+                            restockWarning.style.display = 'block';
+                            if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '0.5'; }
+                        } else {
+                            restockWarning.style.display = 'none';
+                            if (submitBtn) { submitBtn.disabled = false; submitBtn.style.opacity = '1'; }
+                        }
+                    } else {
+                        detailCard.style.display = 'none';
+                    }
+                } catch(e) {
+                    detailCard.style.display = 'none';
+                }
+            } else {
+                detailCard.style.display = 'none';
+            }
+        };
+        xhr.send();
+    }
+
+    // Poll PCN field every 500ms — works regardless of how the value gets there
+    // (typed, scanned, pasted, autofilled — doesn't matter)
+    setInterval(function() {
+        var current = pcnEl.value.trim();
+        if (current !== lastPcn) {
+            lastPcn = current;
+            if (current.length >= 3) {
+                lookupPcn(current);
+            } else {
+                detailCard.style.display = 'none';
+                itemEl.value = '';
+                poEl.value = '';
+                document.getElementById('already-restocked-warning').style.display = 'none';
+                var submitBtn = document.getElementById('submit');
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.style.opacity = '1'; }
+            }
+        }
+    }, 500);
+
+    // Enter key in PCN field — prevent form submit, force lookup
+    pcnEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            lastPcn = '';  // force re-lookup
+        }
+    });
+
+    // ==================== LOCATION VALIDATION (7-digit + lookup) ====================
+    (function() {
+        const stdLocs = ['receiving area', 'rec area', 'count area', 'stock room', 'mfg floor'];
+        const form = document.getElementById('restockForm');
+        if (!form) return;
+        const submitBtn = form.querySelector('[type="submit"]');
+        const locInputs = Array.from(form.querySelectorAll('.location-input'));
+        if (!locInputs.length) return;
+
+        let validLocs = new Set();
+        let locsLoaded = false;
+
+        function ensureFeedback(input) {
+            const host = input.closest('.input-group') ? input.closest('.input-group').parentElement : input.parentElement;
+            let fb = host.querySelector('.location-error');
+            if (!fb) {
+                fb = document.createElement('div');
+                fb.className = 'location-error invalid-feedback d-block';
+                fb.style.display = 'none';
+                fb.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Wrong location — not found on Locations page.';
+                host.appendChild(fb);
+            }
+            return fb;
+        }
+
+        function isValid(input) {
+            const val = (input.value || '').trim();
+            if (!val) return !input.required;
+            if (stdLocs.includes(val.toLowerCase())) return true;
+            if (!/^\d{7}$/.test(val)) return false;
+            if (!locsLoaded) return true;
+            return validLocs.has(val);
+        }
+
+        function refresh() {
+            let allOk = true;
+            locInputs.forEach(function(input) {
+                if (input.readOnly || input.disabled) return; // skip fixed source field
+                const fb = ensureFeedback(input);
+                const ok = isValid(input);
+                if (!ok) {
+                    input.classList.add('is-invalid');
+                    fb.style.display = 'block';
+                    allOk = false;
+                } else {
+                    input.classList.remove('is-invalid');
+                    fb.style.display = 'none';
+                }
+            });
+            if (submitBtn) {
+                if (!allOk) {
+                    submitBtn.disabled = true;
+                    submitBtn.dataset.locDisabled = '1';
+                } else if (submitBtn.dataset.locDisabled === '1') {
+                    submitBtn.disabled = false;
+                    delete submitBtn.dataset.locDisabled;
+                }
+            }
+        }
+
+        locInputs.forEach(function(input) {
+            input.addEventListener('input', function() {
+                if (/^\d+$/.test(this.value) && this.value.length > 7) {
+                    this.value = this.value.slice(0, 7);
+                }
+                refresh();
+            });
+            input.addEventListener('blur', refresh);
+        });
+
+        form.addEventListener('submit', function(e) {
+            for (const input of locInputs) {
+                if (input.readOnly || input.disabled) continue;
+                if (!isValid(input)) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    refresh();
+                    input.focus();
+                    return false;
+                }
+            }
+        }, true);
+
+        fetch('/api/locations')
+            .then(function(r) { return r.json(); })
+            .then(function(j) {
+                if (j && j.success && Array.isArray(j.locations)) {
+                    j.locations.forEach(function(l) {
+                        if (l && l.location) validLocs.add(String(l.location).trim());
+                    });
+                }
+                locsLoaded = true;
+                refresh();
+            })
+            .catch(function() { refresh(); });
+
+        refresh();
+    })();
+})();
+</script>
+{% endblock %}
