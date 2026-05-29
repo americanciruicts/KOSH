@@ -370,7 +370,7 @@ def format_number_filter(value):
 DB_CONFIG = {
     'host': os.getenv('POSTGRES_HOST', 'aci-database'),
     'port': int(os.getenv('POSTGRES_PORT', 5432)),
-    'database': os.getenv('POSTGRES_DB', 'pcb_inventory'),
+    'database': os.getenv('POSTGRES_DB', 'kosh'),
     'user': os.getenv('POSTGRES_USER', 'stockpick_user'),
     'password': os.getenv('POSTGRES_PASSWORD', 'stockpick_pass')
 }
@@ -610,14 +610,25 @@ class DatabaseManager:
             raise
 
     def return_connection(self, conn):
-        """Return a connection to the pool or close it (serverless)."""
-        try:
-            if self.pool:
+        """Return a connection to the pool, or close it if it didn't come from
+        the pool. NEVER leak: a connection opened outside the pool (e.g. a raw
+        psycopg2.connect) makes pool.putconn raise 'trying to put unkeyed
+        connection'. The old code only logged that and dropped the connection
+        on the floor, exhausting the maxconn=15 pool over time and hanging the
+        app. Now any connection putconn rejects is closed directly."""
+        if conn is None:
+            return
+        if self.pool:
+            try:
                 self.pool.putconn(conn)
-            else:
-                conn.close()
+                return
+            except Exception as e:
+                # Not a pool connection (or pool closed) — close it so it can't leak.
+                logger.warning(f"Connection not returnable to pool, closing directly: {e}")
+        try:
+            conn.close()
         except Exception as e:
-            logger.error(f"Failed to return/close connection: {e}")
+            logger.error(f"Failed to close connection: {e}")
 
     def get_pool_stats(self):
         """Get connection pool statistics for monitoring."""
@@ -5258,17 +5269,12 @@ def sources():
         flash('Access denied: Super user privileges required', 'error')
         return redirect(url_for('dashboard'))
     
+    conn = None
     try:
-        # Get list of all migrated tables
-        conn = psycopg2.connect(
-            host='aci-database',
-            port=5432,
-            database='pcb_inventory',
-            user='stockpick_user',
-            password='stockpick_pass'
-        )
+        # Get list of all migrated tables (use the shared pool, not a raw connect)
+        conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+
         # Get all tables in the pcb_inventory schema
         cursor.execute("""
             SELECT table_name, 
@@ -5331,14 +5337,15 @@ def sources():
                 })
         
         cursor.close()
-        db_manager.return_connection(conn)
-
         return render_template('source/sources.html', tables=table_info)
-        
+
     except Exception as e:
         logger.error(f"Error loading sources: {e}")
         flash('Error loading sources. Please try again.', 'error')
         return render_template('source/sources.html', tables=[])
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
 
 @app.route('/sources/<table_name>')
 @require_auth
@@ -5354,16 +5361,11 @@ def view_source_table(table_name):
     page = request.args.get('page', 1, type=int)
     per_page = 25
     
+    conn = None
     try:
-        conn = psycopg2.connect(
-            host='aci-database',
-            port=5432,
-            database='pcb_inventory',
-            user='stockpick_user',
-            password='stockpick_pass'
-        )
+        conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
+
         # Get total count
         count_sql = f'SELECT COUNT(*) as count FROM pcb_inventory."{table_name}"'
         cursor.execute(count_sql)
@@ -5395,18 +5397,19 @@ def view_source_table(table_name):
         }
         
         cursor.close()
-        db_manager.return_connection(conn)
-
         return render_template('source/source_table.html',
                              table_name=table_name,
                              records=records,
                              columns=columns,
                              pagination=pagination)
-        
+
     except Exception as e:
         logger.error(f"Error viewing table {table_name}: {e}")
         flash('Error viewing table. Please try again.', 'error')
         return redirect(url_for('sources'))
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
 
 @app.route('/stats')
 @require_auth  

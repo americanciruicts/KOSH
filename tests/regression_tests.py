@@ -453,6 +453,108 @@ def _python_multisheet_parse(file_bytes):
     return merged
 
 
+def test_return_connection_never_leaks_foreign_connection():
+    """Bug shape (May 2026): /sources and /stats opened raw psycopg2.connect
+    connections, then handed them to db_manager.return_connection, which
+    called pool.putconn → 'trying to put unkeyed connection'. The old code
+    only logged that and dropped the connection — leaking it. After enough
+    page views the maxconn=15 pool was exhausted and the whole app hung.
+
+    Expected: return_connection CLOSES any connection putconn rejects, and the
+    pool keeps handing out connections (no exhaustion).
+    """
+    sys.path.insert(0, '/app')
+    from app import db_manager
+
+    # A connection NOT from the pool must be closed, not leaked, and must not raise.
+    foreign = psycopg2.connect(DB_URL)
+    assert foreign.closed == 0, 'sanity: freshly opened connection should be open'
+    db_manager.return_connection(foreign)
+    assert foreign.closed != 0, (
+        'foreign connection must be CLOSED by return_connection, not leaked'
+    )
+
+    # Pool connections must still round-trip many times without exhausting
+    # (15 = maxconn; loop past it to prove nothing leaks per cycle).
+    for _ in range(25):
+        c = db_manager.get_connection()
+        assert c is not None
+        db_manager.return_connection(c)
+
+
+def test_all_pages_render_without_server_error():
+    """Broad guard: every parameterless GET route must render WITHOUT a 500
+    for an authenticated admin. Catches template errors, broken queries, and
+    NameErrors across the whole app the moment they ship — so a change to any
+    page can't silently 500 in production.
+
+    Parameterized routes (/sources/<t>, /print-label/<pcn>) are exercised by
+    their own targeted tests since they need valid IDs. Side-effecting/auth
+    routes (logout, SSO callback) are excluded.
+    """
+    sys.path.insert(0, '/app')
+    import app as app_module
+
+    EXCLUDE = {'/logout', '/sso/callback'}
+    app_module.app.config['WTF_CSRF_ENABLED'] = False
+    client = app_module.app.test_client()
+    with client.session_transaction() as sess:
+        sess['user_id'] = 1
+        sess['username'] = 'regression@test.com'  # _final_cleanup wipes this user's rows
+        sess['role'] = 'Admin'  # capital A → is_admin_user() bypasses every tool gate
+
+    failures = []
+    checked = 0
+    for rule in app_module.app.url_map.iter_rules():
+        if 'GET' not in (rule.methods or set()):
+            continue
+        if rule.arguments:           # needs a path param — covered elsewhere
+            continue
+        path = str(rule.rule)
+        if path in EXCLUDE or path.startswith('/static'):
+            continue
+        try:
+            resp = client.get(path)
+            code = resp.status_code
+        except Exception as e:
+            failures.append(f'{path} raised {type(e).__name__}: {e}')
+            continue
+        checked += 1
+        if code >= 500:
+            failures.append(f'{path} -> HTTP {code}')
+
+    assert checked > 20, f'expected to smoke-test many pages, only hit {checked}'
+    assert not failures, (
+        f'{len(failures)} page(s) returned a server error:\n  ' +
+        '\n  '.join(failures)
+    )
+
+
+def test_quantity_fields_are_not_number_spinners():
+    """Bug shape (May 2026, PCN 41564): the restock qty was logged 1 short.
+    Root cause: WTForms IntegerField renders <input type=number>, which
+    silently decrements on a mouse-wheel tick while focused. Fix renders the
+    qty as type=text inputmode=numeric so wheel/arrows can't change it.
+
+    Guard: restock/stock/pick must NOT render quantity as a number spinner.
+    """
+    import re
+    base = os.path.join(os.path.dirname(__file__), '..', 'templates', 'inventory_ops')
+    for tpl in ('restock', 'stock', 'pick'):
+        path = os.path.join(base, f'{tpl}.html')
+        html = open(path).read()
+        m = re.search(r'form\.quantity\((?:[^()]|\([^()]*\))*\)', html)
+        assert m, f'{tpl}.html: form.quantity(...) render call not found'
+        call = m.group(0)
+        assert 'type="text"' in call, (
+            f'{tpl}.html: quantity must render type="text" (number inputs lose '
+            f'a unit to wheel scroll). Got: {call}'
+        )
+        assert 'inputmode="numeric"' in call, (
+            f'{tpl}.html: quantity must set inputmode="numeric" for mobile keypad'
+        )
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -466,6 +568,9 @@ TESTS = [
     test_purged_pcn_can_be_restocked_with_same_pcn,
     test_bom_load_inserts_every_item_received,
     test_bom_python_parser_finds_lines_across_sheets,
+    test_return_connection_never_leaks_foreign_connection,
+    test_quantity_fields_are_not_number_spinners,
+    test_all_pages_render_without_server_error,
 ]
 
 
