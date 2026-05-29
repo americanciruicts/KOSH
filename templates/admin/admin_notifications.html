@@ -221,17 +221,9 @@
         });
     }
 
-    // Auto-refresh every 60s so the page stays current without a manual reload.
-    // Skipped if a confirm()/prompt() is open or the tab is hidden — no point
-    // refreshing a backgrounded tab, and we don't want to interrupt a user
-    // who's in the middle of confirming "Clear Old".
-    (function() {
-        var REFRESH_MS = 60000;
-        setInterval(function() {
-            if (document.hidden) return;
-            location.reload();
-        }, REFRESH_MS);
-    })();
+    // Auto-refresh is now handled globally by the toggle in base.html
+    // (default 30s, pauses on input/modals). Bespoke reload removed to avoid
+    // double-refreshing.
 
     function clearOldNotifications() {
         if (!confirm('This will delete notifications older than 7 days. Continue?')) {

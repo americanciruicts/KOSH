@@ -41,5 +41,13 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5000/ || exit 1
 
-# Run the application
-CMD ["python", "app.py"]
+# Run the application under gunicorn (the Flask dev server served requests
+# largely one-at-a-time, so one slow query stalled every other user — the
+# main source of KOSH latency). ONE worker with 8 threads: real request
+# concurrency for this I/O-bound app, while keeping a single copy of the
+# module-level background reconcile loops and one connection pool.
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", \
+     "--workers", "1", "--threads", "8", "--worker-class", "gthread", \
+     "--timeout", "120", "--graceful-timeout", "30", \
+     "--access-logfile", "-", "--error-logfile", "-", \
+     "app:app"]

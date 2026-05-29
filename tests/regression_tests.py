@@ -482,6 +482,22 @@ def test_return_connection_never_leaks_foreign_connection():
         db_manager.return_connection(c)
 
 
+def test_app_served_by_gunicorn_not_dev_server():
+    """Perf guard: the container must run gunicorn, not Flask's single-request
+    dev server (`python app.py`). The dev server served requests one-at-a-time,
+    so one slow query stalled every other user — the main KOSH latency cause.
+    """
+    dockerfile = os.path.join(os.path.dirname(__file__), '..', 'Dockerfile.webapp')
+    text = open(dockerfile).read()
+    # Find the runtime CMD line.
+    cmd_lines = [l for l in text.splitlines() if l.strip().startswith('CMD')]
+    joined = ' '.join(cmd_lines) + text  # be lenient about multi-line CMD
+    assert 'gunicorn' in joined, 'Dockerfile.webapp CMD must launch gunicorn'
+    assert '"python", "app.py"' not in joined and "'python', 'app.py'" not in joined, (
+        'Dockerfile must NOT run the Flask dev server (python app.py)'
+    )
+
+
 def test_all_pages_render_without_server_error():
     """Broad guard: every parameterless GET route must render WITHOUT a 500
     for an authenticated admin. Catches template errors, broken queries, and
@@ -579,6 +595,7 @@ TESTS = [
     test_bom_python_parser_finds_lines_across_sheets,
     test_return_connection_never_leaks_foreign_connection,
     test_quantity_fields_are_not_number_spinners,
+    test_app_served_by_gunicorn_not_dev_server,
     test_all_pages_render_without_server_error,
 ]
 

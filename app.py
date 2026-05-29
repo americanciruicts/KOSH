@@ -56,6 +56,11 @@ app.config['CACHE_TYPE'] = 'simple'  # In-memory cache
 app.config['CACHE_DEFAULT_TIMEOUT'] = 300  # 5 minutes default
 cache = Cache(app)
 
+# Let browsers cache static assets (CSS/JS/images) for a week so they aren't
+# re-fetched over the tunnel on every page load. Cache-busting is handled by
+# the ?v={{ cache_version }} query string, which changes on each restart.
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 604800  # 7 days
+
 # Enable gzip compression for all responses
 app.config['COMPRESS_MIMETYPES'] = [
     'text/html', 'text/css', 'text/xml', 'application/json',
@@ -591,7 +596,7 @@ class DatabaseManager:
         try:
             self.pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=2,
-                maxconn=15,
+                maxconn=20,  # headroom for 8 gunicorn threads + background sync loops
                 **self.db_config
             )
             logger.info(f"Database connection pool initialized (primary)")

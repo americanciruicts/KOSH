@@ -866,5 +866,95 @@
         }
     }, { passive: false });
     </script>
+
+    <!-- Global auto-refresh: a single toggle on EVERY page (default ON, 30s).
+         It NEVER refreshes while the user is filling a form (a field is focused
+         or any input has been changed) or while a modal is open, so data-entry
+         pages can't lose typed input. Preference + interval persist per browser.
+         (Note: auto-refresh keeps the screen current; it does not reduce server
+         latency — the gunicorn switch does that.) -->
+    {% if session.get('user_id') %}
+    <div id="koshAutoRefresh" style="position:fixed; bottom:24px; right:24px; z-index:9999;
+         display:flex; align-items:center; gap:8px; background:rgba(91,33,182,0.92); color:#fff;
+         padding:8px 14px; border-radius:999px; font-size:13px; font-weight:600;
+         box-shadow:0 4px 14px rgba(0,0,0,0.2); cursor:pointer; user-select:none;"
+         title="Click to turn auto-refresh on/off">
+        <i id="koshAutoRefreshIcon" class="bi bi-arrow-clockwise"></i>
+        <span id="koshAutoRefreshLabel">Auto-refresh</span>
+    </div>
+    <script>
+    (function() {
+        var INTERVAL = 30;                 // seconds
+        var KEY = 'kosh_autorefresh_enabled';
+        var SCROLL_KEY = 'kosh_scroll_' + location.pathname;
+        var ctrl  = document.getElementById('koshAutoRefresh');
+        var label = document.getElementById('koshAutoRefreshLabel');
+        var icon  = document.getElementById('koshAutoRefreshIcon');
+        if (!ctrl) return;
+
+        // Default ON unless the user previously turned it off.
+        var enabled = localStorage.getItem(KEY);
+        enabled = (enabled === null) ? true : (enabled === '1');
+
+        // Restore scroll position after an auto-refresh.
+        try {
+            var sp = sessionStorage.getItem(SCROLL_KEY);
+            if (sp !== null) { window.scrollTo(0, parseInt(sp, 10)); sessionStorage.removeItem(SCROLL_KEY); }
+        } catch (e) {}
+
+        // Track whether the user has started entering data on this page.
+        var dirty = false;
+        document.addEventListener('input', function(e) {
+            var t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) dirty = true;
+        }, true);
+        // A submit navigates away anyway; clear the flag so it doesn't block.
+        document.addEventListener('submit', function() { dirty = false; }, true);
+
+        function inputFocused() {
+            var a = document.activeElement;
+            return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT');
+        }
+        function modalOpen() { return !!document.querySelector('.modal.show, .modal.in'); }
+        // Hold the refresh whenever interrupting it would be disruptive.
+        function shouldHold() {
+            return dirty || inputFocused() || modalOpen() || document.hidden;
+        }
+
+        var countdown = INTERVAL;
+        function render() {
+            if (enabled) {
+                ctrl.style.opacity = '1';
+                icon.className = 'bi bi-arrow-clockwise';
+                label.textContent = shouldHold() ? 'Auto-refresh: paused' : ('Auto-refresh: ' + countdown + 's');
+            } else {
+                ctrl.style.opacity = '0.55';
+                icon.className = 'bi bi-pause-circle';
+                label.textContent = 'Auto-refresh: off';
+            }
+        }
+        function tick() {
+            if (!enabled) { render(); return; }
+            if (shouldHold()) { countdown = INTERVAL; render(); return; }  // don't count down mid-entry
+            countdown--;
+            if (countdown <= 0) {
+                try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (e) {}
+                var sep = location.search ? '&' : '?';
+                location.href = location.pathname + location.search + sep + '_ar=' + Date.now();
+                return;
+            }
+            render();
+        }
+        ctrl.addEventListener('click', function() {
+            enabled = !enabled;
+            localStorage.setItem(KEY, enabled ? '1' : '0');
+            countdown = INTERVAL;
+            render();
+        });
+        render();
+        setInterval(tick, 1000);
+    })();
+    </script>
+    {% endif %}
 </body>
 </html>

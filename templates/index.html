@@ -890,38 +890,9 @@ document.addEventListener('DOMContentLoaded', function() {
         return new bootstrap.Tooltip(tooltipTriggerEl);
     });
 
-    // Auto-reload dashboard every 60 seconds for real-time updates (hard refresh)
-    let autoReloadInterval = setInterval(function() {
-        // Save scroll position
-        const scrollPos = window.scrollY;
-        sessionStorage.setItem('dashboardScrollPos', scrollPos);
-
-        // Hard reload - bypass cache to get all latest changes
-        window.location.href = window.location.pathname + '?_t=' + Date.now();
-    }, 60000); // 60 seconds
-
-    // Restore scroll position after reload
-    window.addEventListener('load', function() {
-        const savedScrollPos = sessionStorage.getItem('dashboardScrollPos');
-        if (savedScrollPos) {
-            window.scrollTo(0, parseInt(savedScrollPos));
-            sessionStorage.removeItem('dashboardScrollPos');
-        }
-    });
-
-    // Show auto-reload indicator
-    const reloadIndicator = document.createElement('div');
-    reloadIndicator.style.cssText = 'position: fixed; bottom: 100px; right: 30px; background: rgba(16, 185, 129, 0.9); color: white; padding: 10px 20px; border-radius: 50px; font-size: 13px; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 9999; display: flex; align-items: center; gap: 8px;';
-    reloadIndicator.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Auto-refresh: 60s';
-    document.body.appendChild(reloadIndicator);
-
-    // Countdown timer
-    let countdown = 60;
-    setInterval(function() {
-        countdown--;
-        if (countdown <= 0) countdown = 60;
-        reloadIndicator.innerHTML = `<i class="bi bi-arrow-clockwise"></i> Auto-refresh: ${countdown}s`;
-    }, 1000);
+    // Auto-refresh is now handled globally for every page by the toggle in
+    // base.html (default 30s, pauses while a form is being filled). The
+    // dashboard's old bespoke 60s reload was removed to avoid double-refreshing.
 });
 </script>
 {% endblock %}
