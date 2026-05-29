@@ -610,25 +610,49 @@ class DatabaseManager:
             raise
 
     def return_connection(self, conn):
-        """Return a connection to the pool, or close it if it didn't come from
-        the pool. NEVER leak: a connection opened outside the pool (e.g. a raw
-        psycopg2.connect) makes pool.putconn raise 'trying to put unkeyed
-        connection'. The old code only logged that and dropped the connection
-        on the floor, exhausting the maxconn=15 pool over time and hanging the
-        app. Now any connection putconn rejects is closed directly."""
+        """Return a connection without ever leaking OR closing a live one.
+
+        Three cases, distinguished by the pool's own bookkeeping:
+          * checked-out pool connection (id in _rused) -> putconn (normal).
+          * already-returned pool connection (in _pool) -> do NOTHING. A
+            double-return must not close it: the pool may have already handed
+            that physical connection to another caller, and closing it caused
+            'connection already closed' errors elsewhere.
+          * foreign connection (raw psycopg2.connect, tracked by neither) ->
+            close it, so it can't leak and exhaust the maxconn=15 pool (the
+            old bug that hung the app).
+        """
         if conn is None:
             return
-        if self.pool:
+        pool = self.pool
+        if pool is None:
+            # Serverless mode: connections are created on demand — just close.
             try:
-                self.pool.putconn(conn)
-                return
+                conn.close()
             except Exception as e:
-                # Not a pool connection (or pool closed) — close it so it can't leak.
-                logger.warning(f"Connection not returnable to pool, closing directly: {e}")
+                logger.error(f"Failed to close connection: {e}")
+            return
+
+        # Decide under the pool lock so the view of _rused/_pool is consistent.
+        action = 'put'
         try:
-            conn.close()
+            with pool._lock:
+                if id(conn) in pool._rused:
+                    action = 'put'
+                elif conn in pool._pool:
+                    action = 'skip'   # already back in the pool — leave it alone
+                else:
+                    action = 'close'  # foreign connection — close so it can't leak
+        except Exception:
+            action = 'put'  # safest default if internals are unavailable
+        try:
+            if action == 'put':
+                pool.putconn(conn)
+            elif action == 'close':
+                conn.close()
+            # 'skip' -> intentionally do nothing
         except Exception as e:
-            logger.error(f"Failed to close connection: {e}")
+            logger.warning(f"return_connection ({action}) failed: {e}")
 
     def get_pool_stats(self):
         """Get connection pool statistics for monitoring."""
@@ -4084,147 +4108,10 @@ def get_part_details():
 @app.route('/pcb-inventory')
 @require_auth
 def pcb_inventory():
-    """PCB Inventory listing page with pagination and advanced filters."""
-    if not can_access_tool('pcb_inventory'):
-        flash('You do not have access to this tool.', 'danger')
-        return redirect(url_for('index'))
-    # Get search and pagination parameters
-    search_job = request.args.get('job', '').strip()
-    search_pcb_type = request.args.get('pcb_type', '').strip()
-    search_location = request.args.get('location', '').strip()
-    search_pcn = request.args.get('pcn', '').strip()
-    search_date_from = request.args.get('date_from', '').strip()
-    search_date_to = request.args.get('date_to', '').strip()
-    search_min_qty = request.args.get('min_qty', '').strip()
-    search_max_qty = request.args.get('max_qty', '').strip()
-
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 10, type=int)
-    sort_by = request.args.get('sort', 'job')
-    sort_order = request.args.get('order', 'asc')
-
-    # Limit per_page to reasonable values
-    per_page = min(max(per_page, 10), 200)
-
-    user_role = session.get('role', 'USER')
-    itar_auth = session.get('itar_authorized', False)
-
-    try:
-        # Get all inventory first
-        inventory_data = db_manager.get_current_inventory(user_role, itar_auth)
-
-        # Build the locations dropdown from the unfiltered set BEFORE filtering
-        # mutates inventory_data. Previously we re-fetched the whole inventory
-        # again later just to derive this list — even with the 60s cache, that
-        # was a wasted call (and a real DB hit on every cache miss).
-        locations = sorted({
-            item.get('location') for item in inventory_data if item.get('location')
-        })
-
-        # Apply filters
-        if search_job:
-            # Support comma-separated job numbers
-            job_list = [j.strip() for j in search_job.split(',') if j.strip()]
-            inventory_data = [item for item in inventory_data if item.get('job') in job_list]
-
-        if search_pcb_type:
-            inventory_data = [item for item in inventory_data if item.get('pcb_type') == search_pcb_type]
-
-        if search_location:
-            inventory_data = [item for item in inventory_data if item.get('location') == search_location]
-
-        if search_pcn:
-            inventory_data = [item for item in inventory_data if item.get('pcn') and search_pcn.lower() in item.get('pcn', '').lower()]
-
-        # Date range filter
-        if search_date_from:
-            from datetime import datetime
-            date_from = datetime.strptime(search_date_from, '%Y-%m-%d')
-            inventory_data = [item for item in inventory_data
-                            if item.get('updated_at') and item.get('updated_at').replace(tzinfo=None) >= date_from]
-
-        if search_date_to:
-            from datetime import datetime
-            date_to = datetime.strptime(search_date_to, '%Y-%m-%d')
-            date_to = date_to.replace(hour=23, minute=59, second=59)
-            inventory_data = [item for item in inventory_data
-                            if item.get('updated_at') and item.get('updated_at').replace(tzinfo=None) <= date_to]
-
-        # Quantity range filter
-        if search_min_qty:
-            try:
-                min_qty = int(search_min_qty)
-                inventory_data = [item for item in inventory_data if (item.get('qty') or 0) >= min_qty]
-            except ValueError:
-                pass
-
-        if search_max_qty:
-            try:
-                max_qty = int(search_max_qty)
-                inventory_data = [item for item in inventory_data if (item.get('qty') or 0) <= max_qty]
-            except ValueError:
-                pass
-
-        # Sort the data - handle None values properly
-        reverse_sort = sort_order == 'desc'
-        if sort_by == 'job':
-            inventory_data.sort(key=lambda x: (x.get('job') or ''), reverse=reverse_sort)
-        elif sort_by == 'pcb_type':
-            inventory_data.sort(key=lambda x: (x.get('pcb_type') or ''), reverse=reverse_sort)
-        elif sort_by == 'qty':
-            inventory_data.sort(key=lambda x: (x.get('qty') or 0), reverse=reverse_sort)
-        elif sort_by == 'location':
-            inventory_data.sort(key=lambda x: (x.get('location') or ''), reverse=reverse_sort)
-        elif sort_by == 'updated_at':
-            inventory_data.sort(key=lambda x: (x.get('updated_at') or ''), reverse=reverse_sort)
-
-        # locations was computed above from the unfiltered inventory.
-
-        # Calculate pagination
-        total_items = len(inventory_data)
-        total_pages = (total_items + per_page - 1) // per_page
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-
-        paginated_inventory = inventory_data[start_idx:end_idx]
-
-        # Calculate pagination info
-        pagination = {
-            'page': page,
-            'per_page': per_page,
-            'total': total_items,
-            'total_pages': total_pages,
-            'has_prev': page > 1,
-            'has_next': page < total_pages,
-            'prev_num': page - 1 if page > 1 else None,
-            'next_num': page + 1 if page < total_pages else None,
-            'pages': list(range(max(1, page - 2), min(total_pages + 1, page + 3)))
-        }
-
-        return render_template('inventory/inventory.html',
-                             inventory=paginated_inventory,
-                             pagination=pagination,
-                             pcb_types=PCB_TYPES,
-                             locations=locations,
-                             search_job=search_job,
-                             search_pcb_type=search_pcb_type,
-                             search_location=search_location,
-                             search_pcn=search_pcn,
-                             search_date_from=search_date_from,
-                             search_date_to=search_date_to,
-                             search_min_qty=search_min_qty,
-                             search_max_qty=search_max_qty,
-                             sort_by=sort_by,
-                             sort_order=sort_order)
-    except Exception as e:
-        import traceback
-        logger.error(f"Error loading inventory: {e}")
-        logger.error(traceback.format_exc())
-        flash('Error loading inventory. Please try again.', 'error')
-        return render_template('inventory/inventory.html', inventory=[], pagination={'total': 0},
-                             pcb_types=PCB_TYPES, locations=[], search_job='', search_pcb_type='',
-                             search_location='', search_pcn='', search_date_from='', search_date_to='',
-                             search_min_qty='', search_max_qty='', sort_by='job', sort_order='asc')
+    """REMOVED (May 2026): the PCB Inventory page was retired and its nav tab
+    removed — Warehouse Inventory is now the single inventory view. Kept as a
+    permanent redirect so old bookmarks/links don't 404."""
+    return redirect(url_for('warehouse_inventory'))
 
 @app.route('/warehouse-inventory')
 @require_auth
@@ -5267,7 +5154,7 @@ def sources():
     # Only super users can access sources
     if user_role != 'ADMIN':
         flash('Access denied: Super user privileges required', 'error')
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('index'))
     
     conn = None
     try:
@@ -5356,7 +5243,7 @@ def view_source_table(table_name):
     # Only super users can access sources
     if user_role != 'ADMIN':
         flash('Access denied: Super user privileges required', 'error')
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('index'))
     
     page = request.args.get('page', 1, type=int)
     per_page = 25
@@ -5718,6 +5605,10 @@ def api_expiration_check():
         pcb_type = request.args.get('pcb_type', 'Bare')
         msd = request.args.get('msd')
 
+        # Missing date code is a client error, not a server crash.
+        if not dc:
+            return jsonify({'success': False, 'error': "Query parameter 'dc' is required"}), 400
+
         expiration_info = expiration_manager.calculate_expiration_status(dc, pcb_type, msd)
 
         return jsonify({
@@ -5858,10 +5749,13 @@ def api_source_tables():
         
         with AccessDBManager(access_db_path) as access_db:
             tables = access_db.get_table_list()
-            
+
         return jsonify({'success': True, 'data': tables})
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+        # Legacy Access-migration browser; the .mdb / mdb-tools may be absent.
+        # Degrade gracefully instead of returning a 500.
+        logger.warning(f"api_source_tables unavailable: {e}")
+        return jsonify({'success': False, 'error': 'Source table list unavailable', 'data': []}), 200
 
 @app.route('/api/source/table-data/<table_name>')
 def api_source_table_data(table_name):
@@ -7132,6 +7026,13 @@ def api_inventory_history():
         cur.close()
         return jsonify({'success': True, 'data': history, 'total': len(history)})
 
+    except psycopg2.errors.UndefinedTable:
+        # The v_inventory_full_history view was never created in this DB.
+        # Degrade gracefully (empty history) instead of crashing the endpoint.
+        if conn:
+            conn.rollback()
+        logger.warning("api_inventory_history: view pcb_inventory.v_inventory_full_history is absent; returning empty history")
+        return jsonify({'success': True, 'data': [], 'total': 0, 'note': 'history view unavailable'})
     except Exception as e:
         logger.error(f"Error fetching inventory history: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500

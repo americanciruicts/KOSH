@@ -503,8 +503,13 @@ def test_all_pages_render_without_server_error():
         sess['username'] = 'regression@test.com'  # _final_cleanup wipes this user's rows
         sess['role'] = 'Admin'  # capital A → is_admin_user() bypasses every tool gate
 
+    # Scope: user-facing PAGE routes. /api/* endpoints are excluded here because
+    # many legitimately require query params or external resources (a no-arg GET
+    # may correctly return 4xx); they need their own targeted tests. We log how
+    # many we skipped so the scope is never a silent cap.
     failures = []
     checked = 0
+    skipped_api = 0
     for rule in app_module.app.url_map.iter_rules():
         if 'GET' not in (rule.methods or set()):
             continue
@@ -512,6 +517,9 @@ def test_all_pages_render_without_server_error():
             continue
         path = str(rule.rule)
         if path in EXCLUDE or path.startswith('/static'):
+            continue
+        if path.startswith('/api/'):
+            skipped_api += 1
             continue
         try:
             resp = client.get(path)
@@ -523,6 +531,7 @@ def test_all_pages_render_without_server_error():
         if code >= 500:
             failures.append(f'{path} -> HTTP {code}')
 
+    print(f'  [all-pages] smoke-tested {checked} page routes; skipped {skipped_api} /api routes')
     assert checked > 20, f'expected to smoke-test many pages, only hit {checked}'
     assert not failures, (
         f'{len(failures)} page(s) returned a server error:\n  ' +

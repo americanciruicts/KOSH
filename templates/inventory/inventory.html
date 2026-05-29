@@ -79,7 +79,7 @@
             <i class="bi bi-funnel text-primary"></i>
             <h5 class="mb-0">Advanced Filters</h5>
         </div>
-        <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('filterForm').reset(); window.location.href='{{ url_for('pcb_inventory') }}'">
+        <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('filterForm').reset(); window.location.href='{{ url_for('warehouse_inventory') }}'">
             <i class="bi bi-arrow-clockwise me-1"></i> Reset
         </button>
     </div>
@@ -143,7 +143,7 @@
                 <button type="submit" class="btn btn-primary me-2">
                     <i class="bi bi-search"></i> Search
                 </button>
-                <a href="{{ url_for('pcb_inventory') }}" class="btn btn-outline-secondary">
+                <a href="{{ url_for('warehouse_inventory') }}" class="btn btn-outline-secondary">
                     <i class="bi bi-x-circle"></i> Clear
                 </a>
             </div>
@@ -390,7 +390,7 @@
                 {% if search_job or search_pcb_type %}
                     <p class="text-muted">
                         Try adjusting your search criteria or 
-                        <a href="{{ url_for('pcb_inventory') }}">view all items</a>
+                        <a href="{{ url_for('warehouse_inventory') }}">view all items</a>
                     </p>
                 {% else %}
                     <p class="text-muted">Get started by stocking your first PCB</p>

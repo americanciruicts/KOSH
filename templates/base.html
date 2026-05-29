@@ -169,33 +169,11 @@
                         </ul>
                     </li>
                     {% endif %}
-                    {% if can_access_tool('warehouse_inventory') and not can_access_tool('pcb_inventory') %}
+                    {% if can_access_tool('warehouse_inventory') %}
                     <li class="nav-item">
                         <a class="modern-nav-link {% if request.endpoint == 'warehouse_inventory' %}active{% endif %}" href="{{ url_for('warehouse_inventory') }}">
                             <i class="bi bi-building"></i> Warehouse Inventory
                         </a>
-                    </li>
-                    {% elif can_access_tool('pcb_inventory') or can_access_tool('warehouse_inventory') %}
-                    <li class="nav-item dropdown">
-                        <a class="modern-nav-link dropdown-toggle {% if request.endpoint in ['pcb_inventory', 'warehouse_inventory'] %}active{% endif %}" href="#" id="inventoryDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                            <i class="bi bi-grid-3x3-gap-fill"></i> Inventory
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-dark" aria-labelledby="inventoryDropdown">
-                            {% if can_access_tool('pcb_inventory') %}
-                            <li>
-                                <a class="dropdown-item {% if request.endpoint == 'pcb_inventory' %}active{% endif %}" href="{{ url_for('pcb_inventory') }}">
-                                    <i class="bi bi-cpu-fill me-2"></i> PCB Inventory
-                                </a>
-                            </li>
-                            {% endif %}
-                            {% if can_access_tool('warehouse_inventory') %}
-                            <li>
-                                <a class="dropdown-item {% if request.endpoint == 'warehouse_inventory' %}active{% endif %}" href="{{ url_for('warehouse_inventory') }}">
-                                    <i class="bi bi-building me-2"></i> Warehouse Inventory
-                                </a>
-                            </li>
-                            {% endif %}
-                        </ul>
                     </li>
                     {% endif %}
                     {% if can_access_tool('print_label') %}
