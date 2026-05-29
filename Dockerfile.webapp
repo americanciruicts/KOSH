@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Copy the .mdb file
-COPY ["INVENTORY TABLE.mdb", "/app/INVENTORY TABLE.mdb"]
+COPY ["backups/INVENTORY TABLE.mdb", "/app/INVENTORY TABLE.mdb"]
 
 # Create logs directory
 RUN mkdir -p /app/logs

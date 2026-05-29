@@ -874,5 +874,19 @@
     });
     </script>
     <script src="{{ url_for('static', filename='js/print-label.js') }}?v={{ cache_version }}"></script>
+    <script>
+    // Global guard: a focused <input type="number"> silently decrements on a
+    // mouse-wheel scroll. On the restock page this turned an entered qty of 10
+    // into 9 (Theresa's recurring "it subtracts one piece" report, PCN 41564) —
+    // the user scrolled to the submit button with the qty field still focused
+    // and lost a unit. Block wheel-driven changes on all number inputs while
+    // focused (mouse can still scroll the page once the field loses focus).
+    document.addEventListener('wheel', function(e) {
+        var el = e.target;
+        if (el && el.tagName === 'INPUT' && el.type === 'number' && el === document.activeElement) {
+            e.preventDefault();
+        }
+    }, { passive: false });
+    </script>
 </body>
 </html>

@@ -1,0 +1,572 @@
+{% extends "base.html" %}
+{% block title %}Jobs - KOSH{% endblock %}
+
+{% block extra_css %}
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<!-- Shared parser, also exercised by tests/test_bom_parser.js -->
+<script src="{{ url_for('static', filename='js/bom_parser.js') }}?v=8.0"></script>
+<script>
+var BACKEND_URL = '';
+{% if config.get('KOSH_BACKEND_URL') %}
+if (window.location.hostname.indexOf('vercel.app') >= 0) {
+    BACKEND_URL = '{{ config.get("KOSH_BACKEND_URL", "") }}';
+}
+{% endif %}
+</script>
+{% endblock %}
+
+{% block page_header %}
+<div style="background: linear-gradient(135deg, #5b21b6 0%, #8b5cf6 100%); color: white; border-radius: 12px; padding: 20px 25px; margin: 0 0 20px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 50px; height: 50px; background: rgba(255,255,255,0.15); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0;">
+                <i class="bi bi-briefcase-fill" style="color: white !important;"></i>
+            </div>
+            <div>
+                <h2 class="mb-0" style="font-size: 1.6rem; font-weight: 600; color: white !important;">Jobs</h2>
+                <p class="mb-0" style="color: rgba(255,255,255,0.85) !important; font-size: 0.9rem;">Manage jobs, view BOM line items, and track pick/shortage status</p>
+            </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-shrink: 0;">
+            <span class="badge px-3 py-2" style="background: rgba(255,255,255,0.2); color: white !important; font-size: 0.9rem; font-weight: 700;">{{ jobs|length }} Jobs</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Action Bar -->
+<div class="row mb-3">
+    <!-- Find a Job (left) -->
+    <div class="col-md-6">
+        <div class="card border-success" style="border-width: 2px;">
+            <div class="card-body py-2 px-3">
+                <div class="d-flex align-items-center">
+                    <i class="bi bi-search text-success fs-5 me-2"></i>
+                    <strong class="me-3 text-nowrap">Find a Job</strong>
+                    <form method="GET" action="{{ url_for('jobs_list') }}" class="flex-grow-1">
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control" name="q" placeholder="Job #, customer, description..."
+                                   value="{{ search_query }}" autocomplete="off">
+                            <button class="btn btn-success" type="submit"><i class="bi bi-search"></i></button>
+                            {% if search_query %}
+                            <a href="{{ url_for('jobs_list') }}" class="btn btn-outline-secondary" title="Clear"><i class="bi bi-x-lg"></i></a>
+                            {% endif %}
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Create New Job (right) -->
+    <div class="col-md-6">
+        <div class="card border-primary" style="border-width: 2px;">
+            <div class="card-body py-2 px-3">
+                <div class="d-flex align-items-center">
+                    <i class="bi bi-plus-circle-fill text-primary fs-5 me-2"></i>
+                    <strong class="me-3 text-nowrap">Create New Job</strong>
+                    <form id="bomUploadForm" class="flex-grow-1">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="input-group input-group-sm">
+                            <input type="file" class="form-control" id="bomFile" name="file" accept=".xlsx,.xls" required>
+                            <button type="submit" class="btn btn-primary" id="uploadBtn">
+                                <i class="bi bi-upload me-1"></i>Upload
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                <div id="statusMsg" class="alert alert-sm mt-2 mb-0 py-1 px-2" style="display: none; font-size: 0.85rem;"></div>
+                <button type="button" class="btn btn-outline-secondary btn-sm mt-1" id="bomResetBtn" style="display:none; font-size: 0.8rem;">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>Start Over
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- BOM Preview (shown after parse) -->
+<div id="previewSection" style="display: none;" class="mb-4">
+    <div class="card border-info" style="border-width: 2px;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-eye me-2"></i>BOM Preview</h5>
+            <button class="btn btn-sm btn-success" id="loadBtn">
+                <i class="bi bi-database-add me-1"></i>Load to Database
+            </button>
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col-md-3"><strong>Job Number:</strong><br><span id="metaJob" class="text-primary fs-5">-</span></div>
+                <div class="col-md-3"><strong>Customer:</strong><br><span id="metaCustomer">-</span></div>
+                <div class="col-md-3"><strong>Customer P/N:</strong><br><span id="metaCustPN">-</span></div>
+                <div class="col-md-3"><strong>Order Qty:</strong><br><span id="metaBuildQty" class="text-success fw-bold">-</span></div>
+            </div>
+            <div class="row mb-3">
+                <div class="col-md-3"><strong>Job Rev:</strong><br><span id="metaJobRev">-</span></div>
+                <div class="col-md-3"><strong>Cust Rev:</strong><br><span id="metaCustRev">-</span></div>
+                <div class="col-md-3"><strong>Last Rev Date:</strong><br><span id="metaLastRev">-</span></div>
+                <div class="col-md-3"><strong>WO Number:</strong><br><span id="metaWONumber">-</span></div>
+            </div>
+            <div class="row mb-3" id="notesRow" style="display: none;">
+                <div class="col-12"><strong>Notes:</strong><br><span id="metaNotes" class="text-muted small">-</span></div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Line</th>
+                            <th>Description</th>
+                            <th>Manufacturer</th>
+                            <th>MPN</th>
+                            <th>ACI P/N</th>
+                            <th>Qty</th>
+                            <th>POU</th>
+                            <th>Location</th>
+                            <th>Cost</th>
+                            <th>Job</th>
+                            <th>Job Rev</th>
+                            <th>Last Rev</th>
+                            <th>Customer</th>
+                            <th>Cust P/N</th>
+                            <th>Cust Rev</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bomTableBody"></tbody>
+                </table>
+            </div>
+            <p class="text-muted mt-2 mb-0">Total Items: <span id="itemCount" class="fw-bold">0</span></p>
+        </div>
+    </div>
+</div>
+
+<!-- Job Exists Modal -->
+<div class="modal fade" id="jobExistsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Job Already Exists</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Job <strong id="existingJobNumber"></strong> already exists in the system.</p>
+                <div class="mb-2">
+                    <small class="text-muted">Status: <span id="existingJobStatus" class="badge bg-primary"></span></small><br>
+                    <small class="text-muted">Customer: <span id="existingJobCustomer"></span></small>
+                </div>
+                <p>Would you like to <strong>reload the BOM</strong> (replace existing data) or <strong>view the job</strong>?</p>
+            </div>
+            <div class="modal-footer">
+                <a id="viewJobLink" href="#" class="btn btn-primary">
+                    <i class="bi bi-eye me-1"></i>View Job
+                </a>
+                <button type="button" class="btn btn-warning" data-bs-dismiss="modal">
+                    <i class="bi bi-arrow-repeat me-1"></i>Reload BOM
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Jobs List -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>
+            {% if search_query %}
+            Search Results for "{{ search_query }}" ({{ jobs|length }})
+            {% else %}
+            All Jobs ({{ jobs|length }})
+            {% endif %}
+        </h5>
+    </div>
+    <div class="card-body p-0">
+        {% if jobs %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Job #</th>
+                        <th>Customer</th>
+                        <th>Customer P/N</th>
+                        <th class="text-center">Build QTY</th>
+                        <th>Rev</th>
+                        <th class="text-center">Status</th>
+                        <th>Created</th>
+                        <th style="width: 130px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in jobs %}
+                    <tr>
+                        <td>
+                            <a href="{{ url_for('job_detail', job_number=job.job_number) }}" class="fw-bold text-decoration-none">
+                                {{ job.job_number }}
+                            </a>
+                        </td>
+                        <td>{{ job.customer or '-' }}</td>
+                        <td><small>{{ job.cust_pn or '-' }}</small></td>
+                        <td class="text-center">
+                            <strong>{{ job.build_qty or 1 }}</strong>
+                        </td>
+                        <td><small>{{ job.job_rev or '-' }}</small></td>
+                        <td class="text-center">
+                            {% if job.status == 'In Mfg' %}
+                            <span class="badge bg-success">In Mfg</span>
+                            {% elif job.status == 'In Prep' %}
+                            <span class="badge bg-warning text-dark">In Prep</span>
+                            {% else %}
+                            <span class="badge bg-primary">New</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <small class="text-muted">
+                                {{ job.created_at.strftime('%m/%d/%Y') if job.created_at else '-' }}
+                            </small>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('job_detail', job_number=job.job_number) }}"
+                                   class="btn btn-outline-primary" title="View">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                                <button type="button" class="btn btn-outline-success" title="Export Excel"
+                                        onclick="downloadFile('{{ url_for('job_export', job_number=job.job_number) }}', 'Job_{{ job.job_number }}.xlsx')">
+                                    <i class="bi bi-file-earmark-excel"></i>
+                                </button>
+                                <button type="button" class="btn btn-outline-danger"
+                                        onclick="deleteJob('{{ job.job_number }}')" title="Delete">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-briefcase display-1 text-muted"></i>
+            {% if search_query %}
+            <h4 class="mt-3 text-muted">No Jobs Found</h4>
+            <p class="text-muted">No jobs match "{{ search_query }}". <a href="{{ url_for('jobs_list') }}">View all jobs</a></p>
+            {% else %}
+            <h4 class="mt-3 text-muted">No Jobs Yet</h4>
+            <p class="text-muted">Click <strong>Create New Job</strong> in the Jobs menu to upload a BOM and create your first job.</p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Delete Job</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete job <strong id="deleteJobNumber"></strong>?</p>
+                <p class="text-muted small">This removes the job record only. BOM data will remain.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form id="deleteForm" method="POST" style="display: inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger">Delete Job</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Delete job
+    function deleteJob(jobNumber) {
+        document.getElementById('deleteJobNumber').textContent = jobNumber;
+        document.getElementById('deleteForm').action = '/jobs/' + jobNumber + '/delete';
+        const modal = new bootstrap.Modal(document.getElementById('deleteModal'));
+        modal.show();
+    }
+
+    // ==================== BOM Loader Logic ====================
+    let parsedBomData = null;
+
+    function wireBomHandlers() {
+        if (typeof XLSX === 'undefined') {
+            showStatus('SheetJS library failed to load. Hard refresh (Ctrl+Shift+R).', 'danger');
+            return;
+        }
+        const bomUploadForm = document.getElementById('bomUploadForm');
+        const loadBtn = document.getElementById('loadBtn');
+        const bomResetBtn = document.getElementById('bomResetBtn');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileInput = document.getElementById('bomFile');
+
+        function startParse() {
+            // Synthesize a submit-like event so we reuse the existing handler body.
+            if (bomUploadForm) bomUploadForm.dispatchEvent(new Event('submit', { cancelable: true }));
+        }
+        if (uploadBtn) {
+            uploadBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                startParse();
+            });
+        }
+        if (fileInput) {
+            fileInput.addEventListener('change', function() {
+                const sm = document.getElementById('statusMsg');
+                if (sm) { sm.style.display = 'none'; }
+            });
+        }
+
+        bomUploadForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const fileInput = document.getElementById('bomFile');
+            const uploadBtn = document.getElementById('uploadBtn');
+            const previewSection = document.getElementById('previewSection');
+
+            if (!fileInput.files[0]) {
+                showStatus('Please select a file', 'danger');
+                return;
+            }
+
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Processing...';
+            if (previewSection) previewSection.style.display = 'none';
+
+            // Client-side Excel parsing via the shared module
+            // (static/js/bom_parser.js — exercised by tests/test_bom_parser.js).
+            var file = fileInput.files[0];
+            var reader = new FileReader();
+            reader.onload = function(ev) {
+                try {
+                    var data = new Uint8Array(ev.target.result);
+                    var workbook = XLSX.read(data, { type: 'array', cellDates: true });
+
+                    if (typeof KoshBomParser === 'undefined') {
+                        showStatus('Parser failed to load. Hard refresh (Ctrl+Shift+R).', 'danger');
+                        uploadBtn.disabled = false;
+                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
+                        return;
+                    }
+
+                    var parsed = KoshBomParser.parseWorkbook(workbook, XLSX);
+                    var bomItems = parsed.bom_items;
+                    var metadata = parsed.metadata;
+
+                    if (bomItems.length === 0) {
+                        showStatus('No BOM items found. Sheets seen: ' + workbook.SheetNames.join(', ') + '. Detected headers (BOM to Load): ' + (parsed.headers_norm || []).join(' | '), 'danger');
+                        uploadBtn.disabled = false;
+                        uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
+                        return;
+                    }
+
+                    var result = {
+                        success: true,
+                        metadata: metadata,
+                        bom_items: bomItems,
+                        total_items: bomItems.length
+                    };
+
+                    parsedBomData = result;
+                    displayPreview(result);
+                    bomResetBtn.style.display = 'inline-block';
+
+                    // Check if job exists
+                    var jobNum = result.metadata.job;
+                    if (jobNum) {
+                        var csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                        fetch(BACKEND_URL + '/api/bom/job-check/' + encodeURIComponent(jobNum), {
+                            headers: { 'X-CSRFToken': csrfToken },
+                            credentials: BACKEND_URL ? 'include' : 'same-origin'
+                        })
+                        .then(function(resp) { return resp.json(); })
+                        .then(function(checkResult) {
+                            if (checkResult.exists) {
+                                document.getElementById('existingJobNumber').textContent = jobNum;
+                                document.getElementById('existingJobStatus').textContent = checkResult.job.status || 'New';
+                                document.getElementById('existingJobCustomer').textContent = checkResult.job.customer || '-';
+                                document.getElementById('viewJobLink').href = '/jobs/' + encodeURIComponent(jobNum);
+                                var modal = new bootstrap.Modal(document.getElementById('jobExistsModal'));
+                                modal.show();
+                            }
+                        })
+                        .catch(function(e) { console.warn('Job check failed (non-critical):', e); });
+                    }
+
+                    // Upload button must NOT look like its idle state — turn it
+                    // green and tell the user explicitly what to do next.
+                    uploadBtn.classList.remove('btn-primary');
+                    uploadBtn.classList.add('btn-success');
+                    uploadBtn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Parsed ' + bomItems.length + ' items — scroll down, click Load to Database';
+                    uploadBtn.disabled = true;
+                    showStatus('SUCCESS — parsed ' + bomItems.length + ' items for Job ' + (metadata.job || '(unknown)') + '. Scroll down and click the green "Load to Database" button to save.', 'success');
+
+                    // Pulse the green Load button so it's impossible to miss.
+                    var lbn = document.getElementById('loadBtn');
+                    if (lbn) {
+                        lbn.style.transition = 'box-shadow 0.6s ease-in-out';
+                        var pulses = 0;
+                        var pulseTimer = setInterval(function() {
+                            lbn.style.boxShadow = pulses % 2 === 0
+                                ? '0 0 0 12px rgba(25,135,84,0.0)'
+                                : '0 0 0 6px rgba(25,135,84,0.7)';
+                            pulses += 1;
+                            if (pulses > 8) { clearInterval(pulseTimer); lbn.style.boxShadow = ''; }
+                        }, 500);
+                    }
+
+                } catch (ex) {
+                    showStatus('Failed to parse Excel: ' + ex.message, 'danger');
+                    resetBomForm();
+                }
+            };
+            reader.onerror = function() {
+                showStatus('Failed to read file', 'danger');
+                uploadBtn.disabled = false;
+                uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        loadBtn.addEventListener('click', async function() {
+            if (!parsedBomData) {
+                showStatus('No data to load. Please upload a BOM file first.', 'danger');
+                return;
+            }
+
+            if (!confirm(`Load BOM for Job ${parsedBomData.metadata.job}?\n\nThis will DELETE existing BOM records for this job.`)) {
+                return;
+            }
+
+            loadBtn.disabled = true;
+            loadBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Loading...';
+
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+            try {
+                const response = await fetch(BACKEND_URL + '/api/bom/load', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    credentials: BACKEND_URL ? 'include' : 'same-origin',
+                    body: JSON.stringify(parsedBomData)
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || `Server error: ${response.status}`);
+                }
+
+                if (result.success) {
+                    showStatus(`Success! Loaded ${result.inserted_count} items for Job ${result.job}.`, 'success');
+                    setTimeout(() => {
+                        window.location.href = `/jobs/${encodeURIComponent(result.job)}`;
+                    }, 1500);
+                } else {
+                    showStatus('Load failed: ' + result.error, 'danger');
+                    loadBtn.disabled = false;
+                    loadBtn.innerHTML = '<i class="bi bi-database-add me-1"></i>Load to Database';
+                }
+            } catch (error) {
+                showStatus('Load failed: ' + error.message, 'danger');
+                loadBtn.disabled = false;
+                loadBtn.innerHTML = '<i class="bi bi-database-add me-1"></i>Load to Database';
+            }
+        });
+
+        bomResetBtn.addEventListener('click', resetBomForm);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', wireBomHandlers);
+    } else {
+        wireBomHandlers();
+    }
+
+    function displayPreview(data) {
+        const { metadata, bom_items } = data;
+
+        document.getElementById('metaJob').textContent = metadata.job || '-';
+        document.getElementById('metaJobRev').textContent = metadata.job_rev || '-';
+        document.getElementById('metaCustomer').textContent = metadata.customer || '-';
+        document.getElementById('metaCustPN').textContent = metadata.cust_pn || '-';
+        document.getElementById('metaBuildQty').textContent = metadata.build_qty || '-';
+        document.getElementById('metaCustRev').textContent = metadata.cust_rev || '-';
+        document.getElementById('metaLastRev').textContent = metadata.last_rev || '-';
+        document.getElementById('metaWONumber').textContent = metadata.wo_number || '-';
+
+        if (metadata.notes) {
+            document.getElementById('metaNotes').textContent = metadata.notes;
+            document.getElementById('notesRow').style.display = 'block';
+        } else {
+            document.getElementById('notesRow').style.display = 'none';
+        }
+
+        document.getElementById('itemCount').textContent = bom_items.length;
+
+        const tbody = document.getElementById('bomTableBody');
+        tbody.innerHTML = '';
+        bom_items.forEach(item => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${item.line}</td>
+                <td>${item.desc || ''}</td>
+                <td>${item.man || ''}</td>
+                <td class="font-monospace">${item.mpn || ''}</td>
+                <td>${item.aci_pn || ''}</td>
+                <td class="text-end">${item.qty || 0}</td>
+                <td>${item.pou || ''}</td>
+                <td>${item.loc || ''}</td>
+                <td class="text-end">${item.cost ? '$' + Number(item.cost).toFixed(2) : '$0.00'}</td>
+                <td>${item.job || ''}</td>
+                <td>${item.job_rev || ''}</td>
+                <td>${item.last_rev || ''}</td>
+                <td>${item.cust || ''}</td>
+                <td>${item.cust_pn || ''}</td>
+                <td>${item.cust_rev || ''}</td>
+            `;
+            tbody.appendChild(row);
+        });
+
+        document.getElementById('previewSection').style.display = 'block';
+        document.getElementById('previewSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function resetBomForm() {
+        parsedBomData = null;
+        const fileInput = document.getElementById('bomFile');
+        if (fileInput) fileInput.value = '';
+        const previewSection = document.getElementById('previewSection');
+        if (previewSection) previewSection.style.display = 'none';
+        const uploadBtn = document.getElementById('uploadBtn');
+        if (uploadBtn) {
+            uploadBtn.disabled = false;
+            uploadBtn.classList.remove('btn-success');
+            uploadBtn.classList.add('btn-primary');
+            uploadBtn.innerHTML = '<i class="bi bi-upload me-1"></i>Upload';
+        }
+        const loadBtn = document.getElementById('loadBtn');
+        if (loadBtn) { loadBtn.disabled = false; loadBtn.style.boxShadow = ''; loadBtn.innerHTML = '<i class="bi bi-database-add me-1"></i>Load to Database'; }
+        const bomResetBtn = document.getElementById('bomResetBtn');
+        if (bomResetBtn) bomResetBtn.style.display = 'none';
+        const statusMsg = document.getElementById('statusMsg');
+        if (statusMsg) statusMsg.style.display = 'none';
+    }
+
+    function showStatus(message, type) {
+        const statusMsg = document.getElementById('statusMsg');
+        if (!statusMsg) return;
+        statusMsg.className = `alert alert-${type} mt-2 mb-0`;
+        statusMsg.textContent = message;
+        statusMsg.style.display = 'block';
+    }
+</script>
+{% endblock %}

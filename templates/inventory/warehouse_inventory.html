@@ -342,12 +342,12 @@
                         <div class="col-md-6">
                             <label for="edit_loc_from" class="form-label edit-label">Location From</label>
                             <input type="text" class="form-control edit-input location-edit-input" id="edit_loc_from" placeholder="e.g., 1101101">
-                            <small class="text-muted">7-digit code or standard location</small>
+                            <small class="text-muted">7- or 8-digit code or standard location</small>
                         </div>
                         <div class="col-md-6">
                             <label for="edit_location" class="form-label edit-label">Location To</label>
                             <input type="text" class="form-control edit-input location-edit-input" id="edit_location" placeholder="e.g., 1101101">
-                            <small class="text-muted">7-digit code or standard location</small>
+                            <small class="text-muted">7- or 8-digit code or standard location</small>
                         </div>
                         <div class="col-md-4">
                             <label for="edit_msd" class="form-label edit-label">MSD Level</label>
@@ -783,15 +783,15 @@ function isValidLocation(val) {
     val = val.trim();
     const stdLocs = ['receiving area', 'rec area', 'count area', 'stock room', 'mfg floor'];
     if (stdLocs.includes(val.toLowerCase())) return true;
-    return /^\d{7}$/.test(val);
+    return /^\d{7,8}$/.test(val);
 }
 
-// Enforce 7-digit max on location edit inputs
+// Enforce 8-digit max on location edit inputs (7 or 8 allowed)
 document.querySelectorAll('.location-edit-input').forEach(function(input) {
     input.addEventListener('input', function() {
         let val = this.value;
-        if (/^\d+$/.test(val) && val.length > 7) {
-            this.value = val.slice(0, 7);
+        if (/^\d+$/.test(val) && val.length > 8) {
+            this.value = val.slice(0, 8);
         }
     });
 });
@@ -803,11 +803,11 @@ function saveEdit() {
     const locFrom = document.getElementById('edit_loc_from').value;
     const locTo = document.getElementById('edit_location').value;
     if (!isValidLocation(locFrom)) {
-        alert('Location From must be exactly 7 digits (e.g. 1101101) or a standard location.');
+        alert('Location From must be 7 or 8 digits (e.g. 1101101) or a standard location.');
         return;
     }
     if (!isValidLocation(locTo)) {
-        alert('Location To must be exactly 7 digits (e.g. 1101101) or a standard location.');
+        alert('Location To must be 7 or 8 digits (e.g. 1101101) or a standard location.');
         return;
     }
 

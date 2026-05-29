@@ -1,1 +1,6 @@
 .vercel
+
+# Large build-time data (kept on disk for Docker build; not needed in git/Vercel)
+backups/
+samples/
+reelChange/

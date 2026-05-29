@@ -147,15 +147,15 @@ def validate_quantity(quantity: Any) -> tuple[bool, int]:
         return (False, 0)
 
 def validate_location(location: str) -> bool:
-    """Validate location format - must be exactly 7 digits or a standard text location."""
+    """Validate location format - must be 7 or 8 digits or a standard text location."""
     if not location:
         return False
     location = location.strip()
     standard_locations = ['Receiving Area', 'Rec Area', 'Count Area', 'Stock Room', 'MFG Floor']
     if location.lower() in [loc.lower() for loc in standard_locations]:
         return True
-    # Must be exactly 7 digits
-    return bool(re.match(r'^\d{7}$', location))
+    # Must be 7 or 8 digits
+    return bool(re.match(r'^\d{7,8}$', location))
 
 def validate_api_request(required_fields: list):
     """Decorator to validate API request data."""
@@ -506,14 +506,14 @@ def validate_pcb_type_field(form, field):
 STANDARD_LOCATIONS = ['Receiving Area', 'Rec Area', 'Count Area', 'Stock Room', 'MFG Floor']
 
 def validate_location_field(form, field):
-    """Custom validator: location must be exactly 7 digits or a standard text location."""
+    """Custom validator: location must be 7 or 8 digits or a standard text location."""
     if not field.data or not field.data.strip():
         return  # Let Optional/DataRequired handle empty
     location = field.data.strip()
     if location.lower() in [loc.lower() for loc in STANDARD_LOCATIONS]:
         return
-    if not re.match(r'^\d{7}$', location):
-        raise ValidationError('Location must be exactly 7 digits (e.g. 1101101) or a standard location.')
+    if not re.match(r'^\d{7,8}$', location):
+        raise ValidationError('Location must be 7 or 8 digits (e.g. 1101101) or a standard location.')
 
 class StockForm(FlaskForm):
     """Form for stocking electronic parts."""
@@ -659,7 +659,7 @@ class DatabaseManager:
 
     def validate_location(self, location: str) -> bool:
         """Check if a location exists in tblLoc table or is a valid text location.
-        Location must be exactly 7 digits or a standard text location."""
+        Location must be 7 or 8 digits or a standard text location."""
         if not location or location.strip() == '':
             return False
 
@@ -677,8 +677,8 @@ class DatabaseManager:
         if location.lower() in [loc.lower() for loc in standard_locations]:
             return True
 
-        # Must be exactly 7 digits
-        if not re.match(r'^\d{7}$', location):
+        # Must be 7 or 8 digits
+        if not re.match(r'^\d{7,8}$', location):
             return False
 
         # Check if location exists in tblLoc
@@ -696,9 +696,9 @@ class DatabaseManager:
             if count > 0:
                 return True
 
-            # Auto-register new 7-digit location so stock/restock isn't blocked
+            # Auto-register new 7- or 8-digit location so stock/restock isn't blocked
             # when the location hasn't been pre-created on the locations page.
-            # Derive area/shelf/loc from the digits: area=1, shelf=2-3, loc=4-7.
+            # Derive area/shelf/loc from the digits: area=1, shelf=2-3, loc=4+ (rest).
             try:
                 area_val = int(location[0])
                 shelf_val = location[1:3]
@@ -4571,7 +4571,7 @@ def update_warehouse_item():
                 except (ValueError, TypeError):
                     return None
 
-            # Validate location fields - must be 7 digits or standard location
+            # Validate location fields - must be 7 or 8 digits or standard location
             loc_from_val = data.get('loc_from', '').strip() if data.get('loc_from') else ''
             loc_to_val = data.get('loc_to', '').strip() if data.get('loc_to') else ''
 
@@ -4585,10 +4585,10 @@ def update_warehouse_item():
                 loc_to_val = ''
 
             if loc_to_val and not validate_location(loc_to_val):
-                return jsonify({'success': False, 'message': 'Location To must be exactly 7 digits (e.g. 1101101) or a standard location.'}), 400
+                return jsonify({'success': False, 'message': 'Location To must be 7 or 8 digits (e.g. 1101101) or a standard location.'}), 400
 
             if loc_from_val and not validate_location(loc_from_val):
-                return jsonify({'success': False, 'message': 'Location From must be exactly 7 digits (e.g. 1101101) or a standard location.'}), 400
+                return jsonify({'success': False, 'message': 'Location From must be 7 or 8 digits (e.g. 1101101) or a standard location.'}), 400
 
             # Validate quantities are not negative
             onhand_qty = to_int_or_none(data.get('onhandqty'))
@@ -8906,9 +8906,9 @@ def admin_create_location():
     shelf = request.form.get('shelf', '').strip()
     loc = request.form.get('loc', '').strip()
 
-    # Validate: must be exactly 7 digits
-    if not re.match(r'^\d{7}$', location):
-        flash('Location must be exactly 7 digits.', 'danger')
+    # Validate: must be 7 or 8 digits
+    if not re.match(r'^\d{7,8}$', location):
+        flash('Location must be 7 or 8 digits.', 'danger')
         return redirect(url_for('admin_locations'))
 
     conn = None

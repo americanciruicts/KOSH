@@ -97,8 +97,8 @@
                         <div class="col-md-12">
                             <div class="mb-3">
                                 {{ form.quantity.label(class="form-label fw-semibold text-dark") }}
-                                {{ form.quantity(class="form-control form-control-lg border-2", placeholder="Enter quantity") }}
-                                <small class="text-muted">Auto-filled from MFG floor balance — change only if you're leaving some on the floor.</small>
+                                {{ form.quantity(class="form-control form-control-lg border-2", placeholder="Enter quantity", type="text", inputmode="numeric", pattern="[0-9]*", autocomplete="off") }}
+                                <small class="text-muted">Enter the quantity you are restocking. Leave less than the floor balance only if some units were consumed in production.</small>
                             </div>
                         </div>
                     </div>
@@ -126,7 +126,7 @@
                                     <span class="input-group-text bg-success text-white"><i class="bi bi-geo-alt-fill"></i></span>
                                     {{ form.location_to(class="form-control form-control-lg border-2 location-input", placeholder="e.g., 1101101", inputmode="numeric") }}
                                 </div>
-                                <small class="text-muted">7-digit location code</small>
+                                <small class="text-muted">7- or 8-digit location code</small>
                             </div>
                         </div>
                     </div>
@@ -328,7 +328,7 @@
         }
     });
 
-    // ==================== LOCATION VALIDATION (7-digit + lookup) ====================
+    // ==================== LOCATION VALIDATION (7- or 8-digit + lookup) ====================
     (function() {
         const stdLocs = ['receiving area', 'rec area', 'count area', 'stock room', 'mfg floor'];
         const form = document.getElementById('restockForm');
@@ -357,7 +357,7 @@
             const val = (input.value || '').trim();
             if (!val) return !input.required;
             if (stdLocs.includes(val.toLowerCase())) return true;
-            if (!/^\d{7}$/.test(val)) return false;
+            if (!/^\d{7,8}$/.test(val)) return false;
             if (!locsLoaded) return true;
             return validLocs.has(val);
         }
@@ -390,8 +390,8 @@
 
         locInputs.forEach(function(input) {
             input.addEventListener('input', function() {
-                if (/^\d+$/.test(this.value) && this.value.length > 7) {
-                    this.value = this.value.slice(0, 7);
+                if (/^\d+$/.test(this.value) && this.value.length > 8) {
+                    this.value = this.value.slice(0, 8);
                 }
                 refresh();
             });
