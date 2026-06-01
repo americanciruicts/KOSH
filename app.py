@@ -3210,6 +3210,8 @@ def _do_log_activity(user_id, username, full_name, action_type, description, det
         try:
             cache.delete('notif_count_global')
             cache.delete('notif_count_theresa')
+            cache.delete('notif_page_global')
+            cache.delete('notif_page_theresa')
         except Exception:
             pass
     except Exception as e:
@@ -7560,6 +7562,22 @@ def admin_notifications():
         flash('Access denied.', 'danger')
         return redirect(url_for('index'))
 
+    # Cache the rendered notifications dataset per cohort for 30s. This page
+    # auto-refreshes via a full reload every 30s, and the correlation query
+    # below (activity log x transactions, timestamp parsing, closest-match) is
+    # the heaviest in the app. Caching per cohort lets a reload reuse a recent
+    # result instead of recomputing the whole join every cycle. It's invalidated
+    # on new activity / mark-seen / clear so the user still sees fresh data right
+    # after acting. Cohorts: admins+Kris share one view; Theresa has a
+    # james-only view, so the cache key must split on scope.
+    theresa_scope = is_theresa and not is_admin_user()
+    page_cache_key = 'notif_page_theresa' if theresa_scope else 'notif_page_global'
+    cached_page = cache.get(page_cache_key)
+    if cached_page is not None:
+        return render_template('admin/admin_notifications.html',
+                             notifications=cached_page['notifications'],
+                             unseen_count=cached_page['unseen_count'])
+
     conn = None
     try:
         conn = db_manager.get_connection()
@@ -7576,7 +7594,7 @@ def admin_notifications():
         # taking multi-seconds. Now: parse ts once in a `txn` CTE pre-filtered
         # to the activity-log window, then DISTINCT ON to pick the closest
         # match per log row. ~10–50× faster on the same data.
-        base_where = "WHERE username = 'james@americancircuits.com'" if (is_theresa and not is_admin_user()) else ""
+        base_where = "WHERE username = 'james@americancircuits.com'" if theresa_scope else ""
         cursor.execute(f"""
             WITH log AS (
                 SELECT id, user_id, username, full_name, action_type,
@@ -7654,9 +7672,10 @@ def admin_notifications():
             LEFT JOIN matched m ON m.log_id = l.id
             ORDER BY l.created_at DESC
         """)
-        notifications = cursor.fetchall()
+        # Plain dicts so the result is safely reusable from the cache.
+        notifications = [dict(row) for row in cursor.fetchall()]
 
-        if is_theresa and not is_admin_user():
+        if theresa_scope:
             cursor.execute("""
                 SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog"
                 WHERE seen = FALSE AND username = 'james@americancircuits.com'
@@ -7666,6 +7685,10 @@ def admin_notifications():
                 SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
             """)
         unseen_count = cursor.fetchone()['count']
+
+        cache.set(page_cache_key,
+                  {'notifications': notifications, 'unseen_count': unseen_count},
+                  timeout=30)
 
         return render_template('admin/admin_notifications.html',
                              notifications=notifications,
@@ -7698,10 +7721,12 @@ def mark_notifications_seen():
         """)
         conn.commit()
 
-        # Invalidate cached count so the badge clears immediately for the
-        # next page load instead of waiting up to 30s for the cache TTL.
+        # Invalidate cached count + page so the badge clears and the list shows
+        # everything as seen immediately, instead of waiting up to 30s for TTL.
         cache.delete('notif_count_global')
         cache.delete('notif_count_theresa')
+        cache.delete('notif_page_global')
+        cache.delete('notif_page_theresa')
 
         return jsonify({'success': True, 'message': 'All notifications marked as seen'})
 
@@ -7732,6 +7757,10 @@ def clear_notifications():
         """)
         deleted_count = cursor.rowcount
         conn.commit()
+
+        # Old rows removed — drop the cached list so it reflects the deletion.
+        cache.delete('notif_page_global')
+        cache.delete('notif_page_theresa')
 
         return jsonify({'success': True, 'message': f'Cleared {deleted_count} old notifications'})
 
