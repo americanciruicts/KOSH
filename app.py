@@ -309,7 +309,10 @@ def moment_fromnow_filter(dt):
             try:
                 dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
             except (ValueError, TypeError) as e:
-                logger.warning(f"Failed to parse timestamp: {dt}, error: {e}")
+                # Legacy migrated rows can carry non-timestamp text (e.g. a bare
+                # number like '63') in tran_time; the UI degrades to "Unknown".
+                # This is expected data noise, not an error — keep it at debug.
+                logger.debug(f"Failed to parse timestamp: {dt}, error: {e}")
                 return "Unknown"
 
     now = datetime.now()
@@ -2527,6 +2530,9 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to get PO history: {e}")
             return []
+        finally:
+            if conn:
+                self.return_connection(conn)
 
     def get_po_history_count(self, filters: Dict[str, Any] = None) -> int:
         """Get total count of PO history records with optional filters."""
@@ -3267,6 +3273,7 @@ def health_check():
 @app.route('/health/database')
 def database_health_check():
     """Detailed database health check endpoint."""
+    conn = None
     try:
         conn = db_manager.get_connection()
         cursor = conn.cursor()
@@ -3280,6 +3287,7 @@ def database_health_check():
 
         cursor.close()
         db_manager.return_connection(conn)
+        conn = None
 
         pool_stats = db_manager.get_pool_stats()
 
@@ -3300,6 +3308,9 @@ def database_health_check():
             'error': str(e),
             'timestamp': datetime.now().isoformat()
         }), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
 
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("50 per minute", methods=["POST"])  # Only rate-limit actual login attempts
@@ -4401,6 +4412,7 @@ def get_locations():
     if cached is not None:
         return jsonify(cached)
 
+    conn = None
     try:
         conn = db_manager.get_connection()
         cursor = conn.cursor()
@@ -4411,7 +4423,6 @@ def get_locations():
         """)
         rows = cursor.fetchall()
         cursor.close()
-        db_manager.return_connection(conn)
 
         locations = [{'location': r[0], 'area': r[1], 'shelf': r[2], 'loc': r[3]} for r in rows]
         payload = {'success': True, 'locations': locations, 'count': len(locations)}
@@ -4420,6 +4431,9 @@ def get_locations():
     except Exception as e:
         logger.error(f"Error fetching locations: {e}")
         return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        if conn:
+            db_manager.return_connection(conn)
 
 @app.route('/api/warehouse-inventory/update', methods=['POST'])
 @require_auth
@@ -4737,6 +4751,9 @@ def shortage_report():
 @require_auth
 def generate_shortage_report():
     """Generate a new shortage report for a job."""
+    if not can_access_tool('shortage_report'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     job = request.form.get('job', '').strip()
     report_name = request.form.get('report_name', '').strip()
     notes = request.form.get('notes', '').strip()
@@ -4857,14 +4874,23 @@ def generate_shortage_report():
                 shortage_count += 1
                 report_items.append(item)
 
-        # Calculate costs
-        total_cost = sum(
-            float(item['qty'] or 0) * float(item['unit_cost'] or 0)
-            for item in report_items
-        )
+        # Total cost = required cost of the WHOLE BOM (req x unit_cost), counted
+        # once per BOM line. matched_items can repeat a line across PCNs, so we
+        # dedupe on aci_pn (falling back to line) to avoid double-counting.
+        seen_lines = set()
+        total_cost = 0.0
+        for item in matched_items:
+            key = item['aci_pn'] or item['line_no']
+            if key in seen_lines:
+                continue
+            seen_lines.add(key)
+            total_cost += float(item['req'] or 0) * float(item['unit_cost'] or 0)
+
+        # Shortage cost = cost to cover ONLY the missing quantity on each
+        # shortage row ((req - on_hand) x unit_cost), never negative.
         shortage_cost = sum(
-            float(item['req'] or 0) * float(item['unit_cost'] or 0)
-            for item in report_items if item['qty_on_hand'] < item['req']
+            max(0.0, float(item['req'] or 0) - float(item['qty_on_hand'] or 0)) * float(item['unit_cost'] or 0)
+            for item in report_items
         )
 
         # Create the report header
@@ -4911,6 +4937,9 @@ def generate_shortage_report():
 @require_auth
 def view_shortage_report(report_id):
     """View a saved shortage report."""
+    if not can_access_tool('shortage_report'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     conn = None
     try:
         conn = db_manager.get_connection()
@@ -4956,6 +4985,11 @@ def view_shortage_report(report_id):
 @require_auth
 def export_shortage_report(report_id):
     """Export shortage report to Excel with optional column customization."""
+    if not can_access_tool('shortage_report'):
+        if request.method == 'POST' and request.is_json:
+            return jsonify({'success': False, 'error': 'Access denied.'}), 403
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
@@ -5004,10 +5038,13 @@ def export_shortage_report(report_id):
         if export_filter == 'shortages_only':
             items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
 
-        # Hide zero on-hand rows (default: true, matches UI toggle)
-        hide_zero = True
+        # Hide zero on-hand rows only when the export UI explicitly asks for it.
+        # A plain GET must match the on-screen view (which shows every row,
+        # including the most severe 0-on-hand shortages) — otherwise the Excel
+        # file silently contains fewer rows than the page.
+        hide_zero = False
         if request.method == 'POST' and request.is_json:
-            hide_zero = config.get('hide_zero', True)
+            hide_zero = config.get('hide_zero', False)
         if hide_zero:
             items = [i for i in items if (i.get('qty_on_hand') or 0) != 0]
 
@@ -5099,6 +5136,9 @@ def export_shortage_report(report_id):
 @require_auth
 def delete_shortage_report(report_id):
     """Delete a saved shortage report."""
+    if not can_access_tool('shortage_report'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
     conn = None
     try:
         conn = db_manager.get_connection()
@@ -5666,6 +5706,7 @@ def api_get_mpns_for_part(part_number):
 
 # Access Database Routes
 @app.route('/source')
+@require_auth
 def source_access():
     """Source (Access) database browser main page."""
     try:
@@ -5688,6 +5729,7 @@ def source_access():
                              page_title="Source (Access) Database")
 
 @app.route('/source/table/<table_name>')
+@require_auth
 def source_table_view(table_name):
     """View data from a specific Access database table."""
     try:
@@ -5744,6 +5786,7 @@ def source_query():
     return redirect(url_for('source_access'))
 
 @app.route('/api/source/tables')
+@require_auth
 def api_source_tables():
     """API endpoint to get Access database table list."""
     try:
@@ -5763,6 +5806,7 @@ def api_source_tables():
         return jsonify({'success': False, 'error': 'Source table list unavailable', 'data': []}), 200
 
 @app.route('/api/source/table-data/<table_name>')
+@require_auth
 def api_source_table_data(table_name):
     """API endpoint to get actual data from Access database table."""
     try:
@@ -5980,7 +6024,17 @@ def pcn_history():
                 # as the reconcile thread. Users see the on-hand AFTER each
                 # transaction, so a signed ADJT tranqty like -85 can't be
                 # misread as the current on-hand. RNDT resets the baseline.
-                chron = sorted(transactions, key=lambda r: (r['sort_time'] or 0, r['id'] or 0))
+                # Order oldest-first to replay the running balance. sort_time is
+                # a tz-aware datetime for parseable rows and None for unparseable
+                # legacy ones; never put both in one comparable slot or Python 3
+                # raises TypeError comparing datetime to int. NULL rows form the
+                # oldest baseline; .timestamp() keeps the rest numeric.
+                def _balance_sort_key(r):
+                    st = r.get('sort_time')
+                    return (0 if st is None else 1,
+                            st.timestamp() if st is not None else 0.0,
+                            r.get('id') or 0)
+                chron = sorted(transactions, key=_balance_sort_key)
                 balance = 0
                 for row in chron:
                     tq_str = str(row.get('tranqty') or '').strip()
@@ -6277,6 +6331,7 @@ def api_generate_pcn():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/api/pcn/details/<pcn_number>', methods=['GET'])
+@require_auth
 def api_get_pcn_details(pcn_number):
     """API endpoint to get PCN details by PCN number - for auto-populating fields on scan"""
     try:
@@ -6447,6 +6502,7 @@ def api_get_pcn_details(pcn_number):
         return jsonify({'success': False, 'error': 'Internal server error'}), 500
 
 @app.route('/api/pcn/list', methods=['GET'])
+@require_auth
 def api_list_pcn():
     """API endpoint to list PCN records"""
     try:
@@ -6607,6 +6663,7 @@ def api_assign_pcn():
         return jsonify({'success': False, 'error': 'Failed to assign PCN'}), 500
 
 @app.route('/api/pcn/history', methods=['GET'])
+@require_auth
 def api_pcn_history():
     """API endpoint to get PCN history - NO AUTH REQUIRED for public access"""
     try:
@@ -6668,6 +6725,7 @@ def api_pcn_search():
         return jsonify({'success': False, 'error': 'Failed to search PCN'}), 500
 
 @app.route('/api/po/history', methods=['GET'])
+@require_auth
 def api_po_history():
     """API endpoint to get PO history - NO AUTH REQUIRED for public access"""
     try:
@@ -6723,6 +6781,7 @@ def api_po_history():
         return jsonify({'success': False, 'error': 'Failed to get PO history'}), 500
 
 @app.route('/api/po/search', methods=['GET'])
+@require_auth
 def api_po_search():
     """API endpoint to search PO records - NO AUTH REQUIRED for public access"""
     try:
@@ -6902,6 +6961,7 @@ def generate_zpl_label(pcn_number):
         return "Error generating ZPL", 500
 
 @app.route('/api/valuation/snapshots', methods=['GET'])
+@require_auth
 def api_get_valuation_snapshots():
     """Get list of available pricing snapshots - simplified to return empty list"""
     try:
@@ -6913,6 +6973,7 @@ def api_get_valuation_snapshots():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/valuation/<snapshot_date>', methods=['GET'])
+@require_auth
 def api_get_valuation_by_date(snapshot_date):
     """Get inventory valuation - simplified to return current inventory summary"""
     conn = None
@@ -7416,11 +7477,16 @@ def api_bom_load():
             except (ValueError, TypeError):
                 build_qty_int = 1
 
+            # order_qty drives REQ/shortage math and is set per-job on the jobs
+            # page. The BOM sheet doesn't carry it, so seed an explicit 1 on
+            # first insert (instead of relying on an implicit/NULL column
+            # default), and DO NOT overwrite it on re-upload — a user who has
+            # already set order_qty keeps it when a corrected BOM is loaded.
             cur.execute("""
                 INSERT INTO pcb_inventory."tblJob"
                 (job_number, customer, cust_pn, build_qty, job_rev, cust_rev, last_rev,
-                 wo_number, notes, status, created_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'New', %s)
+                 wo_number, notes, status, created_by, order_qty)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'New', %s, 1)
                 ON CONFLICT (job_number) DO UPDATE SET
                     customer = EXCLUDED.customer,
                     cust_pn = EXCLUDED.cust_pn,
@@ -7971,8 +8037,11 @@ def job_update_build_qty(job_number):
     """Update build quantity for a job."""
     conn = None
     try:
-        data = request.get_json()
-        build_qty = int(data.get('build_qty', 1))
+        data = request.get_json() or {}
+        try:
+            build_qty = int(data.get('build_qty', 1))
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'Build quantity must be a whole number.'}), 400
         if build_qty < 1:
             build_qty = 1
 
@@ -8000,8 +8069,11 @@ def job_update_order_qty(job_number):
     """Update order quantity for a job."""
     conn = None
     try:
-        data = request.get_json()
-        order_qty = int(data.get('order_qty', 1))
+        data = request.get_json() or {}
+        try:
+            order_qty = int(data.get('order_qty', 1))
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'Order quantity must be a whole number.'}), 400
         if order_qty < 1:
             order_qty = 1
 
@@ -8300,10 +8372,13 @@ def job_export(job_number):
         if export_filter == 'shortages_only':
             items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
 
-        # Hide zero on-hand rows (default: true, matches UI toggle)
-        hide_zero = True
+        # Hide zero on-hand rows only when the export UI explicitly asks for it.
+        # A plain GET must match the on-screen view (which shows every row,
+        # including the most severe 0-on-hand shortages) — otherwise the Excel
+        # file silently contains fewer rows than the page.
+        hide_zero = False
         if request.method == 'POST' and request.is_json:
-            hide_zero = config.get('hide_zero', True)
+            hide_zero = config.get('hide_zero', False)
         if hide_zero:
             items = [i for i in items if (i.get('qty_on_hand') or 0) != 0]
 
