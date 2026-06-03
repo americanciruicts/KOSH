@@ -283,17 +283,6 @@
                 <p class="text-muted small mb-3">
                     Select columns to include, set their order, and optionally highlight columns with color.
                 </p>
-                <div class="mb-3 p-2 border rounded bg-light">
-                    <label class="form-label fw-bold mb-2"><i class="bi bi-funnel me-1"></i>Items to Export</label>
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" name="exportFilter" id="filterAll" value="all" checked>
-                        <label class="form-check-label" for="filterAll">All items</label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" name="exportFilter" id="filterShortages" value="shortages_only">
-                        <label class="form-check-label" for="filterShortages">Shortages only <span class="text-danger">(On Hand &lt; REQ)</span></label>
-                    </div>
-                </div>
                 <div class="d-flex justify-content-end mb-2">
                     <button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="selectAllColumns()">Select All</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary" onclick="deselectAllColumns()">Deselect All</button>
@@ -421,7 +410,7 @@
             body: JSON.stringify({
                 columns: columns,
                 highlighted: highlighted,
-                filter: document.querySelector('input[name="exportFilter"]:checked').value,
+                filter: 'all',
                 hide_zero: document.getElementById('hideZeroToggle').checked
             })
         })

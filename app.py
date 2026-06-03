@@ -4749,10 +4749,129 @@ def shortage_report():
         if conn:
             db_manager.return_connection(conn)
 
+# --- Shared shortage-report builder -----------------------------------------
+# Both the Shortage Report page (generate_shortage_report) and the Job-tab
+# button (job_generate_shortage) build reports from this one query + helper so
+# their results can never drift. The query: (1) collapses alternate parts that
+# share an aci_pn to the row carrying the line's real qty (alternates like
+# "ZSUB FOR ABOVE" have a blank/0 qty); (2) matches on-hand to THIS job's own
+# part only (w.item = aci_pn), summed across its lots and excluding MFG Floor;
+# (3) consolidates to one row per BOM line (pcn/location show the fullest lot).
+_SHORTAGE_MATCH_SQL = """
+    WITH bom_lines AS (
+        SELECT DISTINCT ON (b.aci_pn)
+            b.line, b.aci_pn, b.mpn as bom_mpn, b.man, b."DESC", b.qty, b.cost
+        FROM pcb_inventory."tblBOM" b
+        WHERE b.job = %s
+            AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                 OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+        ORDER BY b.aci_pn, CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) DESC, b.line
+    ),
+    inv AS (
+        SELECT
+            bl.aci_pn,
+            COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
+            (array_agg(w.pcn ORDER BY w.onhandqty DESC NULLS LAST))[1] as pcn,
+            (array_agg(w.mpn ORDER BY w.onhandqty DESC NULLS LAST))[1] as inv_mpn,
+            (array_agg(COALESCE(w.loc_to, '') ORDER BY w.onhandqty DESC NULLS LAST))[1] as location
+        FROM bom_lines bl
+        LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+            ON w.item = bl.aci_pn
+            AND COALESCE(w.loc_to, '') != 'MFG Floor'
+        GROUP BY bl.aci_pn
+    )
+    SELECT
+        bl.line as line_no, bl.aci_pn, inv.pcn,
+        COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
+        CAST(COALESCE(NULLIF(bl.qty, ''), '0') AS INTEGER) as qty,
+        inv.qty_on_hand, bl.aci_pn as item,
+        COALESCE(inv.location, '') as location,
+        CAST(COALESCE(NULLIF(bl.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+        bl.man as manufacturer, bl."DESC" as description
+    FROM bom_lines bl
+    JOIN inv ON inv.aci_pn = bl.aci_pn
+    ORDER BY
+        CASE WHEN bl.line ~ '^[0-9]+$' THEN CAST(bl.line AS INTEGER) ELSE 999999 END,
+        bl.line
+"""
+
+
+def _persist_shortage_report(cursor, job, order_qty, report_name, notes, username):
+    """Build and save a shortage report for `job`, keeping ONLY lines where
+    on_hand < req. Returns a dict (report_id, shortage_count, total_bom_lines)
+    or None if the job has no BOM. Caller is responsible for committing."""
+    cursor.execute('SELECT COUNT(*) as count FROM pcb_inventory."tblBOM" WHERE job = %s', (job,))
+    total_bom_lines = cursor.fetchone()['count']
+    if total_bom_lines == 0:
+        return None
+
+    cursor.execute("""
+        SELECT job_rev FROM pcb_inventory."tblBOM"
+        WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
+        ORDER BY created_at DESC LIMIT 1
+    """, (job,))
+    rev_row = cursor.fetchone()
+    job_rev = rev_row['job_rev'] if rev_row else None
+
+    cursor.execute(_SHORTAGE_MATCH_SQL, (job, job, job))
+    matched_items = cursor.fetchall()
+    if not matched_items:
+        return None
+
+    # Keep ONLY actual shortages (on_hand < req).
+    report_items = []
+    for item in matched_items:
+        req = int(item['qty'] or 0) * order_qty
+        item['req'] = req
+        item['order_qty'] = order_qty
+        if int(item['qty_on_hand'] or 0) < req:
+            report_items.append(item)
+    shortage_count = len(report_items)
+
+    # Total cost = required cost of the WHOLE BOM (req x unit_cost), counted once
+    # per line (dedupe on aci_pn). Shortage cost covers only the missing qty.
+    seen_lines = set()
+    total_cost = 0.0
+    for item in matched_items:
+        key = item['aci_pn'] or item['line_no']
+        if key in seen_lines:
+            continue
+        seen_lines.add(key)
+        total_cost += float(item['req'] or 0) * float(item['unit_cost'] or 0)
+    shortage_cost = sum(
+        max(0.0, float(item['req'] or 0) - float(item['qty_on_hand'] or 0)) * float(item['unit_cost'] or 0)
+        for item in report_items
+    )
+
+    cursor.execute("""
+        INSERT INTO pcb_inventory."tblShortageReport"
+        (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+    """, (job, report_name, total_bom_lines, shortage_count, total_cost, shortage_cost, username, notes, order_qty, job_rev))
+    report_id = cursor.fetchone()['id']
+
+    for item in report_items:
+        cursor.execute("""
+            INSERT INTO pcb_inventory."tblShortageReportItems"
+            (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
+             item, location, unit_cost, line_cost, manufacturer, description, req)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
+            item['qty'], item['qty_on_hand'], order_qty,
+            item['item'], item['location'], float(item['unit_cost'] or 0),
+            float(item['qty'] or 0) * float(item['unit_cost'] or 0),
+            item['manufacturer'], item['description'], item['req']
+        ))
+
+    return {'report_id': report_id, 'shortage_count': shortage_count, 'total_bom_lines': total_bom_lines}
+
+
 @app.route('/shortage_report/generate', methods=['POST'])
 @require_auth
 def generate_shortage_report():
-    """Generate a new shortage report for a job."""
+    """Generate a new shortage report for a job (Shortage Report page)."""
     if not can_access_tool('shortage_report'):
         flash('You do not have access to this tool.', 'danger')
         return redirect(url_for('index'))
@@ -4781,149 +4900,16 @@ def generate_shortage_report():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Check if job has BOM data
-        cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job,))
-        if cursor.fetchone()['count'] == 0:
+        username = session.get('username', 'Unknown')
+        result = _persist_shortage_report(cursor, job, order_qty, report_name, notes, username)
+        if result is None:
             flash(f'No BOM data found for job {job}. Please load BOM first.', 'warning')
             return redirect(url_for('shortage_report'))
 
-        # Get total BOM line count
-        cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job,))
-        total_bom_lines = cursor.fetchone()['count']
-
-        # Get the latest revision for this job
-        cursor.execute("""
-            SELECT job_rev FROM pcb_inventory."tblBOM"
-            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
-            ORDER BY created_at DESC LIMIT 1
-        """, (job,))
-        rev_row = cursor.fetchone()
-        job_rev = rev_row['job_rev'] if rev_row else None
-
-        # Generate report data by comparing BOM vs Inventory
-        # First deduplicate BOM lines per aci_pn (alternate parts), then match inventory
-        # Uses warehouse MPN (w.mpn) so each PCN shows its actual MPN, not BOM alternates
-        cursor.execute("""
-            WITH bom_lines AS (
-                SELECT DISTINCT ON (b.aci_pn)
-                    b.line,
-                    b.aci_pn,
-                    b.mpn as bom_mpn,
-                    b.man,
-                    b."DESC",
-                    b.qty,
-                    b.cost
-                FROM pcb_inventory."tblBOM" b
-                WHERE b.job = %s
-                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-                ORDER BY b.aci_pn, b.line
-            ),
-            inventory_match AS (
-                SELECT DISTINCT ON (COALESCE(w.pcn, bl.aci_pn || '_nopcn'), bl.aci_pn)
-                    bl.line,
-                    bl.aci_pn,
-                    COALESCE(w.mpn, bl.bom_mpn) as mpn,
-                    bl.man,
-                    bl."DESC",
-                    bl.qty,
-                    bl.cost,
-                    w.pcn,
-                    COALESCE(w.item, bl.aci_pn) as item,
-                    COALESCE(w.onhandqty, 0) as onhandqty,
-                    w.loc_to,
-                    CASE WHEN bl.aci_pn = w.item THEN 1 WHEN w.item IS NOT NULL THEN 2 ELSE 3 END as match_priority
-                FROM bom_lines bl
-                LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-                    ON (bl.aci_pn = w.item OR bl.bom_mpn = w.mpn)
-                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                ORDER BY COALESCE(w.pcn, bl.aci_pn || '_nopcn'), bl.aci_pn, match_priority
-            )
-            SELECT
-                line as line_no,
-                aci_pn,
-                pcn,
-                mpn,
-                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(onhandqty), 0) as qty_on_hand,
-                item,
-                COALESCE(loc_to, '') as location,
-                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
-                man as manufacturer,
-                "DESC" as description
-            FROM inventory_match
-            GROUP BY line, aci_pn, mpn, man, "DESC", qty, cost, pcn, item, loc_to
-            ORDER BY
-                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
-                line
-        """, (job, job, job))
-        matched_items = cursor.fetchall()
-
-        if not matched_items:
-            flash(f'No BOM data found for job {job}.', 'warning')
-            return redirect(url_for('shortage_report'))
-
-        # Calculate REQ for each item and only keep actual shortages (on_hand < req)
-        report_items = []
-        shortage_count = 0
-        for item in matched_items:
-            qty = int(item['qty'] or 0)
-            req = qty * order_qty
-            on_hand = int(item['qty_on_hand'] or 0)
-            item['req'] = req
-            item['order_qty'] = order_qty
-            if on_hand < req:
-                shortage_count += 1
-                report_items.append(item)
-
-        # Total cost = required cost of the WHOLE BOM (req x unit_cost), counted
-        # once per BOM line. matched_items can repeat a line across PCNs, so we
-        # dedupe on aci_pn (falling back to line) to avoid double-counting.
-        seen_lines = set()
-        total_cost = 0.0
-        for item in matched_items:
-            key = item['aci_pn'] or item['line_no']
-            if key in seen_lines:
-                continue
-            seen_lines.add(key)
-            total_cost += float(item['req'] or 0) * float(item['unit_cost'] or 0)
-
-        # Shortage cost = cost to cover ONLY the missing quantity on each
-        # shortage row ((req - on_hand) x unit_cost), never negative.
-        shortage_cost = sum(
-            max(0.0, float(item['req'] or 0) - float(item['qty_on_hand'] or 0)) * float(item['unit_cost'] or 0)
-            for item in report_items
-        )
-
-        # Create the report header
-        username = session.get('username', 'Unknown')
-        cursor.execute("""
-            INSERT INTO pcb_inventory."tblShortageReport"
-            (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """, (job, report_name, total_bom_lines, shortage_count, total_cost, shortage_cost, username, notes, order_qty, job_rev))
-        report_id = cursor.fetchone()['id']
-
-        # Insert all BOM line items (including those with no inventory match)
-        for item in report_items:
-            cursor.execute("""
-                INSERT INTO pcb_inventory."tblShortageReportItems"
-                (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
-                 item, location, unit_cost, line_cost, manufacturer, description, req)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
-                item['qty'], item['qty_on_hand'], order_qty,
-                item['item'], item['location'], float(item['unit_cost'] or 0),
-                float(item['qty'] or 0) * float(item['unit_cost'] or 0),
-                item['manufacturer'], item['description'], item['req']
-            ))
-
         conn.commit()
-        log_user_activity('SHORTAGE_REPORT', f"Generated shortage report for job {job}", f"{len(report_items)} items, {shortage_count} shortages")
-        flash(f'Shortage report generated! {len(report_items)} items matched inventory, {shortage_count} have shortages.', 'success')
-        return redirect(url_for('view_shortage_report', report_id=report_id))
+        log_user_activity('SHORTAGE_REPORT', f"Generated shortage report for job {job}", f"{result['shortage_count']} shortages")
+        flash(f"Shortage report generated! {result['shortage_count']} shortage line(s) found.", 'success')
+        return redirect(url_for('view_shortage_report', report_id=result['report_id']))
 
     except Exception as e:
         if conn:
@@ -7922,57 +7908,53 @@ def job_detail(job_number):
                 WHERE b.job = %s
                     AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
                          OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-                ORDER BY b.aci_pn, b.line
+                -- Collapse alternate parts (same aci_pn) to the row carrying the
+                -- line's real qty. Alternates ("ZSUB FOR ABOVE") have a blank/0 qty,
+                -- so order by qty DESC to deterministically pick the primary row;
+                -- without this the DISTINCT ON tie-break is arbitrary and a line
+                -- can collapse to qty 0, silently dropping a real shortage.
+                ORDER BY b.aci_pn, CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) DESC, b.line
             ),
-            inventory_match AS (
-                SELECT DISTINCT ON (COALESCE(w.pcn, bl.aci_pn || '_nopcn'), bl.aci_pn)
-                    bl.line,
+            inv AS (
+                -- On-hand for THIS job's own part only (w.item = bl.aci_pn),
+                -- summed across its lots, excluding MFG Floor. See the shortage
+                -- generator query for why MPN-based matching was removed (it
+                -- pulled in other jobs' stock and exploded one line into many).
+                SELECT
                     bl.aci_pn,
-                    bl."DESC",
-                    COALESCE(w.mpn, bl.bom_mpn) as mpn,
-                    bl.man,
-                    bl.qty,
-                    bl.cost,
-                    bl.pou,
-                    bl.job_rev,
-                    bl.last_rev,
-                    bl.cust,
-                    bl.cust_pn,
-                    bl.cust_rev,
-                    w.pcn,
-                    COALESCE(w.item, bl.aci_pn) as item,
-                    COALESCE(w.onhandqty, 0) as onhandqty,
-                    w.loc_to,
-                    CASE WHEN bl.aci_pn = w.item THEN 1 WHEN w.item IS NOT NULL THEN 2 ELSE 3 END as match_priority
+                    COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
+                    (array_agg(w.pcn ORDER BY w.onhandqty DESC NULLS LAST))[1] as pcn,
+                    (array_agg(w.mpn ORDER BY w.onhandqty DESC NULLS LAST))[1] as inv_mpn,
+                    (array_agg(COALESCE(w.loc_to, '') ORDER BY w.onhandqty DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
                 LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-                    ON (bl.aci_pn = w.item OR bl.bom_mpn = w.mpn)
+                    ON w.item = bl.aci_pn
                     AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                ORDER BY COALESCE(w.pcn, bl.aci_pn || '_nopcn'), bl.aci_pn, match_priority
+                GROUP BY bl.aci_pn
             )
             SELECT
-                line as line_no,
-                aci_pn,
-                "DESC" as description,
-                mpn,
-                man as manufacturer,
-                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(onhandqty), 0) as on_hand,
-                pcn,
-                item,
-                COALESCE(loc_to, '') as location,
-                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
-                pou,
-                job_rev as bom_job_rev,
-                last_rev as bom_last_rev,
-                cust as bom_cust,
-                cust_pn as bom_cust_pn,
-                cust_rev as bom_cust_rev
-            FROM inventory_match
-            GROUP BY line, aci_pn, "DESC", mpn, man, qty, cost, pou, job_rev, last_rev, cust, cust_pn, cust_rev, pcn, item, loc_to
+                bl.line as line_no,
+                bl.aci_pn,
+                bl."DESC" as description,
+                COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
+                bl.man as manufacturer,
+                CAST(COALESCE(NULLIF(bl.qty, ''), '0') AS INTEGER) as qty,
+                inv.qty_on_hand as on_hand,
+                inv.pcn,
+                bl.aci_pn as item,
+                COALESCE(inv.location, '') as location,
+                CAST(COALESCE(NULLIF(bl.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                bl.pou,
+                bl.job_rev as bom_job_rev,
+                bl.last_rev as bom_last_rev,
+                bl.cust as bom_cust,
+                bl.cust_pn as bom_cust_pn,
+                bl.cust_rev as bom_cust_rev
+            FROM bom_lines bl
+            JOIN inv ON inv.aci_pn = bl.aci_pn
             ORDER BY
-                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
-                line
+                CASE WHEN bl.line ~ '^[0-9]+$' THEN CAST(bl.line AS INTEGER) ELSE 999999 END,
+                bl.line
         """, (job_number, job_number, job_number))
         raw_lines = cursor.fetchall()
 
@@ -8148,130 +8130,16 @@ def job_generate_shortage(job_number):
         # Default report name
         report_name = f"Shortage Report - {job_number} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
-        # Get latest revision for this job
-        cursor.execute("""
-            SELECT job_rev FROM pcb_inventory."tblBOM"
-            WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
-            ORDER BY created_at DESC LIMIT 1
-        """, (job_number,))
-        rev_row = cursor.fetchone()
-        job_rev = rev_row['job_rev'] if rev_row else None
-
-        # Get total BOM line count (latest rev only)
-        if job_rev:
-            cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s AND job_rev = %s", (job_number, job_rev))
-        else:
-            cursor.execute("SELECT COUNT(*) as count FROM pcb_inventory.\"tblBOM\" WHERE job = %s", (job_number,))
-        total_bom_lines = cursor.fetchone()['count']
-
-        if total_bom_lines == 0:
+        username = session.get('username', 'Unknown')
+        result = _persist_shortage_report(cursor, job_number, order_qty, report_name, '', username)
+        if result is None:
             flash(f'No BOM data found for job {job_number}. Please load BOM first.', 'warning')
             return redirect(url_for('job_detail', job_number=job_number))
 
-        # Deduplicate BOM per aci_pn then match inventory using warehouse MPN
-        cursor.execute("""
-            WITH bom_lines AS (
-                SELECT DISTINCT ON (b.aci_pn)
-                    b.line,
-                    b.aci_pn,
-                    b.mpn as bom_mpn,
-                    b.man,
-                    b."DESC",
-                    b.qty,
-                    b.cost
-                FROM pcb_inventory."tblBOM" b
-                WHERE b.job = %s
-                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-                ORDER BY b.aci_pn, b.line
-            ),
-            inventory_match AS (
-                SELECT DISTINCT ON (COALESCE(w.pcn, bl.aci_pn || '_nopcn'), bl.aci_pn)
-                    bl.line,
-                    bl.aci_pn,
-                    COALESCE(w.mpn, bl.bom_mpn) as mpn,
-                    bl.man,
-                    bl."DESC",
-                    bl.qty,
-                    bl.cost,
-                    w.pcn,
-                    COALESCE(w.item, bl.aci_pn) as item,
-                    COALESCE(w.onhandqty, 0) as onhandqty,
-                    w.loc_to,
-                    CASE WHEN bl.aci_pn = w.item THEN 1 WHEN w.item IS NOT NULL THEN 2 ELSE 3 END as match_priority
-                FROM bom_lines bl
-                LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-                    ON (bl.aci_pn = w.item OR bl.bom_mpn = w.mpn)
-                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                ORDER BY COALESCE(w.pcn, bl.aci_pn || '_nopcn'), bl.aci_pn, match_priority
-            )
-            SELECT
-                line as line_no,
-                aci_pn,
-                pcn,
-                mpn,
-                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(onhandqty), 0) as qty_on_hand,
-                item,
-                COALESCE(loc_to, '') as location,
-                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
-                man as manufacturer,
-                "DESC" as description
-            FROM inventory_match
-            GROUP BY line, aci_pn, mpn, man, "DESC", qty, cost, pcn, item, loc_to
-            ORDER BY
-                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
-                line
-        """, (job_number, job_number, job_number))
-        matched_items = cursor.fetchall()
-
-        if not matched_items:
-            flash(f'No BOM data found for job {job_number}.', 'warning')
-            return redirect(url_for('job_detail', job_number=job_number))
-
-        # Calculate REQ and count shortages
-        report_items = []
-        shortage_count = 0
-        for item in matched_items:
-            qty = int(item['qty'] or 0)
-            req = qty * order_qty
-            on_hand = int(item['qty_on_hand'] or 0)
-            item['req'] = req
-            item['order_qty'] = order_qty
-            if on_hand < req:
-                shortage_count += 1
-            report_items.append(item)
-
-        total_cost = sum(float(item['qty'] or 0) * float(item['unit_cost'] or 0) for item in report_items)
-        shortage_cost = sum(float(item['req'] or 0) * float(item['unit_cost'] or 0) for item in report_items if item['qty_on_hand'] < item['req'])
-
-        username = session.get('username', 'Unknown')
-        cursor.execute("""
-            INSERT INTO pcb_inventory."tblShortageReport"
-            (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """, (job_number, report_name, total_bom_lines, shortage_count, total_cost, shortage_cost, username, '', order_qty, job_rev))
-        report_id = cursor.fetchone()['id']
-
-        for item in report_items:
-            cursor.execute("""
-                INSERT INTO pcb_inventory."tblShortageReportItems"
-                (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
-                 item, location, unit_cost, line_cost, manufacturer, description, req)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
-                item['qty'], item['qty_on_hand'], order_qty,
-                item['item'], item['location'], float(item['unit_cost'] or 0),
-                float(item['qty'] or 0) * float(item['unit_cost'] or 0),
-                item['manufacturer'], item['description'], item['req']
-            ))
-
         conn.commit()
-        log_user_activity('SHORTAGE_REPORT', f"Generated shortage report for job {job_number}", f"{len(report_items)} items, {shortage_count} shortages")
-        flash(f'Shortage report generated! {len(report_items)} items matched, {shortage_count} shortages.', 'success')
-        return redirect(url_for('job_detail', job_number=job_number))
+        log_user_activity('SHORTAGE_REPORT', f"Generated shortage report for job {job_number}", f"{result['shortage_count']} shortages")
+        flash(f"Shortage report generated! {result['shortage_count']} shortage line(s) found.", 'success')
+        return redirect(url_for('view_shortage_report', report_id=result['report_id']))
 
     except Exception as e:
         if conn:
@@ -8343,45 +8211,46 @@ def job_export(job_number):
                 WHERE b.job = %s
                     AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
                          OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-                ORDER BY b.aci_pn, b.line
+                -- Collapse alternate parts (same aci_pn) to the row carrying the
+                -- line's real qty. Alternates ("ZSUB FOR ABOVE") have a blank/0 qty,
+                -- so order by qty DESC to deterministically pick the primary row;
+                -- without this the DISTINCT ON tie-break is arbitrary and a line
+                -- can collapse to qty 0, silently dropping a real shortage.
+                ORDER BY b.aci_pn, CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) DESC, b.line
             ),
-            inventory_match AS (
-                SELECT DISTINCT ON (COALESCE(w.pcn, bl.aci_pn || '_nopcn'), bl.aci_pn)
-                    bl.line,
+            inv AS (
+                -- On-hand for THIS job's own part only (w.item = bl.aci_pn),
+                -- summed across its lots, excluding MFG Floor. Mirrors the
+                -- shortage generator query so the export matches the report.
+                SELECT
                     bl.aci_pn,
-                    COALESCE(w.mpn, bl.bom_mpn) as mpn,
-                    bl.man,
-                    bl."DESC",
-                    bl.qty,
-                    bl.cost,
-                    w.pcn,
-                    COALESCE(w.item, bl.aci_pn) as item,
-                    COALESCE(w.onhandqty, 0) as onhandqty,
-                    w.loc_to,
-                    CASE WHEN bl.aci_pn = w.item THEN 1 WHEN w.item IS NOT NULL THEN 2 ELSE 3 END as match_priority
+                    COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
+                    (array_agg(w.pcn ORDER BY w.onhandqty DESC NULLS LAST))[1] as pcn,
+                    (array_agg(w.mpn ORDER BY w.onhandqty DESC NULLS LAST))[1] as inv_mpn,
+                    (array_agg(COALESCE(w.loc_to, '') ORDER BY w.onhandqty DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
                 LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-                    ON (bl.aci_pn = w.item OR bl.bom_mpn = w.mpn)
+                    ON w.item = bl.aci_pn
                     AND COALESCE(w.loc_to, '') != 'MFG Floor'
-                ORDER BY COALESCE(w.pcn, bl.aci_pn || '_nopcn'), bl.aci_pn, match_priority
+                GROUP BY bl.aci_pn
             )
             SELECT
-                line as line_no,
-                aci_pn,
-                mpn,
-                man as manufacturer,
-                "DESC" as description,
-                CAST(COALESCE(NULLIF(qty, ''), '0') AS INTEGER) as qty,
-                COALESCE(SUM(onhandqty), 0) as on_hand,
-                pcn,
-                item,
-                COALESCE(loc_to, '') as location,
-                CAST(COALESCE(NULLIF(cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
-            FROM inventory_match
-            GROUP BY line, aci_pn, mpn, man, "DESC", qty, cost, pcn, item, loc_to
+                bl.line as line_no,
+                bl.aci_pn,
+                COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
+                bl.man as manufacturer,
+                bl."DESC" as description,
+                CAST(COALESCE(NULLIF(bl.qty, ''), '0') AS INTEGER) as qty,
+                inv.qty_on_hand as on_hand,
+                inv.pcn,
+                bl.aci_pn as item,
+                COALESCE(inv.location, '') as location,
+                CAST(COALESCE(NULLIF(bl.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+            FROM bom_lines bl
+            JOIN inv ON inv.aci_pn = bl.aci_pn
             ORDER BY
-                CASE WHEN line ~ '^[0-9]+$' THEN CAST(line AS INTEGER) ELSE 999999 END,
-                line
+                CASE WHEN bl.line ~ '^[0-9]+$' THEN CAST(bl.line AS INTEGER) ELSE 999999 END,
+                bl.line
         """, (job_number, job_number, job_number))
         raw_items = cursor.fetchall()
 
