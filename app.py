@@ -84,6 +84,8 @@ SHORTAGE_EXPORT_COLUMNS = [
     {'key': 'item',         'label': 'ITEM',          'width': 15, 'default': True},
     {'key': 'qty_on_hand',  'label': 'ON HAND QTY',   'width': 14, 'default': True},
     {'key': 'location',     'label': 'LOCATION',      'width': 15, 'default': True},
+    {'key': 'other_mpn_onhand',    'label': 'ALSO ON HAND (SAME MPN)', 'width': 18, 'default': True},
+    {'key': 'other_mpn_locations', 'label': 'SAME-MPN LOCATIONS',      'width': 45, 'default': True},
     {'key': 'unit_cost',    'label': 'UNIT COST',     'width': 12, 'default': False},
     {'key': 'line_cost',    'label': 'LINE COST',     'width': 12, 'default': False},
 ]
@@ -103,6 +105,8 @@ def get_export_cell_value(item, column_key, order_qty=None):
         'item':         lambda i: i.get('item') or i.get('aci_pn') or '',
         'qty_on_hand':  lambda i: i.get('qty_on_hand') if i.get('qty_on_hand') is not None else i.get('on_hand', 0),
         'location':     lambda i: i.get('location') or '',
+        'other_mpn_onhand':    lambda i: i.get('other_mpn_onhand') or 0,
+        'other_mpn_locations': lambda i: i.get('other_mpn_locations') or '',
         'unit_cost':    lambda i: i.get('unit_cost') or '',
         'line_cost':    lambda i: i.get('line_cost') or '',
     }
@@ -4787,7 +4791,30 @@ _SHORTAGE_MATCH_SQL = """
         inv.qty_on_hand, bl.aci_pn as item,
         COALESCE(inv.location, '') as location,
         CAST(COALESCE(NULLIF(bl.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
-        bl.man as manufacturer, bl."DESC" as description
+        bl.man as manufacturer, bl."DESC" as description,
+        -- VISIBILITY ONLY (does NOT change the shortage math): stock of the SAME
+        -- MPN sitting under a DIFFERENT job's part number. The shortage qty above
+        -- still counts only this job's own part (w.item = aci_pn) so we never
+        -- double-allocate another job's committed stock — but Purchasing can now
+        -- see what Theresa used to hand-search in Warehouse Inventory.
+        COALESCE((
+            SELECT SUM(w2.onhandqty) FROM pcb_inventory."tblWhse_Inventory" w2
+            WHERE w2.mpn = bl.bom_mpn AND w2.item <> bl.aci_pn
+              AND COALESCE(w2.loc_to, '') != 'MFG Floor'
+              AND COALESCE(bl.bom_mpn, '') != ''
+        ), 0) as other_mpn_onhand,
+        (
+            SELECT string_agg(loc, ', ') FROM (
+                SELECT w3.item || ' #' || w3.pcn || '=' || SUM(w3.onhandqty)::text AS loc
+                FROM pcb_inventory."tblWhse_Inventory" w3
+                WHERE w3.mpn = bl.bom_mpn AND w3.item <> bl.aci_pn
+                  AND COALESCE(w3.loc_to, '') != 'MFG Floor'
+                  AND w3.onhandqty > 0 AND COALESCE(bl.bom_mpn, '') != ''
+                GROUP BY w3.item, w3.pcn
+                ORDER BY SUM(w3.onhandqty) DESC
+                LIMIT 20
+            ) s
+        ) as other_mpn_locations
     FROM bom_lines bl
     JOIN inv ON inv.aci_pn = bl.aci_pn
     ORDER BY
@@ -4855,14 +4882,16 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
         cursor.execute("""
             INSERT INTO pcb_inventory."tblShortageReportItems"
             (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
-             item, location, unit_cost, line_cost, manufacturer, description, req)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             item, location, unit_cost, line_cost, manufacturer, description, req,
+             other_mpn_onhand, other_mpn_locations)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
             item['qty'], item['qty_on_hand'], order_qty,
             item['item'], item['location'], float(item['unit_cost'] or 0),
             float(item['qty'] or 0) * float(item['unit_cost'] or 0),
-            item['manufacturer'], item['description'], item['req']
+            item['manufacturer'], item['description'], item['req'],
+            int(item.get('other_mpn_onhand') or 0), item.get('other_mpn_locations')
         ))
 
     return {'report_id': report_id, 'shortage_count': shortage_count, 'total_bom_lines': total_bom_lines}
@@ -4949,7 +4978,8 @@ def view_shortage_report(report_id):
         # Get report line items (exclude MFG Floor items)
         cursor.execute("""
             SELECT line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
-                   item, location, unit_cost, line_cost, manufacturer, description, req
+                   item, location, unit_cost, line_cost, manufacturer, description, req,
+                   other_mpn_onhand, other_mpn_locations
             FROM pcb_inventory."tblShortageReportItems"
             WHERE report_id = %s AND COALESCE(location, '') != 'MFG Floor'
             ORDER BY
@@ -5013,6 +5043,7 @@ def export_shortage_report(report_id):
         cursor.execute("""
             SELECT line_no, aci_pn, pcn, mpn, qty_required as qty, order_qty,
                    req, item, qty_on_hand, location,
+                   other_mpn_onhand, other_mpn_locations,
                    unit_cost, line_cost, manufacturer, description
             FROM pcb_inventory."tblShortageReportItems"
             WHERE report_id = %s AND COALESCE(location, '') != 'MFG Floor'

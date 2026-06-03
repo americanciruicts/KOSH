@@ -580,6 +580,76 @@ def test_quantity_fields_are_not_number_spinners():
         )
 
 
+def test_shortage_report_alt_part_qty_and_same_mpn_visibility():
+    """Bug shape (June 2026, jobs 8657ML/8566ML — Theresa lost trust):
+
+    A) Alternate-manufacturer BOM lines store the real qty on the primary row
+       and 0 on the "ZSUB"/alternate row (same aci_pn). The dedup must keep the
+       row carrying the real qty, NOT collapse to 0 — a 0 zeroed REQ and
+       silently dropped a genuine shortage from the report.
+
+    B) The report must surface stock of the SAME MPN sitting under a DIFFERENT
+       job's part number (other_mpn_onhand) so Purchasing stops hand-searching
+       Warehouse Inventory — WITHOUT counting it as this job's own on-hand
+       (which would double-allocate another job's committed stock).
+    """
+    sys.path.insert(0, '/app')
+    import app as app_module
+    from psycopg2.extras import RealDictCursor
+
+    job = 'REGRESS-SHORT-9999'
+    aci_pn = 'RSHORT-1'
+    mpn = 'RGMPN-REGRESS-1'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        # Clean any prior seed inside this rolled-back txn
+        cur.execute(f'DELETE FROM {SCHEMA}."tblBOM" WHERE job = %s', (job,))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn IN %s',
+                    (('99320', '99321', '99322'),))
+
+        # BOM: primary row qty 10, alternate row (same aci_pn) qty 0
+        for line, m, qty in [('10', mpn, '10'), ('10', mpn + '-ALT', '0')]:
+            cur.execute(
+                f'INSERT INTO {SCHEMA}."tblBOM" (line, "DESC", man, mpn, aci_pn, qty, cost, job, job_rev) '
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (line, 'Regress cap', 'RegressMan', m, aci_pn, qty, '1.00', job, 'A'),
+            )
+
+        # On-hand: 3 under THIS job's own part; 50 of same MPN under ANOTHER
+        # part number; 1000 of same MPN but on MFG Floor (must be excluded).
+        _seed_warehouse_row(cur, 99320, aci_pn, mpn=mpn, onhandqty=3, loc_to='Count Area')
+        _seed_warehouse_row(cur, 99321, 'OTHERJOB-99', mpn=mpn, onhandqty=50, loc_to='Count Area')
+        _seed_warehouse_row(cur, 99322, 'OTHERJOB-99', mpn=mpn, onhandqty=1000, loc_to='MFG Floor')
+
+        result = app_module._persist_shortage_report(
+            cur, job, order_qty=1, report_name='regress', notes='', username='regression@test.com')
+        assert result is not None, 'shortage report should generate for seeded job'
+
+        cur.execute(
+            f'SELECT qty_required, qty_on_hand, other_mpn_onhand, other_mpn_locations '
+            f'FROM {SCHEMA}."tblShortageReportItems" WHERE report_id = %s',
+            (result['report_id'],))
+        rows = cur.fetchall()
+        assert len(rows) == 1, f'expected 1 shortage line, got {len(rows)}'
+        row = rows[0]
+
+        # A) real qty kept (not the alternate's 0)
+        assert row['qty_required'] == 10, (
+            f"alt-part dedup must keep qty 10, got {row['qty_required']} "
+            f"(a 0 here silently drops real shortages — the trust bug)")
+        # own on-hand only
+        assert row['qty_on_hand'] == 3, (
+            f"on-hand must count only this job's own part (3), got {row['qty_on_hand']}")
+        # B) same-MPN visibility = other-item stock, MFG Floor excluded
+        assert row['other_mpn_onhand'] == 50, (
+            f"same-MPN visibility must be 50 (other PN, excl MFG Floor), "
+            f"got {row['other_mpn_onhand']}")
+        assert row['other_mpn_locations'] and 'OTHERJOB-99' in row['other_mpn_locations'], (
+            f"same-MPN locations must name the other part number, "
+            f"got {row['other_mpn_locations']!r}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -592,6 +662,7 @@ TESTS = [
     test_validate_location_auto_registers_unknown_7digit,
     test_purged_pcn_can_be_restocked_with_same_pcn,
     test_bom_load_inserts_every_item_received,
+    test_shortage_report_alt_part_qty_and_same_mpn_visibility,
     test_bom_python_parser_finds_lines_across_sheets,
     test_return_connection_never_leaks_foreign_connection,
     test_quantity_fields_are_not_number_spinners,

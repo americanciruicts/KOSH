@@ -228,6 +228,7 @@
                         <th>ITEM</th>
                         <th class="text-center">ON HAND QTY</th>
                         <th>LOCATION</th>
+                        <th class="text-center" title="Stock of the SAME MPN filed under a different job's part number. Visibility only — not counted in the shortage above.">ALSO ON HAND<br><small class="text-muted">(same MPN, other PNs)</small></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -253,6 +254,16 @@
                             {% endif %}
                         </td>
                         <td>{{ item.location or '-' }}</td>
+                        <td class="text-center">
+                            {% if (item.other_mpn_onhand or 0) > 0 %}
+                            <span class="fw-bold text-primary">{{ item.other_mpn_onhand }}</span>
+                            {% if item.other_mpn_locations %}
+                            <br><span class="text-muted" style="font-size: 0.72rem;">{{ item.other_mpn_locations }}</span>
+                            {% endif %}
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -263,6 +274,7 @@
                         <td></td>
                         <td class="text-center"><strong>{{ items|map(attribute='qty_on_hand')|sum }}</strong></td>
                         <td></td>
+                        <td class="text-center"><strong>{{ items|map(attribute='other_mpn_onhand')|sum }}</strong></td>
                     </tr>
                 </tfoot>
             </table>
