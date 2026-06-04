@@ -35,13 +35,6 @@
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
         }
-
-        /* Printed output excludes zero-on-hand lines (the digital view keeps
-           them). Always applied on print, independent of the on-screen
-           "Hide 0 On Hand" toggle. */
-        #shortageTable tbody tr[data-onhand="0"] {
-            display: none !important;
-        }
     }
 
     .shortage-row {
@@ -322,8 +315,8 @@
 {% block extra_js %}
 <script>
     // Digital view shows ALL shortage lines by default (toggle unchecked),
-    // including zero-on-hand. Printing drops zero-on-hand rows via @media print
-    // CSS. The "Hide 0 On Hand" toggle is an optional on-screen filter.
+    // including zero-on-hand. The Excel export drops zero-on-hand rows
+    // server-side. The "Hide 0 On Hand" toggle is an optional on-screen filter.
     function applyFilters() {
         const hideZero = document.getElementById('hideZeroToggle').checked;
         const searchText = document.getElementById('searchInput').value.toLowerCase();
