@@ -6,6 +6,7 @@ All database connections use container networking.
 
 import os
 import json
+import math
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
@@ -4770,7 +4771,7 @@ _SHORTAGE_MATCH_SQL = """
         WHERE b.job = %s
             AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
                  OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-        ORDER BY b.aci_pn, CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) DESC, b.line
+        ORDER BY b.aci_pn, CASE WHEN b.qty ~ '^[0-9]+([.][0-9]+)?$' THEN b.qty::numeric ELSE 0 END DESC, b.line
     ),
     inv AS (
         SELECT
@@ -4797,10 +4798,10 @@ _SHORTAGE_MATCH_SQL = """
     SELECT
         bl.line as line_no, bl.aci_pn, inv.pcn,
         COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
-        CAST(COALESCE(NULLIF(bl.qty, ''), '0') AS INTEGER) as qty,
+        CASE WHEN bl.qty ~ '^[0-9]+([.][0-9]+)?$' THEN bl.qty::numeric ELSE 0 END as qty,
         inv.qty_on_hand, bl.aci_pn as item,
         COALESCE(inv.location, '') as location,
-        CAST(COALESCE(NULLIF(bl.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+        CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost,
         bl.man as manufacturer, bl."DESC" as description,
         -- VISIBILITY ONLY (does NOT change the shortage math): stock of the SAME
         -- MPN sitting under a DIFFERENT job's part number. The shortage qty above
@@ -4880,7 +4881,9 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
     # Keep ONLY actual shortages (on_hand < req).
     report_items = []
     for item in matched_items:
-        req = int(item['qty'] or 0) * order_qty
+        # qty may be fractional (consumables like glue/RTV) — round the TOTAL
+        # requirement up so we never under-order. Non-numeric qty parses to 0.
+        req = math.ceil(float(item['qty'] or 0) * order_qty)
         item['req'] = req
         item['order_qty'] = order_qty
         if int(item['qty_on_hand'] or 0) < req:
@@ -4919,7 +4922,7 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
-            item['qty'], item['qty_on_hand'], order_qty,
+            math.ceil(float(item['qty'] or 0)), item['qty_on_hand'], order_qty,
             item['item'], item['location'], float(item['unit_cost'] or 0),
             float(item['qty'] or 0) * float(item['unit_cost'] or 0),
             item['manufacturer'], item['description'], item['req'],
@@ -7976,7 +7979,7 @@ def job_detail(job_number):
                 -- so order by qty DESC to deterministically pick the primary row;
                 -- without this the DISTINCT ON tie-break is arbitrary and a line
                 -- can collapse to qty 0, silently dropping a real shortage.
-                ORDER BY b.aci_pn, CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) DESC, b.line
+                ORDER BY b.aci_pn, CASE WHEN b.qty ~ '^[0-9]+([.][0-9]+)?$' THEN b.qty::numeric ELSE 0 END DESC, b.line
             ),
             inv AS (
                 -- On-hand for THIS job's own part only (w.item = bl.aci_pn),
@@ -8001,12 +8004,12 @@ def job_detail(job_number):
                 bl."DESC" as description,
                 COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
                 bl.man as manufacturer,
-                CAST(COALESCE(NULLIF(bl.qty, ''), '0') AS INTEGER) as qty,
+                CASE WHEN bl.qty ~ '^[0-9]+([.][0-9]+)?$' THEN bl.qty::numeric ELSE 0 END as qty,
                 inv.qty_on_hand as on_hand,
                 inv.pcn,
                 bl.aci_pn as item,
                 COALESCE(inv.location, '') as location,
-                CAST(COALESCE(NULLIF(bl.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost,
+                CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost,
                 bl.pou,
                 bl.job_rev as bom_job_rev,
                 bl.last_rev as bom_last_rev,
@@ -8026,8 +8029,8 @@ def job_detail(job_number):
         job_lines = []
         shortage_count = 0
         for line in raw_lines:
-            qty = int(line['qty'] or 0)
-            req = qty * order_qty
+            qty = float(line['qty'] or 0)          # may be fractional (consumables)
+            req = math.ceil(qty * order_qty)        # round total requirement up
             on_hand = int(line['on_hand'] or 0)
             shortage = on_hand - req
             location = line['location'] if on_hand > 0 else ''
@@ -8038,7 +8041,7 @@ def job_detail(job_number):
                 'description': line['description'],
                 'mpn': line['mpn'],
                 'manufacturer': line['manufacturer'],
-                'qty': qty,
+                'qty': line['qty'],
                 'req': req,
                 'on_hand': on_hand,
                 'pcn': line['pcn'],
@@ -8279,7 +8282,7 @@ def job_export(job_number):
                 -- so order by qty DESC to deterministically pick the primary row;
                 -- without this the DISTINCT ON tie-break is arbitrary and a line
                 -- can collapse to qty 0, silently dropping a real shortage.
-                ORDER BY b.aci_pn, CAST(COALESCE(NULLIF(b.qty, ''), '0') AS INTEGER) DESC, b.line
+                ORDER BY b.aci_pn, CASE WHEN b.qty ~ '^[0-9]+([.][0-9]+)?$' THEN b.qty::numeric ELSE 0 END DESC, b.line
             ),
             inv AS (
                 -- On-hand for THIS job's own part only (w.item = bl.aci_pn),
@@ -8303,12 +8306,12 @@ def job_export(job_number):
                 COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
                 bl.man as manufacturer,
                 bl."DESC" as description,
-                CAST(COALESCE(NULLIF(bl.qty, ''), '0') AS INTEGER) as qty,
+                CASE WHEN bl.qty ~ '^[0-9]+([.][0-9]+)?$' THEN bl.qty::numeric ELSE 0 END as qty,
                 inv.qty_on_hand as on_hand,
                 inv.pcn,
                 bl.aci_pn as item,
                 COALESCE(inv.location, '') as location,
-                CAST(COALESCE(NULLIF(bl.cost, ''), '0') AS DECIMAL(10,4)) as unit_cost
+                CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost
             FROM bom_lines bl
             JOIN inv ON inv.aci_pn = bl.aci_pn
             ORDER BY
@@ -8320,9 +8323,9 @@ def job_export(job_number):
         # Enrich items with calculated fields
         items = []
         for item in raw_items:
-            qty = int(item['qty'] or 0)
+            qty = float(item['qty'] or 0)          # may be fractional (consumables)
             on_hand = int(item['on_hand'] or 0)
-            req = qty * order_qty
+            req = math.ceil(qty * order_qty)        # round total requirement up
             item['qty_on_hand'] = on_hand
             item['order_qty'] = order_qty
             item['req'] = req
