@@ -207,7 +207,7 @@
         <div class="no-print d-flex align-items-center gap-2">
             <span class="badge bg-danger me-2">Red = On Hand &lt; REQ (Shortage)</span>
             <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" id="hideZeroToggle">
+                <input class="form-check-input" type="checkbox" id="hideZeroToggle" checked>
                 <label class="form-check-label small" for="hideZeroToggle">Hide 0 On Hand</label>
             </div>
             <input type="text" class="form-control form-control-sm d-inline-block" style="width: 200px;"
@@ -314,8 +314,8 @@
 
 {% block extra_js %}
 <script>
-    // Show ALL shortages by default (incl. 0 on-hand, the most critical).
-    // The "Hide 0 On Hand" toggle is opt-in for narrowing to partial shortages.
+    // Show only line items with on-hand > 0 by default (the "Hide 0 On Hand"
+    // toggle is checked). Users can untick it to also see zero-stock shortages.
     function applyFilters() {
         const hideZero = document.getElementById('hideZeroToggle').checked;
         const searchText = document.getElementById('searchInput').value.toLowerCase();
@@ -333,7 +333,7 @@
     document.getElementById('hideZeroToggle').addEventListener('change', applyFilters);
     document.getElementById('searchInput').addEventListener('keyup', applyFilters);
 
-    // Apply on page load (toggle is unchecked, so all rows show by default)
+    // Apply on page load (hide zeros by default since toggle is checked)
     document.addEventListener('DOMContentLoaded', applyFilters);
 
     // Export column configuration

@@ -4764,7 +4764,8 @@ def shortage_report():
 _SHORTAGE_MATCH_SQL = """
     WITH bom_lines AS (
         SELECT DISTINCT ON (b.aci_pn)
-            b.line, b.aci_pn, b.mpn as bom_mpn, b.man, b."DESC", b.qty, b.cost
+            b.line, b.aci_pn, b.mpn as bom_mpn, b.man, b."DESC", b.qty, b.cost,
+            lower(translate(b.mpn, '-# ./', '')) as bom_key
         FROM pcb_inventory."tblBOM" b
         WHERE b.job = %s
             AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
@@ -4783,6 +4784,15 @@ _SHORTAGE_MATCH_SQL = """
             ON w.item = bl.aci_pn
             AND COALESCE(w.loc_to, '') != 'MFG Floor'
         GROUP BY bl.aci_pn
+    ),
+    -- Normalized stock pool for the same-MPN visibility columns below, computed
+    -- ONCE (MFG Floor + non-positive qty excluded). Materializing here avoids
+    -- recomputing translate() over the whole warehouse for every BOM line.
+    mpn_pool AS MATERIALIZED (
+        SELECT item, pcn, onhandqty, mpn,
+               lower(translate(mpn, '-# ./', '')) as nmpn
+        FROM pcb_inventory."tblWhse_Inventory"
+        WHERE COALESCE(loc_to, '') != 'MFG Floor' AND onhandqty > 0
     )
     SELECT
         bl.line as line_no, bl.aci_pn, inv.pcn,
@@ -4797,21 +4807,35 @@ _SHORTAGE_MATCH_SQL = """
         -- still counts only this job's own part (w.item = aci_pn) so we never
         -- double-allocate another job's committed stock — but Purchasing can now
         -- see what Theresa used to hand-search in Warehouse Inventory.
+        -- MPN match mode (strict flag): Chemring jobs use STRICT exact-string
+        -- match (defense traceability — reel-suffix/format variants are NOT
+        -- interchangeable). Every other customer tolerates reel-suffix/format
+        -- differences via a NORMALIZED match (strip -, #, space, ., / and case),
+        -- plus a directional prefix so stock carrying a packaging suffix still
+        -- counts (BOM 'ADR03BUJZ' matches stock 'ADR03BUJZ-REEL7'). One-directional
+        -- on purpose: a BOM MPN is NOT matched to a SHORTER stock MPN, which would
+        -- over-match distinct parts (e.g. 'MMBT2222A-TP' vs 'MMBT2222').
         COALESCE((
-            SELECT SUM(w2.onhandqty) FROM pcb_inventory."tblWhse_Inventory" w2
-            WHERE w2.mpn = bl.bom_mpn AND w2.item <> bl.aci_pn
-              AND COALESCE(w2.loc_to, '') != 'MFG Floor'
+            SELECT SUM(p.onhandqty) FROM mpn_pool p
+            WHERE p.item <> bl.aci_pn
               AND COALESCE(bl.bom_mpn, '') != ''
+              AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE (
+                       p.nmpn = bl.bom_key
+                    OR (char_length(bl.bom_key) >= 6 AND p.nmpn LIKE bl.bom_key || '%%')
+                  ) END
         ), 0) as other_mpn_onhand,
         (
             SELECT string_agg(loc, ', ') FROM (
-                SELECT w3.item || ' #' || w3.pcn || '=' || SUM(w3.onhandqty)::text AS loc
-                FROM pcb_inventory."tblWhse_Inventory" w3
-                WHERE w3.mpn = bl.bom_mpn AND w3.item <> bl.aci_pn
-                  AND COALESCE(w3.loc_to, '') != 'MFG Floor'
-                  AND w3.onhandqty > 0 AND COALESCE(bl.bom_mpn, '') != ''
-                GROUP BY w3.item, w3.pcn
-                ORDER BY SUM(w3.onhandqty) DESC
+                SELECT p.item || ' #' || p.pcn || '=' || SUM(p.onhandqty)::text AS loc
+                FROM mpn_pool p
+                WHERE p.item <> bl.aci_pn
+                  AND COALESCE(bl.bom_mpn, '') != ''
+                  AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE (
+                           p.nmpn = bl.bom_key
+                        OR (char_length(bl.bom_key) >= 6 AND p.nmpn LIKE bl.bom_key || '%%')
+                      ) END
+                GROUP BY p.item, p.pcn
+                ORDER BY SUM(p.onhandqty) DESC
                 LIMIT 20
             ) s
         ) as other_mpn_locations
@@ -4840,7 +4864,15 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
     rev_row = cursor.fetchone()
     job_rev = rev_row['job_rev'] if rev_row else None
 
-    cursor.execute(_SHORTAGE_MATCH_SQL, (job, job, job))
+    # Chemring jobs keep STRICT exact-MPN matching for the same-MPN visibility
+    # column (defense traceability); all other customers get tolerant matching.
+    cursor.execute(
+        'SELECT bool_or(cust ILIKE %s) AS is_chem FROM pcb_inventory."tblBOM" WHERE job = %s',
+        ('%chemring%', job))
+    chem_row = cursor.fetchone()
+    strict_mpn = bool(chem_row and chem_row['is_chem'])
+
+    cursor.execute(_SHORTAGE_MATCH_SQL, (job, job, job, strict_mpn, strict_mpn))
     matched_items = cursor.fetchall()
     if not matched_items:
         return None
