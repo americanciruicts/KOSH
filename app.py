@@ -4801,7 +4801,7 @@ _SHORTAGE_MATCH_SQL = """
         CASE WHEN bl.qty ~ '^[0-9]+([.][0-9]+)?$' THEN bl.qty::numeric ELSE 0 END as qty,
         inv.qty_on_hand, bl.aci_pn as item,
         COALESCE(inv.location, '') as location,
-        CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost,
+        CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' AND length(split_part(bl.cost, '.', 1)) <= 6 THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost,
         bl.man as manufacturer, bl."DESC" as description,
         -- VISIBILITY ONLY (does NOT change the shortage math): stock of the SAME
         -- MPN sitting under a DIFFERENT job's part number. The shortage qty above
@@ -8009,7 +8009,7 @@ def job_detail(job_number):
                 inv.pcn,
                 bl.aci_pn as item,
                 COALESCE(inv.location, '') as location,
-                CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost,
+                CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' AND length(split_part(bl.cost, '.', 1)) <= 6 THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost,
                 bl.pou,
                 bl.job_rev as bom_job_rev,
                 bl.last_rev as bom_last_rev,
@@ -8311,7 +8311,7 @@ def job_export(job_number):
                 inv.pcn,
                 bl.aci_pn as item,
                 COALESCE(inv.location, '') as location,
-                CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost
+                CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' AND length(split_part(bl.cost, '.', 1)) <= 6 THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost
             FROM bom_lines bl
             JOIN inv ON inv.aci_pn = bl.aci_pn
             ORDER BY
