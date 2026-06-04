@@ -35,6 +35,13 @@
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
         }
+
+        /* Printed output excludes zero-on-hand lines (the digital view keeps
+           them). Always applied on print, independent of the on-screen
+           "Hide 0 On Hand" toggle. */
+        #shortageTable tbody tr[data-onhand="0"] {
+            display: none !important;
+        }
     }
 
     .shortage-row {
@@ -207,7 +214,7 @@
         <div class="no-print d-flex align-items-center gap-2">
             <span class="badge bg-danger me-2">Red = On Hand &lt; REQ (Shortage)</span>
             <div class="form-check form-switch mb-0">
-                <input class="form-check-input" type="checkbox" id="hideZeroToggle" checked>
+                <input class="form-check-input" type="checkbox" id="hideZeroToggle">
                 <label class="form-check-label small" for="hideZeroToggle">Hide 0 On Hand</label>
             </div>
             <input type="text" class="form-control form-control-sm d-inline-block" style="width: 200px;"
@@ -314,8 +321,9 @@
 
 {% block extra_js %}
 <script>
-    // Show only line items with on-hand > 0 by default (the "Hide 0 On Hand"
-    // toggle is checked). Users can untick it to also see zero-stock shortages.
+    // Digital view shows ALL shortage lines by default (toggle unchecked),
+    // including zero-on-hand. Printing drops zero-on-hand rows via @media print
+    // CSS. The "Hide 0 On Hand" toggle is an optional on-screen filter.
     function applyFilters() {
         const hideZero = document.getElementById('hideZeroToggle').checked;
         const searchText = document.getElementById('searchInput').value.toLowerCase();
@@ -333,7 +341,7 @@
     document.getElementById('hideZeroToggle').addEventListener('change', applyFilters);
     document.getElementById('searchInput').addEventListener('keyup', applyFilters);
 
-    // Apply on page load (hide zeros by default since toggle is checked)
+    // Apply on page load (toggle unchecked, so all rows show in the digital view)
     document.addEventListener('DOMContentLoaded', applyFilters);
 
     // Export column configuration
