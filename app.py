@@ -5539,9 +5539,8 @@ def sso_callback():
 
         # Auto-create user if not found (FORGE is the source of truth)
         if not user:
-            from passlib.hash import bcrypt as passlib_bcrypt
             display_name = username.split('@')[0].capitalize() if '@' in username else username
-            default_password = passlib_bcrypt.hash('Welcome1!')
+            default_password = bcrypt.hashpw('Welcome1!'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             cursor.execute("""
                 INSERT INTO pcb_inventory."tblUser" (username, userlogin, password, usersecurity)
                 VALUES (%s, %s, %s, %s)
