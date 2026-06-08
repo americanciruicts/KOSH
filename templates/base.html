@@ -263,7 +263,7 @@
     </button>
 
     <!-- Main Content -->
-    <div class="container-fluid px-4" style="margin-top: 4rem;">
+    <div id="koshMainContent" class="container-fluid px-4" style="margin-top: 4rem;">
         <!-- Modern Toast Notifications -->
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -867,12 +867,17 @@
     }, { passive: false });
     </script>
 
-    <!-- Global auto-refresh: a single toggle on EVERY page (default ON, 30s).
+    <!-- Global auto-refresh: a single toggle on EVERY page (default ON, 60s).
          It NEVER refreshes while the user is filling a form (a field is focused
          or any input has been changed) or while a modal is open, so data-entry
-         pages can't lose typed input. Preference + interval persist per browser.
+         pages can't lose typed input. Preference persists per browser.
+         The refresh is SEAMLESS: instead of reloading the page (white flash,
+         scroll jump, focus loss), it fetches the page in the background and
+         morphs only the changed DOM into place via idiomorph. Existing event
+         handlers survive, so the user can't tell a refresh happened.
          (Note: auto-refresh keeps the screen current; it does not reduce server
          latency — the gunicorn switch does that.) -->
+    <script src="{{ url_for('static', filename='js/idiomorph.min.js') }}?v=1"></script>
     {% if session.get('user_id') %}
     <div id="koshAutoRefresh" style="position:fixed; bottom:24px; right:24px; z-index:9999;
          display:flex; align-items:center; gap:8px; background:rgba(91,33,182,0.92); color:#fff;
@@ -884,23 +889,17 @@
     </div>
     <script>
     (function() {
-        var INTERVAL = 30;                 // seconds
+        var INTERVAL = 60;                 // seconds
         var KEY = 'kosh_autorefresh_enabled';
-        var SCROLL_KEY = 'kosh_scroll_' + location.pathname;
         var ctrl  = document.getElementById('koshAutoRefresh');
         var label = document.getElementById('koshAutoRefreshLabel');
         var icon  = document.getElementById('koshAutoRefreshIcon');
-        if (!ctrl) return;
+        var main  = document.getElementById('koshMainContent');
+        if (!ctrl || !main) return;
 
         // Default ON unless the user previously turned it off.
         var enabled = localStorage.getItem(KEY);
         enabled = (enabled === null) ? true : (enabled === '1');
-
-        // Restore scroll position after an auto-refresh.
-        try {
-            var sp = sessionStorage.getItem(SCROLL_KEY);
-            if (sp !== null) { window.scrollTo(0, parseInt(sp, 10)); sessionStorage.removeItem(SCROLL_KEY); }
-        } catch (e) {}
 
         // Track whether the user has started entering data on this page.
         var dirty = false;
@@ -916,12 +915,14 @@
             return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT');
         }
         function modalOpen() { return !!document.querySelector('.modal.show, .modal.in'); }
+        var openMenu = function() { return !!document.querySelector('.dropdown-menu.show'); };
         // Hold the refresh whenever interrupting it would be disruptive.
         function shouldHold() {
-            return dirty || inputFocused() || modalOpen() || document.hidden;
+            return dirty || inputFocused() || modalOpen() || openMenu() || document.hidden;
         }
 
         var countdown = INTERVAL;
+        var refreshing = false;
         function render() {
             if (enabled) {
                 ctrl.style.opacity = '1';
@@ -933,16 +934,59 @@
                 label.textContent = 'Auto-refresh: off';
             }
         }
+
+        // Seamless refresh: fetch the current page and morph only the changed
+        // DOM into place. No reload, no flash, no scroll/focus loss — the user
+        // can't tell it happened. Idiomorph reuses existing elements so their
+        // event handlers survive; live <canvas> charts are left untouched.
+        function seamlessRefresh() {
+            if (refreshing) return;
+            refreshing = true;
+            fetch(location.href, {
+                credentials: 'same-origin',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            }).then(function(resp) {
+                // Session expired / redirected to login → fall back to a real
+                // navigation so the user actually lands on the login page.
+                if (resp.redirected && /\/login(\b|\?|$)/.test(resp.url)) {
+                    location.href = resp.url; return null;
+                }
+                if (!resp.ok) return null;
+                return resp.text();
+            }).then(function(html) {
+                if (!html) return;
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var fresh = doc.getElementById('koshMainContent');
+                if (!fresh || typeof Idiomorph === 'undefined') return;
+                Idiomorph.morph(main, fresh.innerHTML, {
+                    morphStyle: 'innerHTML',
+                    callbacks: {
+                        beforeNodeMorphed: function(oldNode) {
+                            // Never disturb an element the user is editing, an
+                            // open widget, or a live canvas (chart.js draws onto
+                            // it and the pixels aren't in the DOM to diff).
+                            if (oldNode.nodeType !== 1) return true;
+                            if (oldNode.tagName === 'CANVAS') return false;
+                            if (oldNode.hasAttribute && oldNode.hasAttribute('data-ar-skip')) return false;
+                            if (oldNode === document.activeElement) return false;
+                            return true;
+                        }
+                    }
+                });
+            }).catch(function() {
+                /* network blip — just try again next cycle */
+            }).then(function() {
+                refreshing = false;
+                countdown = INTERVAL;
+                render();
+            });
+        }
+
         function tick() {
             if (!enabled) { render(); return; }
-            if (shouldHold()) { countdown = INTERVAL; render(); return; }  // don't count down mid-entry
+            if (shouldHold() || refreshing) { if (shouldHold()) countdown = INTERVAL; render(); return; }
             countdown--;
-            if (countdown <= 0) {
-                try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (e) {}
-                var sep = location.search ? '&' : '?';
-                location.href = location.pathname + location.search + sep + '_ar=' + Date.now();
-                return;
-            }
+            if (countdown <= 0) { seamlessRefresh(); return; }
             render();
         }
         ctrl.addEventListener('click', function() {
