@@ -1,6 +1,6 @@
 # MAJOR DATA INTEGRITY ISSUE — On-Hand Double-Count Remediation Plan
 
-**Status:** Diagnosed (root cause proven). Remediation NOT yet started.
+**Status:** Core fix DEPLOYED to production (Phases 0–3, 5, 6 done; phantom eliminated, 0 double-counts, nightly monitor live). Remaining items are operational/physical — see §0 checklist.
 **Owner:** KOSH maintainers
 **Created:** 2026-06-12
 **Severity:** Critical — purchasing decisions are made against phantom on-hand.
@@ -18,6 +18,33 @@
 > any on-hand inflated by a relabel-ADJT, whether or not it happens to equal the
 > floor qty. The fix neutralizes ALL relabel-ADJT phantom; success is measured by
 > total phantom removed (≈1.44M units / 2,523 rows), not by the exact-equal count.
+
+## 0. TODO / STATUS CHECKLIST (as of 2026-06-12)
+
+### ✅ DONE (deployed / applied to production)
+- [x] **Phase 0** — full backup, dated table snapshots, staging DB.
+- [x] **Phase 1** — relabel detector + corrected-on-hand preview (`onhand_correction_preview_20260612.csv`).
+- [x] **Phase 2** — reconcile calculation fix: relabel-ADJT = quantity-neutral, MPN-normalized, downward-only guard. **Deployed** (commit 0d3682c). Removed ~1.44M phantom units.
+- [x] **Phase 3** — double-count A/B cleanup on prod: 480 zero on-hand (dup on floor) + 128 zero mfg_qty (dup in bin). **0 double-count rows remain.**
+- [x] **#2 stale-location fix** — 148 mislabeled MFG-Floor rows relocated to their real bins (stock un-hidden).
+- [x] **Phase 5** — PCN collision detector built (`scripts/integrity_check.sql`); **0 collisions** today.
+- [x] **Phase 6** — nightly integrity monitor deployed (commit 0ecc242), **verified firing** (all-clear).
+- [x] **Phase 4** — CANCELLED per owner (no "On Floor" column on shortage report).
+
+### ☐ OPEN — needs PEOPLE / physical verification (not blocked on code)
+- [ ] **Group C** — ~1,443 MFG-Floor rows with on-hand but no mfg_qty (single-counted). Warehouse must physically verify each: truly on floor → set on-hand 0, or real stock → keep. List: `group_C_mfgfloor_review_20260612.csv`. **Do NOT auto-zero (would destroy real stock).**
+- [ ] **Task 5 (reconcile non-convergence)** — ~370 rows where the ledger derives MORE than stored on-hand. Keep the temporary downward-only guard. Resolve only after a **physical recount** of those parts (incomplete pre-migration history). No phantom risk meanwhile (`stored_above_ledger = 0`).
+- [ ] **April-1-2 / label mismatch (T3/T4)** — current data is mostly consistent (warehouse `item` tracks the ledger). Specific items to confirm against PHYSICAL LABELS:
+  - [ ] **PCN 43281** — ledger has two different parts (`7860-29`/BAT54 and `7620-50`/MFR-25); warehouse shows `7620-50`. Confirm which is physically on the reel and correct/re-issue.
+  - [ ] **684 same-MPN renumbers since March 3** — same physical component, new part number. If the physical labels still show the old number, decide: **reprint labels** to the new number, or this is expected. (Not a warehouse-data error.)
+  - [ ] **3 of 54 April-generated PCNs** whose item was later renumbered — verify intended.
+  - [ ] Original "92-group" April collision list was **never persisted** (stdout only); can be reconstructed by replaying the importer against the March-3 backup if a precise list is needed.
+
+### ☐ OPEN — optional code hardening
+- [ ] **Phase 7 (prevention)** — relabel-ADJTs still arrive daily from the **Access re-import** (~149/day). On-hand is already protected (reconcile neutralizes them), so this is OPTIONAL: optionally change the import to log relabels as `PN_CHANGE` instead of `ADJT`-with-qty for a semantically clean ledger.
+- [ ] **Remove the downward-only guard** in `_sync_onhand_from_transactions` once Task 5 is resolved (so the reconcile can raise on-hand again for legitimate cases).
+
+---
 
 ## 1. Root Cause (what is actually wrong)
 
@@ -429,7 +456,7 @@ staging, then on prod.** Phases 1, 5 are read-only and safe to run anytime.
   produced. **No production data touched.**
 
 **Next:** owner reviews `onhand_correction_preview_20260612.csv`.
-
+C
 ### Phase 2 — Calculation fix attempt + validation — ⚠️ HELD 2026-06-12 (NOT deployed)
 - **Decision:** RNDT kept as recount baseline (owner deferred to recommendation;
   data proved RNDT-neutral would zero ~thousands of legitimately-stocked parts —
