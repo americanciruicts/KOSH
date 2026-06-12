@@ -3280,6 +3280,95 @@ def _sync_onhand_from_transactions():
 threading.Thread(target=_sync_onhand_from_transactions, daemon=True).start()
 
 
+def _nightly_integrity_check():
+    """Daily READ-ONLY inventory integrity scan (Phase 6 monitor). Records a
+    summary row in tblIntegrityCheckLog and logs a WARNING if anything regresses,
+    so the 2026-06-12 defects can't silently return. Same checks as
+    scripts/integrity_check.sql. Writes only to its own log table."""
+    import time
+    time.sleep(180)  # let the app settle on boot
+    while True:
+        conn = None
+        try:
+            conn = db_manager.get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pcb_inventory."tblIntegrityCheckLog" (
+                    id SERIAL PRIMARY KEY,
+                    checked_at timestamptz DEFAULT NOW(),
+                    double_count integer, negative_onhand integer,
+                    pcn_collision integer, stored_above_ledger integer
+                )
+            """)
+            cur.execute("""SELECT count(*) FROM pcb_inventory."tblWhse_Inventory"
+                           WHERE onhandqty>0 AND mfg_qty ~ '^-?[0-9]+$' AND mfg_qty::int>0""")
+            double_count = cur.fetchone()[0]
+            cur.execute("""SELECT count(*) FROM pcb_inventory."tblWhse_Inventory" WHERE onhandqty<0""")
+            negative_onhand = cur.fetchone()[0]
+            cur.execute("""SELECT count(*) FROM (
+                    SELECT pcn FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn ~ '^[0-9]+$' AND onhandqty>0
+                    GROUP BY pcn HAVING count(DISTINCT lower(item))>1) t""")
+            pcn_collision = cur.fetchone()[0]
+            # Phantom regression: stored on-hand ABOVE the renumber-aware ledger.
+            cur.execute("""
+                WITH lv AS (
+                  SELECT DISTINCT lower(trim(loc_to)) v FROM pcb_inventory."tblTransaction" WHERE trantype<>'ADJT' AND loc_to IS NOT NULL AND trim(loc_to)<>''
+                  UNION SELECT DISTINCT lower(trim(loc_from)) FROM pcb_inventory."tblTransaction" WHERE trantype<>'ADJT' AND loc_from IS NOT NULL AND trim(loc_from)<>''
+                  UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('n/a'),('na'),('')
+                ),
+                parsed AS (
+                  SELECT pcn::text pcn, lower(translate(coalesce(mpn,''),'-# ./','')) mpn_key, id, trantype, tranqty, coalesce(reversed,false) reversed,
+                    CASE WHEN tran_time ~ '^[0-9]{4}-' THEN tran_time::timestamptz
+                         WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}' THEN to_timestamp(tran_time,'MM/DD/YY HH24:MI:SS') ELSE NULL END ts,
+                    (trantype='ADJT' AND lower(trim(coalesce(loc_from,'')))<>lower(trim(coalesce(loc_to,'')))
+                       AND NOT (lower(trim(coalesce(loc_to,'')))  IN (SELECT v FROM lv) OR coalesce(loc_to,'')  ~ '^[0-9]{6,}$' OR trim(coalesce(loc_to,''))='')
+                       AND NOT (lower(trim(coalesce(loc_from,''))) IN (SELECT v FROM lv) OR coalesce(loc_from,'') ~ '^[0-9]{6,}$' OR trim(coalesce(loc_from,''))='')) is_relabel
+                  FROM pcb_inventory."tblTransaction" WHERE tranqty ~ '^-?[0-9]+$'
+                ),
+                last_rndt AS (SELECT DISTINCT ON (pcn,mpn_key) pcn,mpn_key,id rndt_id,ts rndt_ts,tranqty::int rndt_qty
+                  FROM parsed WHERE trantype='RNDT' AND reversed=false ORDER BY pcn,mpn_key,ts DESC NULLS LAST,id DESC),
+                net AS (SELECT t.pcn,t.mpn_key, GREATEST(0, COALESCE(MAX(r.rndt_qty),0)+SUM(CASE WHEN t.is_relabel THEN 0
+                     WHEN t.trantype IN ('INDF','STOCK','PCN Generation','RESTOCK','ADJT') THEN t.tranqty::int
+                     WHEN t.trantype IN ('PICK','PURGE') THEN -t.tranqty::int ELSE 0 END)) qty
+                  FROM parsed t LEFT JOIN last_rndt r ON t.pcn=r.pcn AND t.mpn_key=r.mpn_key
+                  WHERE t.reversed=false AND (r.rndt_id IS NULL OR (r.rndt_ts IS NOT NULL AND t.ts>=r.rndt_ts) OR (r.rndt_ts IS NULL AND t.id>=r.rndt_id))
+                  GROUP BY t.pcn,t.mpn_key)
+                SELECT count(*) FROM pcb_inventory."tblWhse_Inventory" w JOIN net n
+                  ON w.pcn::text=n.pcn AND lower(translate(coalesce(w.mpn,''),'-# ./',''))=n.mpn_key
+                WHERE w.onhandqty > n.qty
+            """)
+            stored_above_ledger = cur.fetchone()[0]
+            cur.execute("""INSERT INTO pcb_inventory."tblIntegrityCheckLog"
+                           (double_count,negative_onhand,pcn_collision,stored_above_ledger)
+                           VALUES (%s,%s,%s,%s)""",
+                        (double_count, negative_onhand, pcn_collision, stored_above_ledger))
+            conn.commit()
+            if double_count or negative_onhand or pcn_collision or stored_above_ledger:
+                logger.warning(
+                    "INTEGRITY CHECK regression: double_count=%s negatives=%s "
+                    "collisions=%s stored_above_ledger=%s",
+                    double_count, negative_onhand, pcn_collision, stored_above_ledger)
+            else:
+                logger.info("Nightly integrity check: all clear")
+        except Exception as e:
+            logger.error(f"Nightly integrity check error: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        finally:
+            if conn:
+                try:
+                    db_manager.return_connection(conn)
+                except Exception:
+                    pass
+        time.sleep(86400)  # once per day
+
+threading.Thread(target=_nightly_integrity_check, daemon=True).start()
+
+
 def _do_log_activity(user_id, username, full_name, action_type, description, details):
     """Background worker that inserts a row into tblActivityLog."""
     conn = None
