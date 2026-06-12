@@ -255,9 +255,9 @@
                         <td>{{ item.location or '-' }}</td>
                     </tr>
                     {% for sub in item.other_mpn_rows %}
-                    <tr class="mpn-subrow" data-onhand="{{ sub.qty or 0 }}" style="background-color: #fafbfc;"
+                    <tr class="mpn-subrow" data-onhand="{{ sub.qty or 0 }}"
                         title="Same MPN under a different job's part number. Visibility only — not part of this job's shortage.">
-                        <td><i class="bi bi-arrow-return-right text-muted me-1"></i><strong>{{ sub.item or '-' }}</strong></td>
+                        <td><strong>{{ sub.item or '-' }}</strong></td>
                         <td>{{ sub.pcn or '-' }}</td>
                         <td>
                             <small>{{ sub.mpn or item.mpn or '-' }}</small>
