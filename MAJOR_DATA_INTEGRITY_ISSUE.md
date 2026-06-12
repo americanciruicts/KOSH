@@ -519,6 +519,18 @@ via the live reconcile:
   without risking real stock. Many "moved off floor" rows are real available stock
   hidden by a stale `loc_to='MFG Floor'` (fixable to the real bin once confirmed).
 
+### #1 + #2 — ✅ DONE 2026-06-12
+- **#2 (commit n/a — direct prod fix):** 148 Group-C rows whose last ledger move was
+  to a real bin had `loc_to` restored from 'MFG Floor' to that bin — un-hiding
+  ledger-backed available stock in the shortage report. Owner-approved; reversible
+  from `tblWhse_Inventory_bak_20260612`. Integrity still green afterward. 1,443
+  genuinely-floored rows remain for physical review.
+- **#1 (commit 0ecc242, DEPLOYED):** nightly integrity monitor
+  (`_nightly_integrity_check`, daily background thread) → logs to
+  `tblIntegrityCheckLog` and WARNs on any regression (double-count, negatives,
+  collisions, stored-above-ledger phantom). Read-only; mirrors
+  `scripts/integrity_check.sql`.
+
 ### STILL OPEN (needs people / sign-off, not blocked on code)
 - **Group C review (~1,592 rows / 208K units):** warehouse confirms per-case;
   "moved off floor" → set loc_to to the real bin; "picked to floor" → verify.
