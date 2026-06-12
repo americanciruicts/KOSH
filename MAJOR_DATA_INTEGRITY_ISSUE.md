@@ -243,7 +243,12 @@ no row in `tblTransaction` was modified.
 
 ---
 
-### Phase 4 — Surface MFG-Floor stock in the shortage report (Task 2)  *(write/feature)*
+### Phase 4 — CANCELLED per owner (2026-06-12)
+> Owner does NOT want an "On Floor" / MFG-Floor column on the shortage report.
+> The shortage report continues to **exclude MFG-Floor stock** as it does today.
+> Do not add the column. (Original Task-2 text retained below for history only.)
+
+### Phase 4 (ORIGINAL, not doing) — Surface MFG-Floor stock in the shortage report (Task 2)  *(write/feature)*
 
 **Goal:** stop the shortage report from hiding real floor stock, now that floor stock
 is no longer inflated.
@@ -469,6 +474,72 @@ via the live reconcile:
    increases.
 
 ---
+
+### Phase 2/3 (core) — ✅ DEPLOYED to production 2026-06-12 (commit 0d3682c)
+- Renumber-aware, MPN-normalized, downward-only reconcile shipped via deploy.sh
+  (15 regression tests green) + vercel --prod. Reconciler applied it live.
+- **Verified on prod:** PCN 30314 on-hand 10000 → 0 (mfg_qty 10000 preserved);
+  MFG-Floor phantom 4,038 rows/1.44M units → 2,082 rows/485K units; ~2,353 rows
+  corrected in the audit log. No negatives.
+- **Going forward:** the reconcile now permanently treats relabel-ADJTs as
+  quantity-neutral, so future renumbers can't re-inject on-hand phantom.
+
+### Phase 3 (residual double-count) — ✅ APPLIED to production 2026-06-12
+- Investigated the residual MFG-Floor-with-on-hand rows. Found the genuine
+  double-count is only where BOTH on-hand AND mfg_qty are populated. Resolved by
+  location:
+  - **A (480 rows): dup on MFG Floor → on-hand set to 0** (mfg_qty keeps the floor
+    stock). Audit-tagged `phase3_dup_floor_zero_onhand_20260612`.
+  - **B (128 rows): dup in a bin → mfg_qty set to 0** (on-hand keeps the available
+    stock).
+  - **C (1,595 rows: on-hand>0, mfg_qty=0, MFG Floor): LEFT ALONE** — NOT a
+    double-count; single-counted (likely migrated) stock. Zeroing would destroy
+    real inventory. Flagged for separate review (is it on the floor, or fully
+    picked?).
+- **Verified on prod: 0 remaining rows with on-hand>0 AND mfg_qty>0; 0 negatives.**
+  The "on-hand AND MFG-Floor showing the same units" symptom is fully eliminated.
+  Sticks under the guarded reconciler (can't raise on-hand; never touches mfg_qty).
+
+### Integrity check + Phase 5/6/7 status — 2026-06-12
+- **`scripts/integrity_check.sql`** built (read-only monitor). On prod ALL GREEN:
+  double_count=0, negative_onhand=0, **pcn_collision=0** (Phase 5 detector),
+  **stored_above_ledger=0** (no phantom remains). INFO: ~149 relabel-ADJTs arrive
+  daily from the Access re-import yet produce 0 phantom — the reconcile fix
+  protects prod live.
+- **Phase 7 (prevention):** the relabel-ADJTs originate from the **legacy Access →
+  KOSH re-import** (blank userid, bulk renumber batches), NOT the KOSH UI (whose
+  edit route logs locations + deltas correctly). The reconcile neutralizes them
+  from ANY source, so on-hand is already protected. A deeper "log relabels as
+  PN_CHANGE at the import" change is OPTIONAL (cosmetic given the calc handles it).
+- **Phase 6 (nightly monitor):** `integrity_check.sql` is the content; wiring it as
+  an automated daily job (background thread or cron) is a small deploy — NOT yet
+  done (offer pending).
+- **Group C:** reviewable list exported to `group_C_mfgfloor_review_20260612.csv`
+  (1,592 rows). Needs PHYSICAL/warehouse verification — cannot be auto-corrected
+  without risking real stock. Many "moved off floor" rows are real available stock
+  hidden by a stale `loc_to='MFG Floor'` (fixable to the real bin once confirmed).
+
+### STILL OPEN (needs people / sign-off, not blocked on code)
+- **Group C review (~1,592 rows / 208K units):** warehouse confirms per-case;
+  "moved off floor" → set loc_to to the real bin; "picked to floor" → verify.
+- **Task 5 (reconcile non-convergence):** the temporary downward-only guard stays.
+  The suppressed ~370 "raises" are rows where the ledger derives MORE than stored
+  (incomplete pre-migration history / manual down-adjustments). Resolving them
+  means trusting the ledger to RAISE on-hand — unsafe without a **physical
+  recount/backfill**. This is a data-completeness task, not a code bug. Remove the
+  guard only after recount. (`stored_above_ledger=0` confirms no phantom risk
+  meanwhile.)
+- **Phase 6 automated nightly job:** wire `integrity_check.sql` (small deploy).
+- **Residual floor/loc reconciliation (Phase 3.2/3.3):** ~2,082 MFG-Floor rows still
+  carry on-hand the ledger says is >0 — the complex reused-reel cases. Need
+  loc_to/mfg_qty reconciliation + residual clear, case-reviewed.
+- **Reconcile non-convergence (Task 5, real form):** the temporary downward-only
+  guard suppresses ~370 stale "catch-up" increases; the underlying incomplete-
+  ledger / SSOT issue is unresolved. Removing the guard is gated on this.
+- **Task 2 — shortage report "On Floor" column (Phase 4):** not started.
+- **Task 4 — PCN collision detector (Phase 5):** not started (0 collisions today).
+- **Phase 6 (nightly integrity check) / Phase 7 (log relabels as PN_CHANGE at the
+  data-entry path, guards, CI):** not started.
 
 ## 8. Definition of done (whole effort)
 
