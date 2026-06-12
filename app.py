@@ -4823,7 +4823,10 @@ _SHORTAGE_MATCH_SQL = """
             (array_agg(COALESCE(w.loc_to, '') ORDER BY w.onhandqty DESC NULLS LAST))[1] as location
         FROM bom_lines bl
         LEFT JOIN pcb_inventory."tblWhse_Inventory" w
-            ON w.item = bl.aci_pn
+            -- Case-insensitive: inventory stores the SAME part number in mixed
+            -- case (e.g. BOM '6779ML-97' vs stock '6779ml-97'). A case-sensitive
+            -- join missed that stock and falsely reported the part as short.
+            ON UPPER(w.item) = UPPER(bl.aci_pn)
             AND COALESCE(w.loc_to, '') != 'MFG Floor'
         GROUP BY bl.aci_pn
     ),
@@ -4846,8 +4849,8 @@ _SHORTAGE_MATCH_SQL = """
         bl.man as manufacturer, bl."DESC" as description,
         -- VISIBILITY ONLY (does NOT change the shortage math): stock of the SAME
         -- MPN sitting under a DIFFERENT job's part number. The shortage qty above
-        -- still counts only this job's own part (w.item = aci_pn) so we never
-        -- double-allocate another job's committed stock — but Purchasing can now
+        -- still counts only this job's own part (UPPER(w.item)=UPPER(aci_pn)) so
+        -- we never double-allocate another job's committed stock — but Purchasing can now
         -- see what Theresa used to hand-search in Warehouse Inventory.
         -- other_mpn_onhand is the running total (kept for the regression guard);
         -- other_mpn_locations is a JSON breakdown rendered as indented ROW ENTRIES
@@ -4863,7 +4866,7 @@ _SHORTAGE_MATCH_SQL = """
         -- over-match distinct parts (e.g. 'MMBT2222A-TP' vs 'MMBT2222').
         COALESCE((
             SELECT SUM(p.onhandqty) FROM mpn_pool p
-            WHERE p.item <> bl.aci_pn
+            WHERE UPPER(p.item) <> UPPER(bl.aci_pn)
               AND COALESCE(bl.bom_mpn, '') != ''
               AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE (
                        p.nmpn = bl.bom_key
@@ -4880,7 +4883,9 @@ _SHORTAGE_MATCH_SQL = """
                        (array_agg(COALESCE(p.loc_to, '') ORDER BY p.onhandqty DESC NULLS LAST))[1] AS location,
                        (array_agg(p.mpn ORDER BY p.onhandqty DESC NULLS LAST))[1] AS mpn
                 FROM mpn_pool p
-                WHERE p.item <> bl.aci_pn
+                -- Same ACI PN under another PCN (any case) is THIS job's own
+                -- stock, already counted above — never list it as an arrow entry.
+                WHERE UPPER(p.item) <> UPPER(bl.aci_pn)
                   AND COALESCE(bl.bom_mpn, '') != ''
                   AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE (
                            p.nmpn = bl.bom_key

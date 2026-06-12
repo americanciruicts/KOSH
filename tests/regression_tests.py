@@ -660,6 +660,68 @@ def test_shortage_report_alt_part_qty_and_same_mpn_visibility():
             f"row entry must carry other PN OTHERJOB-99 @ 50, got {sub_rows[0]!r}")
 
 
+def test_shortage_report_own_stock_is_case_insensitive():
+    """Inventory stores the SAME part number in mixed case (BOM 'RCASE-1' vs
+    stock 'rcase-1'). The job's own on-hand MUST aggregate across case — a
+    case-sensitive join (the 2026-06-12 bug) missed the stock, falsely reported
+    the part as short, AND listed the same part as a same-MPN "other PN" row.
+
+    Guards both halves: (1) own on-hand counts the mixed-case lot; (2) the same
+    ACI PN (any case) is NEVER emitted as a same-MPN row entry — only a genuinely
+    different part number is.
+    """
+    sys.path.insert(0, '/app')
+    import app as app_module
+    from psycopg2.extras import RealDictCursor
+
+    job = 'REGRESS-CASE-9999'
+    aci_pn = 'RCASE-1'            # BOM stores UPPER
+    mpn = 'RGMPN-CASE-1'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(f'DELETE FROM {SCHEMA}."tblBOM" WHERE job = %s', (job,))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn IN %s',
+                    (('99330', '99332'),))
+
+        cur.execute(
+            f'INSERT INTO {SCHEMA}."tblBOM" (line, "DESC", man, mpn, aci_pn, qty, cost, job, job_rev) '
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            ('10', 'Regress res', 'RegressMan', mpn, aci_pn, '100', '1.00', job, 'A'),
+        )
+
+        # 30 of THIS job's own part stored in LOWERCASE; 50 of same MPN under a
+        # genuinely DIFFERENT part number.
+        _seed_warehouse_row(cur, 99330, 'rcase-1', mpn=mpn, onhandqty=30, loc_to='Count Area')
+        _seed_warehouse_row(cur, 99332, 'RCASE-OTHER', mpn=mpn, onhandqty=50, loc_to='Count Area')
+
+        result = app_module._persist_shortage_report(
+            cur, job, order_qty=1, report_name='regress', notes='', username='regression@test.com')
+        assert result is not None, 'shortage report should generate for seeded job'
+
+        cur.execute(
+            f'SELECT qty_on_hand, req, other_mpn_locations '
+            f'FROM {SCHEMA}."tblShortageReportItems" WHERE report_id = %s',
+            (result['report_id'],))
+        rows = cur.fetchall()
+        assert len(rows) == 1, f'expected 1 shortage line, got {len(rows)}'
+        row = rows[0]
+
+        # (1) own on-hand counts the mixed-case lot (30), so REQ 100 > 30 = short
+        assert row['qty_on_hand'] == 30, (
+            f"own on-hand must count mixed-case stock (30), got {row['qty_on_hand']} "
+            f"(a 0 here is the false-shortage bug)")
+
+        # (2) same ACI PN (any case) must NOT be a same-MPN row entry; only the
+        # genuinely different part number appears.
+        sub_rows = app_module.parse_other_mpn_rows(row['other_mpn_locations'])
+        items = {s['item'].upper() for s in sub_rows}
+        assert aci_pn.upper() not in items, (
+            f"same ACI PN (any case) must NOT appear as a same-MPN row entry, got {sub_rows!r}")
+        assert items == {'RCASE-OTHER'}, (
+            f"only the genuinely different PN should be a row entry, got {sub_rows!r}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -673,6 +735,7 @@ TESTS = [
     test_purged_pcn_can_be_restocked_with_same_pcn,
     test_bom_load_inserts_every_item_received,
     test_shortage_report_alt_part_qty_and_same_mpn_visibility,
+    test_shortage_report_own_stock_is_case_insensitive,
     test_bom_python_parser_finds_lines_across_sheets,
     test_return_connection_never_leaks_foreign_connection,
     test_quantity_fields_are_not_number_spinners,

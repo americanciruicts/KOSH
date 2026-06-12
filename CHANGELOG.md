@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Shortage Report — false shortage from case-mismatched part numbers.**
+  Inventory stores the same part number in mixed case (BOM `6779ML-97` vs stock
+  `6779ml-97`). The job's own on-hand join was case-sensitive, so the stock under
+  the other case wasn't counted — the part was falsely reported short (0 on hand)
+  and the same part appeared as a "same MPN, other PN" row entry. Own-stock
+  matching and the same-MPN exclusion are now case-insensitive
+  (`UPPER(w.item) = UPPER(aci_pn)`), so the stock counts toward the job and the
+  same ACI PN (any case) is never listed as a cross-job row. Genuinely different
+  part numbers with the same MPN still appear as visibility rows (unchanged).
+  Locked by `test_shortage_report_own_stock_is_case_insensitive`.
+
 ### Changed
 - **Shortage Report — same-MPN/other-PN stock moved from columns to row entries.**
   Removed the two cross-job columns ("ALSO ON HAND (SAME MPN)" and "SAME-MPN
