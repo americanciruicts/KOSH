@@ -3120,7 +3120,21 @@ def _sync_onhand_from_transactions():
             # the start. RESTOCK is a positive contributor, and ADJT is a
             # signed delta logged by manual warehouse edits.
             cur.execute("""
-                WITH parsed AS (
+                WITH locvocab AS (
+                    -- Real warehouse LOCATIONS, learned from NON-ADJT activity
+                    -- (PICK/STOCK/RESTOCK/PTWY/INDF/PURGE record real bins/areas).
+                    -- Used below to tell a genuine ADJT (loc fields are locations)
+                    -- from a renumber mistakenly logged as ADJT (loc fields are ITEM
+                    -- numbers). Learning locations from data survives the 10-char
+                    -- truncation of loc_to (matching item spelling would not).
+                    SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM pcb_inventory."tblTransaction"
+                        WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
+                    UNION
+                    SELECT DISTINCT LOWER(TRIM(loc_from)) FROM pcb_inventory."tblTransaction"
+                        WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
+                    UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('n/a'),('na'),('')
+                ),
+                parsed AS (
                     -- Parse tran_time to a real timestamp so ordering is by
                     -- BUSINESS time, not by row id. id ordering is unsafe here
                     -- because Access data was migrated in batches and id !=
@@ -3129,7 +3143,11 @@ def _sync_onhand_from_transactions():
                     -- most recent one in real time.
                     SELECT
                         pcn::text AS pcn,
-                        LOWER(TRIM(COALESCE(mpn,''))) AS mpn_key,
+                        -- Normalize MPN (strip -, #, space, ., /) so spelling variants
+                        -- of the SAME part on a PCN (ERJ-3EKF1002V vs ERJ3EKF1002V)
+                        -- group together; otherwise a reel's history fragments and the
+                        -- wrong RNDT baseline is chosen. Same norm the shortage report uses.
+                        LOWER(TRANSLATE(COALESCE(mpn,''), '-# ./', '')) AS mpn_key,
                         id, trantype, tranqty, COALESCE(reversed, false) AS reversed,
                         CASE
                             WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
@@ -3137,7 +3155,18 @@ def _sync_onhand_from_transactions():
                             WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}'
                                 THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
                             ELSE NULL
-                        END AS ts
+                        END AS ts,
+                        -- A renumber/relabel mistakenly logged as ADJT carries the
+                        -- part's FULL qty with loc_from/loc_to = OLD/NEW item numbers
+                        -- (not locations). Counting it as +qty injected phantom stock
+                        -- (the on-hand double-count root cause, e.g. PCN 30314). Flag it
+                        -- so the net math treats it as quantity-neutral. A genuine ADJT
+                        -- has real locations in loc_from/loc_to and is unaffected.
+                        (trantype = 'ADJT'
+                           AND LOWER(TRIM(COALESCE(loc_from,''))) <> LOWER(TRIM(COALESCE(loc_to,'')))
+                           AND NOT (LOWER(TRIM(COALESCE(loc_to,'')))  IN (SELECT v FROM locvocab) OR COALESCE(loc_to,'')  ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_to,'')) = '')
+                           AND NOT (LOWER(TRIM(COALESCE(loc_from,''))) IN (SELECT v FROM locvocab) OR COALESCE(loc_from,'') ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_from,'')) = '')
+                        ) AS is_relabel
                     FROM pcb_inventory."tblTransaction"
                 ),
                 last_rndt AS (
@@ -3169,6 +3198,9 @@ def _sync_onhand_from_transactions():
                            GREATEST(0,
                              COALESCE(MAX(r.rndt_qty), 0)
                              + SUM(CASE
+                                 -- Renumber logged as ADJT = quantity-neutral (fixes
+                                 -- the phantom-stock double-count). MUST be first.
+                                 WHEN t.is_relabel THEN 0
                                  WHEN t.trantype = 'INDF' THEN t.tranqty::integer
                                  WHEN t.trantype = 'STOCK' THEN t.tranqty::integer
                                  WHEN t.trantype = 'PCN Generation' THEN t.tranqty::integer
@@ -3199,11 +3231,20 @@ def _sync_onhand_from_transactions():
                     FROM pcb_inventory."tblWhse_Inventory" w
                     JOIN net n
                       ON w.pcn::text = n.pcn
-                     AND LOWER(TRIM(COALESCE(w.mpn,''))) = n.mpn_key
+                     AND LOWER(TRANSLATE(COALESCE(w.mpn,''), '-# ./', '')) = n.mpn_key
                     JOIN activity a
                       ON a.pcn = n.pcn AND a.mpn_key = n.mpn_key
                     WHERE w.onhandqty IS DISTINCT FROM n.qty
                       AND (a.pick_count > 0 OR a.touch_count > 0)
+                      -- REMEDIATION GUARD (2026-06-12, temporary): only LOWER on-hand,
+                      -- never raise it. This applies the relabel-phantom corrections
+                      -- (downward) while suppressing the ~370 pre-existing "stale
+                      -- catch-up" INCREASES that come from incomplete pre-migration
+                      -- ledger history (the reconcile-non-convergence issue, tracked
+                      -- separately). Direct STOCK/RESTOCK ops still raise on-hand via
+                      -- their own UPDATEs, so availability is unaffected. Remove this
+                      -- line once ledger non-convergence is resolved.
+                      AND n.qty < w.onhandqty
                 ),
                 log_update AS (
                     INSERT INTO pcb_inventory."tblReconcileAudit"

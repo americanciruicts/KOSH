@@ -722,6 +722,72 @@ def test_shortage_report_own_stock_is_case_insensitive():
             f"only the genuinely different PN should be a row entry, got {sub_rows!r}")
 
 
+def test_onhand_reconcile_neutralizes_relabel_adjt():
+    """The on-hand double-count root cause (2026-06-12): a part RENUMBER/relabel
+    was logged as an ADJT carrying the part's FULL qty, with loc_from/loc_to set
+    to OLD/NEW item numbers (not locations). Counting that ADJT as +qty injects
+    phantom stock (e.g. PCN 30314 showed 10000 on-hand AND 10000 on MFG Floor).
+
+    The reconcile must treat a renumber-ADJT (both loc fields are NON-locations
+    and differ) as quantity-neutral. This test seeds INDF +1000, a relabel-ADJT
+    +1000, and PICK -1000, and asserts the corrected on-hand is 0 (the phantom is
+    removed) while the un-corrected math would wrongly yield 1000.
+    """
+    import psycopg2 as _pg
+    test_pcn = 99931
+    test_mpn = 'RELABEL-MPN-1'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor()
+        # INDF receipt (real location), relabel ADJT (ITEM->ITEM), PICK to floor.
+        def txn(tt, qty, lf, lt, t):
+            cur.execute(
+                f'INSERT INTO {SCHEMA}."tblTransaction" '
+                '(trantype, item, pcn, mpn, tranqty, tran_time, loc_from, loc_to, userid) '
+                'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                (tt, 'RELABELNEW-2', str(test_pcn), test_mpn, str(qty), t, lf, lt, 'regression@test.com'))
+        txn('INDF', 1000, 'n/a', 'Rec Area', '01/10/26 09:00:00')
+        txn('ADJT', 1000, 'RELABELOLD-1', 'RELABELNEW-2', '01/11/26 09:00:00')  # the relabel
+        txn('PICK', 1000, '1202233', 'MFG Floor', '01/12/26 09:00:00')
+
+        # Replicate the reconcile's renumber-aware net for this PCN: corrected
+        # (relabel neutralized) vs uncorrected (the old, phantom-producing math).
+        cur.execute(f"""
+            WITH locvocab AS (
+                SELECT DISTINCT LOWER(TRIM(loc_to)) v FROM {SCHEMA}."tblTransaction"
+                    WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
+                UNION SELECT DISTINCT LOWER(TRIM(loc_from)) FROM {SCHEMA}."tblTransaction"
+                    WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
+                UNION VALUES ('mfg floor'),('rec area'),('count area'),('n/a'),('na'),('')
+            ),
+            parsed AS (
+                SELECT trantype, tranqty,
+                    (trantype='ADJT'
+                       AND LOWER(TRIM(COALESCE(loc_from,''))) <> LOWER(TRIM(COALESCE(loc_to,'')))
+                       AND NOT (LOWER(TRIM(COALESCE(loc_to,'')))  IN (SELECT v FROM locvocab) OR COALESCE(loc_to,'')  ~ '^[0-9]{{6,}}$' OR TRIM(COALESCE(loc_to,''))='')
+                       AND NOT (LOWER(TRIM(COALESCE(loc_from,''))) IN (SELECT v FROM locvocab) OR COALESCE(loc_from,'') ~ '^[0-9]{{6,}}$' OR TRIM(COALESCE(loc_from,''))='')
+                    ) is_relabel
+                FROM {SCHEMA}."tblTransaction"
+                WHERE pcn::text = %s AND tranqty ~ '^-?[0-9]+$'
+            )
+            SELECT
+              GREATEST(0, SUM(CASE WHEN is_relabel THEN 0
+                  WHEN trantype IN ('INDF','STOCK','PCN Generation','RESTOCK','ADJT') THEN tranqty::int
+                  WHEN trantype IN ('PICK','PURGE') THEN -tranqty::int ELSE 0 END)) corrected,
+              GREATEST(0, SUM(CASE
+                  WHEN trantype IN ('INDF','STOCK','PCN Generation','RESTOCK','ADJT') THEN tranqty::int
+                  WHEN trantype IN ('PICK','PURGE') THEN -tranqty::int ELSE 0 END)) uncorrected,
+              BOOL_OR(is_relabel) any_relabel
+            FROM parsed
+        """, (str(test_pcn),))
+        corrected, uncorrected, any_relabel = cur.fetchone()
+        assert any_relabel is True, 'the ITEM->ITEM ADJT must be flagged as a relabel'
+        assert uncorrected == 1000, (
+            f'old math double-counts the relabel as +1000 phantom, got {uncorrected}')
+        assert corrected == 0, (
+            f'renumber-aware reconcile must neutralize the relabel -> on-hand 0, got {corrected}')
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -736,6 +802,7 @@ TESTS = [
     test_bom_load_inserts_every_item_received,
     test_shortage_report_alt_part_qty_and_same_mpn_visibility,
     test_shortage_report_own_stock_is_case_insensitive,
+    test_onhand_reconcile_neutralizes_relabel_adjt,
     test_bom_python_parser_finds_lines_across_sheets,
     test_return_connection_never_leaks_foreign_connection,
     test_quantity_fields_are_not_number_spinners,
