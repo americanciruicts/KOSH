@@ -85,8 +85,6 @@ SHORTAGE_EXPORT_COLUMNS = [
     {'key': 'item',         'label': 'ITEM',          'width': 15, 'default': True},
     {'key': 'qty_on_hand',  'label': 'ON HAND QTY',   'width': 14, 'default': True},
     {'key': 'location',     'label': 'LOCATION',      'width': 15, 'default': True},
-    {'key': 'other_mpn_onhand',    'label': 'ALSO ON HAND (SAME MPN)', 'width': 18, 'default': True},
-    {'key': 'other_mpn_locations', 'label': 'SAME-MPN LOCATIONS',      'width': 45, 'default': True},
     {'key': 'unit_cost',    'label': 'UNIT COST',     'width': 12, 'default': False},
     {'key': 'line_cost',    'label': 'LINE COST',     'width': 12, 'default': False},
 ]
@@ -106,13 +104,56 @@ def get_export_cell_value(item, column_key, order_qty=None):
         'item':         lambda i: i.get('item') or i.get('aci_pn') or '',
         'qty_on_hand':  lambda i: i.get('qty_on_hand') if i.get('qty_on_hand') is not None else i.get('on_hand', 0),
         'location':     lambda i: i.get('location') or '',
-        'other_mpn_onhand':    lambda i: i.get('other_mpn_onhand') or 0,
-        'other_mpn_locations': lambda i: i.get('other_mpn_locations') or '',
         'unit_cost':    lambda i: i.get('unit_cost') or '',
         'line_cost':    lambda i: i.get('line_cost') or '',
     }
     extractor = mapping.get(column_key, lambda i: '')
     return extractor(item)
+
+
+def serialize_other_mpn_locations(raw):
+    """Normalize the SQL `other_mpn_locations` value to a JSON string for storage
+    in tblShortageReportItems (a TEXT column). The query returns json_agg as a
+    parsed Python list (psycopg2 json adapter); pass it straight through if it is
+    already a str."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return raw
+    return json.dumps(raw)
+
+
+def parse_other_mpn_rows(raw):
+    """Parse the stored `other_mpn_locations` value into a list of dicts
+    {item, pcn, qty, location} for rendering as indented row entries under a BOM
+    line. Tolerates the new JSON form and the legacy 'ITEM #PCN=qty, ...' string
+    so previously-saved reports still render. Returns [] on anything unparseable."""
+    if not raw:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return [dict(r) for r in raw if isinstance(r, dict)]
+    text = str(raw).strip()
+    if text.startswith('['):
+        try:
+            data = json.loads(text)
+            return [r for r in data if isinstance(r, dict)]
+        except (ValueError, TypeError):
+            return []
+    # Legacy format: "ITEM #PCN=qty, ITEM2 #PCN2=qty2"
+    rows = []
+    for chunk in text.split(', '):
+        chunk = chunk.strip()
+        if not chunk or '=' not in chunk:
+            continue
+        head, _, qty = chunk.rpartition('=')
+        item, _, pcn = head.partition(' #')
+        try:
+            qty_val = int(float(qty))
+        except (ValueError, TypeError):
+            qty_val = 0
+        rows.append({'item': item.strip(), 'pcn': pcn.strip(),
+                     'qty': qty_val, 'location': ''})
+    return rows
 
 # CSRF Configuration
 # Enable CSRF protection with proper configuration
@@ -4786,11 +4827,11 @@ _SHORTAGE_MATCH_SQL = """
             AND COALESCE(w.loc_to, '') != 'MFG Floor'
         GROUP BY bl.aci_pn
     ),
-    -- Normalized stock pool for the same-MPN visibility columns below, computed
+    -- Normalized stock pool for the same-MPN visibility row entries below, computed
     -- ONCE (MFG Floor + non-positive qty excluded). Materializing here avoids
     -- recomputing translate() over the whole warehouse for every BOM line.
     mpn_pool AS MATERIALIZED (
-        SELECT item, pcn, onhandqty, mpn,
+        SELECT item, pcn, onhandqty, mpn, loc_to,
                lower(translate(mpn, '-# ./', '')) as nmpn
         FROM pcb_inventory."tblWhse_Inventory"
         WHERE COALESCE(loc_to, '') != 'MFG Floor' AND onhandqty > 0
@@ -4808,6 +4849,10 @@ _SHORTAGE_MATCH_SQL = """
         -- still counts only this job's own part (w.item = aci_pn) so we never
         -- double-allocate another job's committed stock — but Purchasing can now
         -- see what Theresa used to hand-search in Warehouse Inventory.
+        -- other_mpn_onhand is the running total (kept for the regression guard);
+        -- other_mpn_locations is a JSON breakdown rendered as indented ROW ENTRIES
+        -- under each BOM line in the view + export (the old two-column display was
+        -- removed 2026-06-12 at report users' request — see CHANGELOG).
         -- MPN match mode (strict flag): Chemring jobs use STRICT exact-string
         -- match (defense traceability — reel-suffix/format variants are NOT
         -- interchangeable). Every other customer tolerates reel-suffix/format
@@ -4826,8 +4871,12 @@ _SHORTAGE_MATCH_SQL = """
                   ) END
         ), 0) as other_mpn_onhand,
         (
-            SELECT string_agg(loc, ', ') FROM (
-                SELECT p.item || ' #' || p.pcn || '=' || SUM(p.onhandqty)::text AS loc
+            SELECT json_agg(json_build_object(
+                       'item', s.item, 'pcn', s.pcn, 'qty', s.qty, 'location', s.location)
+                       ORDER BY s.qty DESC)
+            FROM (
+                SELECT p.item AS item, p.pcn AS pcn, SUM(p.onhandqty) AS qty,
+                       (array_agg(COALESCE(p.loc_to, '') ORDER BY p.onhandqty DESC NULLS LAST))[1] AS location
                 FROM mpn_pool p
                 WHERE p.item <> bl.aci_pn
                   AND COALESCE(bl.bom_mpn, '') != ''
@@ -4926,7 +4975,8 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
             item['item'], item['location'], float(item['unit_cost'] or 0),
             float(item['qty'] or 0) * float(item['unit_cost'] or 0),
             item['manufacturer'], item['description'], item['req'],
-            int(item.get('other_mpn_onhand') or 0), item.get('other_mpn_locations')
+            int(item.get('other_mpn_onhand') or 0),
+            serialize_other_mpn_locations(item.get('other_mpn_locations'))
         ))
 
     return {'report_id': report_id, 'shortage_count': shortage_count, 'total_bom_lines': total_bom_lines}
@@ -5022,6 +5072,11 @@ def view_shortage_report(report_id):
                 line_no
         """, (report_id,))
         items = cursor.fetchall()
+
+        # Same-MPN/other-PN stock is rendered as indented row entries under each
+        # BOM line (the old two-column display was removed at users' request).
+        for item in items:
+            item['other_mpn_rows'] = parse_other_mpn_rows(item.get('other_mpn_locations'))
 
         return render_template('reports/shortage_report_view.html', report=report, items=items,
                                        column_definitions=SHORTAGE_EXPORT_COLUMNS)
@@ -5142,8 +5197,13 @@ def export_shortage_report(report_id):
             cell.border = border
             cell.alignment = Alignment(horizontal='center')
 
-        # Data rows
-        for row_idx, item in enumerate(items, 6):
+        # Data rows. Same-MPN/other-PN stock is written as indented entry rows
+        # directly under each BOM line (replacing the old two columns): a synthetic
+        # row carrying the other part's PN/MPN/on-hand is fed through the same
+        # column extractor so it honors whatever columns the user selected.
+        subrow_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
+        row_idx = 6
+        for item in items:
             is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
             for col_idx, col_def in enumerate(active_cols, 1):
                 value = get_export_cell_value(item, col_def['key'])
@@ -5153,6 +5213,27 @@ def export_shortage_report(report_id):
                     cell.fill = shortage_fill
                 elif col_def['key'] in highlighted_columns:
                     cell.fill = highlight_fill
+            row_idx += 1
+
+            for sub in parse_other_mpn_rows(item.get('other_mpn_locations')):
+                sub_item = {
+                    'aci_pn': sub.get('item') or '',
+                    'item': sub.get('item') or '',
+                    'pcn': sub.get('pcn') or '',
+                    'mpn': item.get('mpn') or '',
+                    'qty_on_hand': sub.get('qty') or 0,
+                    'location': sub.get('location') or '',
+                    'description': 'Same MPN — other PN (visibility only)',
+                    'qty': '', 'order_qty': '', 'req': '',
+                    'manufacturer': '', 'unit_cost': '', 'line_cost': '', 'line_no': '',
+                }
+                for col_idx, col_def in enumerate(active_cols, 1):
+                    value = get_export_cell_value(sub_item, col_def['key'])
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                    cell.border = border
+                    cell.fill = subrow_fill
+                    cell.font = Font(italic=True, color="64748B")
+                row_idx += 1
 
         # Column widths
         for col_idx, col_def in enumerate(active_cols, 1):

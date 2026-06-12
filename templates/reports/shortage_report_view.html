@@ -228,7 +228,6 @@
                         <th>ITEM</th>
                         <th class="text-center">ON HAND QTY</th>
                         <th>LOCATION</th>
-                        <th class="text-center" title="Stock of the SAME MPN filed under a different job's part number. Visibility only — not counted in the shortage above.">ALSO ON HAND<br><small class="text-muted">(same MPN, other PNs)</small></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -254,17 +253,18 @@
                             {% endif %}
                         </td>
                         <td>{{ item.location or '-' }}</td>
-                        <td class="text-center">
-                            {% if (item.other_mpn_onhand or 0) > 0 %}
-                            <span class="fw-bold text-primary">{{ item.other_mpn_onhand }}</span>
-                            {% if item.other_mpn_locations %}
-                            <br><span class="text-muted" style="font-size: 0.72rem;">{{ item.other_mpn_locations }}</span>
-                            {% endif %}
-                            {% else %}
-                            <span class="text-muted">-</span>
-                            {% endif %}
+                    </tr>
+                    {% for sub in item.other_mpn_rows %}
+                    <tr class="mpn-subrow" data-onhand="{{ sub.qty or 0 }}" data-parent="{{ loop.index0 }}">
+                        <td colspan="9" class="text-muted" style="font-size: 0.78rem; padding-left: 2.5rem; background-color: #fafbfc;">
+                            <i class="bi bi-arrow-return-right me-1"></i>
+                            same MPN on other PN:
+                            <strong>{{ sub.item or '-' }}</strong>
+                            (PCN {{ sub.pcn or '-' }})
+                            — <span class="fw-bold text-primary">{{ sub.qty }}</span> on hand{% if sub.location %} @ {{ sub.location }}{% endif %}
                         </td>
                     </tr>
+                    {% endfor %}
                     {% endfor %}
                 </tbody>
                 <tfoot class="table-light">
@@ -274,7 +274,6 @@
                         <td></td>
                         <td class="text-center"><strong>{{ items|map(attribute='qty_on_hand')|sum }}</strong></td>
                         <td></td>
-                        <td class="text-center"><strong>{{ items|map(attribute='other_mpn_onhand')|sum }}</strong></td>
                     </tr>
                 </tfoot>
             </table>
@@ -322,12 +321,27 @@
         const searchText = document.getElementById('searchInput').value.toLowerCase();
         const rows = document.querySelectorAll('#shortageTable tbody tr');
 
+        // Same-MPN/other-PN entries render as indented sub-rows that immediately
+        // follow their BOM line. They share the parent's visibility (and the
+        // parent's search match includes the sub-rows' text, so searching the
+        // other PN still reveals the whole line).
+        let parentVisible = true;
         rows.forEach(row => {
+            if (row.classList.contains('mpn-subrow')) {
+                row.style.display = parentVisible ? '' : 'none';
+                return;
+            }
             const onhand = parseInt(row.dataset.onhand) || 0;
-            const text = row.textContent.toLowerCase();
+            let text = row.textContent.toLowerCase();
+            let sib = row.nextElementSibling;
+            while (sib && sib.classList.contains('mpn-subrow')) {
+                text += ' ' + sib.textContent.toLowerCase();
+                sib = sib.nextElementSibling;
+            }
             const hiddenByZero = hideZero && onhand === 0;
             const hiddenBySearch = searchText && !text.includes(searchText);
-            row.style.display = (hiddenByZero || hiddenBySearch) ? 'none' : '';
+            parentVisible = !(hiddenByZero || hiddenBySearch);
+            row.style.display = parentVisible ? '' : 'none';
         });
     }
 

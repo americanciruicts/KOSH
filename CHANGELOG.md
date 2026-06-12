@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Shortage Report — same-MPN/other-PN stock moved from columns to row entries.**
+  Removed the two cross-job columns ("ALSO ON HAND (SAME MPN)" and "SAME-MPN
+  LOCATIONS") from both the on-screen view and the Excel export. The same
+  information — stock of the same MPN sitting under a different job's part number
+  — now renders as indented row entries directly under each BOM line (one per
+  other PCN). Report users found the columns noisy; they only care about the
+  current job's own stock, with the cross-job stock as a glanceable sub-line.
+  - This is an **intentional reversal** of the same-MPN two-column display. Do
+    NOT reintroduce the columns as a "fix." The underlying same-MPN matching
+    logic (tolerant for most customers, **strict exact-MPN for Chemring**) is
+    unchanged — only the presentation changed.
+  - `tblShortageReportItems.other_mpn_locations` now stores a JSON breakdown
+    (item/pcn/qty/location) instead of a display string; `parse_other_mpn_rows()`
+    expands it into rows and tolerates the legacy string for old saved reports.
+
 ## [2.1.0] - 2026-04-07
 
 ### Added

@@ -591,7 +591,10 @@ def test_shortage_report_alt_part_qty_and_same_mpn_visibility():
     B) The report must surface stock of the SAME MPN sitting under a DIFFERENT
        job's part number (other_mpn_onhand) so Purchasing stops hand-searching
        Warehouse Inventory — WITHOUT counting it as this job's own on-hand
-       (which would double-allocate another job's committed stock).
+       (which would double-allocate another job's committed stock). This stock is
+       displayed as indented ROW ENTRIES (the old two-column display was removed
+       2026-06-12 at report users' request); other_mpn_locations now stores a JSON
+       breakdown that parse_other_mpn_rows() expands into those rows.
     """
     sys.path.insert(0, '/app')
     import app as app_module
@@ -648,6 +651,13 @@ def test_shortage_report_alt_part_qty_and_same_mpn_visibility():
         assert row['other_mpn_locations'] and 'OTHERJOB-99' in row['other_mpn_locations'], (
             f"same-MPN locations must name the other part number, "
             f"got {row['other_mpn_locations']!r}")
+        # B2) the stored breakdown must parse into a row entry (NOT the removed
+        # columns) carrying the other PN + its on-hand qty, MFG Floor excluded.
+        sub_rows = app_module.parse_other_mpn_rows(row['other_mpn_locations'])
+        assert len(sub_rows) == 1, (
+            f"expected 1 same-MPN row entry, got {len(sub_rows)}: {sub_rows!r}")
+        assert sub_rows[0]['item'] == 'OTHERJOB-99' and sub_rows[0]['qty'] == 50, (
+            f"row entry must carry other PN OTHERJOB-99 @ 50, got {sub_rows[0]!r}")
 
 
 # ---------------------------------------------------------------------------
