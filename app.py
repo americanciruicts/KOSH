@@ -4872,11 +4872,13 @@ _SHORTAGE_MATCH_SQL = """
         ), 0) as other_mpn_onhand,
         (
             SELECT json_agg(json_build_object(
-                       'item', s.item, 'pcn', s.pcn, 'qty', s.qty, 'location', s.location)
+                       'item', s.item, 'pcn', s.pcn, 'qty', s.qty,
+                       'location', s.location, 'mpn', s.mpn)
                        ORDER BY s.qty DESC)
             FROM (
                 SELECT p.item AS item, p.pcn AS pcn, SUM(p.onhandqty) AS qty,
-                       (array_agg(COALESCE(p.loc_to, '') ORDER BY p.onhandqty DESC NULLS LAST))[1] AS location
+                       (array_agg(COALESCE(p.loc_to, '') ORDER BY p.onhandqty DESC NULLS LAST))[1] AS location,
+                       (array_agg(p.mpn ORDER BY p.onhandqty DESC NULLS LAST))[1] AS mpn
                 FROM mpn_pool p
                 WHERE p.item <> bl.aci_pn
                   AND COALESCE(bl.bom_mpn, '') != ''
@@ -5220,15 +5222,21 @@ def export_shortage_report(report_id):
                     'aci_pn': sub.get('item') or '',
                     'item': sub.get('item') or '',
                     'pcn': sub.get('pcn') or '',
-                    'mpn': item.get('mpn') or '',
+                    'mpn': sub.get('mpn') or item.get('mpn') or '',
                     'qty_on_hand': sub.get('qty') or 0,
                     'location': sub.get('location') or '',
                     'description': 'Same MPN — other PN (visibility only)',
                     'qty': '', 'order_qty': '', 'req': '',
-                    'manufacturer': '', 'unit_cost': '', 'line_cost': '', 'line_no': '',
+                    'manufacturer': item.get('manufacturer') or '',
+                    'unit_cost': '', 'line_cost': '', 'line_no': '',
                 }
                 for col_idx, col_def in enumerate(active_cols, 1):
-                    value = get_export_cell_value(sub_item, col_def['key'])
+                    # QTY/ORDER QTY/REQ don't apply to a visibility row — blank
+                    # them so they don't read as a real zero requirement.
+                    if col_def['key'] in ('qty', 'order_qty', 'req', 'unit_cost', 'line_cost'):
+                        value = ''
+                    else:
+                        value = get_export_cell_value(sub_item, col_def['key'])
                     cell = ws.cell(row=row_idx, column=col_idx, value=value)
                     cell.border = border
                     cell.fill = subrow_fill
