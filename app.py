@@ -5154,10 +5154,16 @@ def export_shortage_report(report_id):
         if export_filter == 'shortages_only':
             items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
 
-        # Excel export ALWAYS excludes zero-on-hand lines (by design). The
-        # on-screen digital report keeps them, but those parts have no stock to
-        # pull, so the exported pull/order sheet omits them.
-        items = [i for i in items if (i.get('qty_on_hand') or 0) != 0]
+        # Hide zero on-hand rows only when the export UI explicitly asks for it
+        # (the "Hide 0 On Hand" toggle). A shortage report is mostly 0-on-hand
+        # parts — those ARE the shortages — so unconditionally dropping them
+        # emptied the Excel file (e.g. job 8244 exported only 1 of 21 lines).
+        # Mirrors job_export so both exports match the on-screen view by default.
+        hide_zero = False
+        if request.method == 'POST' and request.is_json:
+            hide_zero = config.get('hide_zero', False)
+        if hide_zero:
+            items = [i for i in items if (i.get('qty_on_hand') or 0) != 0]
 
         # Build active column list from selection
         col_registry = {c['key']: c for c in SHORTAGE_EXPORT_COLUMNS}
