@@ -5154,16 +5154,13 @@ def export_shortage_report(report_id):
         if export_filter == 'shortages_only':
             items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
 
-        # Hide zero on-hand rows only when the export UI explicitly asks for it
-        # (the "Hide 0 On Hand" toggle). A shortage report is mostly 0-on-hand
-        # parts — those ARE the shortages — so unconditionally dropping them
-        # emptied the Excel file (e.g. job 8244 exported only 1 of 21 lines).
-        # Mirrors job_export so both exports match the on-screen view by default.
-        hide_zero = False
-        if request.method == 'POST' and request.is_json:
-            hide_zero = config.get('hide_zero', False)
-        if hide_zero:
-            items = [i for i in items if (i.get('qty_on_hand') or 0) != 0]
+        # Excel is the actionable PULL SHEET: it prints only rows that actually
+        # have stock to pull (ON HAND QTY > 0). This is applied per-ROW in the
+        # data loop below — a 0-on-hand BOM line is dropped, but the same-MPN
+        # stock rows underneath it still print (that's where the available stock
+        # really is). The on-screen view, by contrast, KEEPS the 0-on-hand lines
+        # so the full shortage picture stays visible. (`items` is intentionally
+        # NOT pre-filtered here, so dropped parents can still emit their stock.)
 
         # Build active column list from selection
         col_registry = {c['key']: c for c in SHORTAGE_EXPORT_COLUMNS}
@@ -5217,18 +5214,27 @@ def export_shortage_report(report_id):
         subrow_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
         row_idx = 6
         for item in items:
-            is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
-            for col_idx, col_def in enumerate(active_cols, 1):
-                value = get_export_cell_value(item, col_def['key'])
-                cell = ws.cell(row=row_idx, column=col_idx, value=value)
-                cell.border = border
-                if is_shortage:
-                    cell.fill = shortage_fill
-                elif col_def['key'] in highlighted_columns:
-                    cell.fill = highlight_fill
-            row_idx += 1
+            # Pull sheet: print the BOM line itself ONLY if it has stock on hand.
+            if (item.get('qty_on_hand') or 0) > 0:
+                is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
+                for col_idx, col_def in enumerate(active_cols, 1):
+                    value = get_export_cell_value(item, col_def['key'])
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                    cell.border = border
+                    if is_shortage:
+                        cell.fill = shortage_fill
+                    elif col_def['key'] in highlighted_columns:
+                        cell.fill = highlight_fill
+                row_idx += 1
 
+            # Same-MPN/other-PN stock rows always carry on-hand > 0 (mpn_pool
+            # filters onhandqty > 0), so they print even when the parent BOM line
+            # above was dropped for having no stock. They repeat the parent line's
+            # QTY/ORDER QTY/REQ (the requirement these alternates could fill) and
+            # show their own PCN / on-hand / location.
             for sub in parse_other_mpn_rows(item.get('other_mpn_locations')):
+                if (sub.get('qty') or 0) <= 0:
+                    continue
                 sub_item = {
                     'aci_pn': sub.get('item') or '',
                     'item': sub.get('item') or '',
@@ -5236,15 +5242,16 @@ def export_shortage_report(report_id):
                     'mpn': sub.get('mpn') or item.get('mpn') or '',
                     'qty_on_hand': sub.get('qty') or 0,
                     'location': sub.get('location') or '',
-                    'description': 'Same MPN — other PN (visibility only)',
-                    'qty': '', 'order_qty': '', 'req': '',
+                    'description': 'Same MPN — other PN',
+                    'qty': item.get('qty'),
+                    'order_qty': item.get('order_qty'),
+                    'req': item.get('req'),
                     'manufacturer': item.get('manufacturer') or '',
                     'unit_cost': '', 'line_cost': '', 'line_no': '',
                 }
                 for col_idx, col_def in enumerate(active_cols, 1):
-                    # QTY/ORDER QTY/REQ don't apply to a visibility row — blank
-                    # them so they don't read as a real zero requirement.
-                    if col_def['key'] in ('qty', 'order_qty', 'req', 'unit_cost', 'line_cost'):
+                    # Cost columns don't apply to a same-MPN visibility row.
+                    if col_def['key'] in ('unit_cost', 'line_cost'):
                         value = ''
                     else:
                         value = get_export_cell_value(sub_item, col_def['key'])

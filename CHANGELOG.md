@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+- **Shortage Report — Excel is a pull sheet (stock only); same-MPN rows carry the
+  requirement.** The saved-report Excel export now prints only rows with
+  ON HAND QTY > 0, applied per-row: a 0-on-hand BOM line is dropped, but the
+  same-MPN stock rows underneath it still print (that's where the pullable stock
+  is). The on-screen view is unchanged — it keeps the 0-on-hand lines so the full
+  shortage picture stays visible. Same-MPN rows now repeat the parent BOM line's
+  QTY / ORDER QTY / REQ (the requirement those alternate parts could fill) and
+  show their own PCN / on-hand / location, in both the view and the export.
+
 ### Fixed
 - **Shortage Report — false shortage from case-mismatched part numbers.**
   Inventory stores the same part number in mixed case (BOM `6779ML-97` vs stock

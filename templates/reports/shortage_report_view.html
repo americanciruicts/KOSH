@@ -265,9 +265,9 @@
                             <br><span class="text-muted" style="font-size: 0.75rem;">{{ item.manufacturer }}</span>
                             {% endif %}
                         </td>
-                        <td class="text-center text-muted">-</td>
-                        <td class="text-center text-muted">-</td>
-                        <td class="text-center text-muted">-</td>
+                        <td class="text-center">{{ item.qty_required }}</td>
+                        <td class="text-center">{{ item.order_qty }}</td>
+                        <td class="text-center">{{ item.req or (item.qty_required * (item.order_qty or 1)) }}</td>
                         <td>{{ sub.item or '-' }}</td>
                         <td class="text-center"><span class="fw-bold text-primary">{{ sub.qty }}</span></td>
                         <td>{{ sub.location or '-' }}</td>
