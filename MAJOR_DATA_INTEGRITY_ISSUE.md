@@ -270,10 +270,22 @@ no row in `tblTransaction` was modified.
 
 ---
 
-### Phase 4 — CANCELLED per owner (2026-06-12)
-> Owner does NOT want an "On Floor" / MFG-Floor column on the shortage report.
-> The shortage report continues to **exclude MFG-Floor stock** as it does today.
-> Do not add the column. (Original Task-2 text retained below for history only.)
+### Phase 4 — ⚠️ REVERSED 2026-06-15 → IMPLEMENTED (code done, deploy pending)
+> **2026-06-12:** Owner cancelled — no "On Floor" column, keep excluding MFG-Floor.
+> **2026-06-15:** Owner REVERSED the cancellation, with a twist: do **NOT** add a
+> separate "On Floor" column. Instead **fold MFG-Floor stock into the existing
+> `ON HAND QTY`** so floor stock counts toward availability (a job covered by floor
+> stock stops flagging a false shortage). Keep exactly the 9 default columns
+> (ACI PN, PCN, MPN, QTY, ORDER QTY, REQ, ITEM, ON HAND QTY, LOCATION).
+>
+> **Implemented (not yet deployed):** on-hand is now `SUM(onhandqty + mfg_qty)` and
+> the `loc_to='MFG Floor'` exclusion was removed in all THREE mirrored copies of the
+> inv CTE (the live `_SHORTAGE_MATCH_SQL`, the job-detail view, the job-detail export)
+> plus the saved-report view/export line filters. Safe to pool because the Task-1 fix
+> guarantees 0 rows with both `onhandqty>0 AND mfg_qty>0` (no double-count). New
+> regression test `test_shortage_report_counts_mfg_floor_stock` guards it; full suite
+> 16/16 green. **Deploy (docker --no-cache + vercel) pending a safe window.**
+> (Original Task-2 "dedicated column" text retained below for history — superseded.)
 
 ### Phase 4 (ORIGINAL, not doing) — Surface MFG-Floor stock in the shortage report (Task 2)  *(write/feature)*
 
@@ -456,7 +468,6 @@ staging, then on prod.** Phases 1, 5 are read-only and safe to run anytime.
   produced. **No production data touched.**
 
 **Next:** owner reviews `onhand_correction_preview_20260612.csv`.
-C
 ### Phase 2 — Calculation fix attempt + validation — ⚠️ HELD 2026-06-12 (NOT deployed)
 - **Decision:** RNDT kept as recount baseline (owner deferred to recommendation;
   data proved RNDT-neutral would zero ~thousands of legitimately-stocked parts —

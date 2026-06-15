@@ -722,6 +722,70 @@ def test_shortage_report_own_stock_is_case_insensitive():
             f"only the genuinely different PN should be a row entry, got {sub_rows!r}")
 
 
+def test_shortage_report_counts_mfg_floor_stock():
+    """Task 2 (2026-06-15, owner-reversed from CANCELLED): the shortage report
+    MUST count this job's own MFG-Floor stock toward on-hand, so a job whose
+    material is physically on the floor stops flagging a false shortage and the
+    planner doesn't re-buy parts we already have.
+
+    Before: rows with loc_to='MFG Floor' were excluded entirely, so floor stock
+    (carried in mfg_qty) read as 0 on-hand. Now on-hand = bin on-hand + floor
+    mfg_qty, summed across the part's lots. The two never overlap (Task-1 fix
+    guarantees 0 rows with both onhandqty>0 AND mfg_qty>0), so no double-count.
+    """
+    sys.path.insert(0, '/app')
+    import app as app_module
+    from psycopg2.extras import RealDictCursor
+
+    job = 'REGRESS-FLOOR-9999'
+    aci_pn = 'RFLOOR-1'
+    mpn = 'RGMPN-FLOOR-1'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(f'DELETE FROM {SCHEMA}."tblBOM" WHERE job = %s', (job,))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn IN %s',
+                    (('99340', '99341'),))
+
+        # BOM needs 100 of the part.
+        cur.execute(
+            f'INSERT INTO {SCHEMA}."tblBOM" (line, "DESC", man, mpn, aci_pn, qty, cost, job, job_rev) '
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            ('10', 'Regress floor', 'RegressMan', mpn, aci_pn, '100', '1.00', job, 'A'),
+        )
+
+        # 30 in a bin (on-hand) + 90 physically on the MFG Floor (mfg_qty, on-hand 0).
+        # Combined physical on-hand = 120 >= 100 req, so this is NOT a shortage.
+        _seed_warehouse_row(cur, 99340, aci_pn, mpn=mpn, onhandqty=30, mfg_qty='0', loc_to='Count Area')
+        _seed_warehouse_row(cur, 99341, aci_pn, mpn=mpn, onhandqty=0, mfg_qty='90', loc_to='MFG Floor')
+
+        result = app_module._persist_shortage_report(
+            cur, job, order_qty=1, report_name='regress', notes='', username='regression@test.com')
+        assert result is not None, 'shortage report should generate for seeded job'
+
+        # 120 on hand (30 bin + 90 floor) >= 100 req -> NOT short, so 0 lines kept.
+        cur.execute(
+            f'SELECT COUNT(*) AS n FROM {SCHEMA}."tblShortageReportItems" WHERE report_id = %s',
+            (result['report_id'],))
+        assert cur.fetchone()['n'] == 0, (
+            "job is fully covered once MFG-Floor stock counts (30 bin + 90 floor = "
+            "120 >= 100 req) — it must NOT appear as a shortage")
+
+        # Lower the floor lot so 30 + 10 = 40 < 100 -> short, on-hand must read 40
+        # (proving floor stock is summed in, not excluded and not double-counted).
+        cur.execute(f'UPDATE {SCHEMA}."tblWhse_Inventory" SET mfg_qty=%s WHERE pcn=%s', ('10', '99341'))
+        result2 = app_module._persist_shortage_report(
+            cur, job, order_qty=1, report_name='regress2', notes='', username='regression@test.com')
+        cur.execute(
+            f'SELECT qty_on_hand FROM {SCHEMA}."tblShortageReportItems" WHERE report_id = %s',
+            (result2['report_id'],))
+        rows = cur.fetchall()
+        assert len(rows) == 1, f'expected 1 shortage line, got {len(rows)}'
+        assert rows[0]['qty_on_hand'] == 40, (
+            f"on-hand must be bin 30 + floor 10 = 40, got {rows[0]['qty_on_hand']} "
+            f"(excluded floor -> 30; double-counted -> 50)")
+
+
 def test_onhand_reconcile_neutralizes_relabel_adjt():
     """The on-hand double-count root cause (2026-06-12): a part RENUMBER/relabel
     was logged as an ADJT carrying the part's FULL qty, with loc_from/loc_to set
@@ -802,6 +866,7 @@ TESTS = [
     test_bom_load_inserts_every_item_received,
     test_shortage_report_alt_part_qty_and_same_mpn_visibility,
     test_shortage_report_own_stock_is_case_insensitive,
+    test_shortage_report_counts_mfg_floor_stock,
     test_onhand_reconcile_neutralizes_relabel_adjt,
     test_bom_python_parser_finds_lines_across_sheets,
     test_return_connection_never_leaks_foreign_connection,

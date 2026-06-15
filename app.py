@@ -4931,7 +4931,7 @@ def shortage_report():
 # their results can never drift. The query: (1) collapses alternate parts that
 # share an aci_pn to the row carrying the line's real qty (alternates like
 # "ZSUB FOR ABOVE" have a blank/0 qty); (2) matches on-hand to THIS job's own
-# part only (w.item = aci_pn), summed across its lots and excluding MFG Floor;
+# part only (w.item = aci_pn), summed across its lots INCLUDING MFG-Floor stock
 # (3) consolidates to one row per BOM line (pcn/location show the fullest lot).
 _SHORTAGE_MATCH_SQL = """
     WITH bom_lines AS (
@@ -4947,17 +4947,21 @@ _SHORTAGE_MATCH_SQL = """
     inv AS (
         SELECT
             bl.aci_pn,
-            COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
-            (array_agg(w.pcn ORDER BY w.onhandqty DESC NULLS LAST))[1] as pcn,
-            (array_agg(w.mpn ORDER BY w.onhandqty DESC NULLS LAST))[1] as inv_mpn,
-            (array_agg(COALESCE(w.loc_to, '') ORDER BY w.onhandqty DESC NULLS LAST))[1] as location
+            -- On-hand now INCLUDES MFG-Floor stock (mfg_qty) so jobs with floor
+            -- stock no longer flag a false shortage. Physical on-hand per lot =
+            -- bin on-hand + floor qty; these never overlap (Task-1 fix guarantees
+            -- 0 rows with both onhandqty>0 AND mfg_qty>0), so summing can't
+            -- double-count. mfg_qty is TEXT — parse defensively.
+            COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
+            (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
+            (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
+            (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
         FROM bom_lines bl
         LEFT JOIN pcb_inventory."tblWhse_Inventory" w
             -- Case-insensitive: inventory stores the SAME part number in mixed
             -- case (e.g. BOM '6779ML-97' vs stock '6779ml-97'). A case-sensitive
             -- join missed that stock and falsely reported the part as short.
             ON UPPER(w.item) = UPPER(bl.aci_pn)
-            AND COALESCE(w.loc_to, '') != 'MFG Floor'
         GROUP BY bl.aci_pn
     ),
     -- Normalized stock pool for the same-MPN visibility row entries below, computed
@@ -5197,13 +5201,15 @@ def view_shortage_report(report_id):
             flash('Report not found.', 'danger')
             return redirect(url_for('shortage_report'))
 
-        # Get report line items (exclude MFG Floor items)
+        # Get report line items. MFG-Floor lines are NO LONGER excluded — floor
+        # stock now counts toward on-hand (Task 2), so a line whose fullest lot
+        # sits on the floor must still appear.
         cursor.execute("""
             SELECT line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
                    item, location, unit_cost, line_cost, manufacturer, description, req,
                    other_mpn_onhand, other_mpn_locations
             FROM pcb_inventory."tblShortageReportItems"
-            WHERE report_id = %s AND COALESCE(location, '') != 'MFG Floor'
+            WHERE report_id = %s
             ORDER BY
                 CASE WHEN line_no ~ '^[0-9]+$' THEN CAST(line_no AS INTEGER) ELSE 999999 END,
                 line_no
@@ -5266,14 +5272,15 @@ def export_shortage_report(report_id):
         if not report:
             return jsonify({'success': False, 'error': 'Report not found.'}), 404
 
-        # Get report line items (exclude MFG Floor)
+        # Get report line items. MFG-Floor lines NO LONGER excluded (Task 2 —
+        # floor stock now counts toward on-hand); export mirrors the view.
         cursor.execute("""
             SELECT line_no, aci_pn, pcn, mpn, qty_required as qty, order_qty,
                    req, item, qty_on_hand, location,
                    other_mpn_onhand, other_mpn_locations,
                    unit_cost, line_cost, manufacturer, description
             FROM pcb_inventory."tblShortageReportItems"
-            WHERE report_id = %s AND COALESCE(location, '') != 'MFG Floor'
+            WHERE report_id = %s
             ORDER BY
                 CASE WHEN line_no ~ '^[0-9]+$' THEN CAST(line_no AS INTEGER) ELSE 999999 END,
                 line_no
@@ -8214,19 +8221,19 @@ def job_detail(job_number):
             ),
             inv AS (
                 -- On-hand for THIS job's own part only (w.item = bl.aci_pn),
-                -- summed across its lots, excluding MFG Floor. See the shortage
+                -- summed across its lots INCLUDING MFG-Floor stock (bin on-hand +
+                -- mfg_qty; they never overlap, so no double-count). See the shortage
                 -- generator query for why MPN-based matching was removed (it
                 -- pulled in other jobs' stock and exploded one line into many).
                 SELECT
                     bl.aci_pn,
-                    COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
-                    (array_agg(w.pcn ORDER BY w.onhandqty DESC NULLS LAST))[1] as pcn,
-                    (array_agg(w.mpn ORDER BY w.onhandqty DESC NULLS LAST))[1] as inv_mpn,
-                    (array_agg(COALESCE(w.loc_to, '') ORDER BY w.onhandqty DESC NULLS LAST))[1] as location
+                    COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
+                    (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
+                    (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
+                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
                 LEFT JOIN pcb_inventory."tblWhse_Inventory" w
                     ON w.item = bl.aci_pn
-                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
                 GROUP BY bl.aci_pn
             )
             SELECT
@@ -8517,18 +8524,18 @@ def job_export(job_number):
             ),
             inv AS (
                 -- On-hand for THIS job's own part only (w.item = bl.aci_pn),
-                -- summed across its lots, excluding MFG Floor. Mirrors the
+                -- summed across its lots INCLUDING MFG-Floor stock (bin on-hand +
+                -- mfg_qty; they never overlap, so no double-count). Mirrors the
                 -- shortage generator query so the export matches the report.
                 SELECT
                     bl.aci_pn,
-                    COALESCE(SUM(w.onhandqty), 0) as qty_on_hand,
-                    (array_agg(w.pcn ORDER BY w.onhandqty DESC NULLS LAST))[1] as pcn,
-                    (array_agg(w.mpn ORDER BY w.onhandqty DESC NULLS LAST))[1] as inv_mpn,
-                    (array_agg(COALESCE(w.loc_to, '') ORDER BY w.onhandqty DESC NULLS LAST))[1] as location
+                    COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
+                    (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
+                    (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
+                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
                 LEFT JOIN pcb_inventory."tblWhse_Inventory" w
                     ON w.item = bl.aci_pn
-                    AND COALESCE(w.loc_to, '') != 'MFG Floor'
                 GROUP BY bl.aci_pn
             )
             SELECT
