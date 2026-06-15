@@ -786,6 +786,82 @@ def test_shortage_report_counts_mfg_floor_stock():
             f"(excluded floor -> 30; double-counted -> 50)")
 
 
+def test_location_reconcile_follows_latest_placement():
+    """Location-sync bug (2026-06-15): put-away/relocate happens in legacy Access
+    and arrives as imported PTWY transactions; KOSH never reflected them into
+    tblWhse_Inventory.loc_to, so Warehouse Inventory showed a stale bin while PCN
+    History showed the true one (Theresa could only find stock via History).
+
+    The location reconcile sets loc_to to each stocked PCN's latest PLACEMENT
+    location (PTWY/RESTOCK/INDF/STOCK, by chronological tran_time — NOT row id,
+    which the Access import left out of order). A PICK is an OUTFLOW and must be
+    ignored so a partial/zero pick can't drag the remaining bin stock onto the
+    MFG Floor. This test seeds two put-aways (bin A then bin B) plus a later PICK,
+    starts the inventory row at a STALE 'MFG Floor', and asserts the sync lands on
+    bin B (latest placement) — not bin A (older) and not MFG Floor (the pick).
+    """
+    sys.path.insert(0, '/app')
+    from psycopg2.extras import RealDictCursor
+
+    test_pcn = 99933
+    item = 'RLOC-1'
+    bin_a = '1404612'
+    bin_b = '1404708'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(f'DELETE FROM {SCHEMA}."tblTransaction" WHERE pcn = %s', (str(test_pcn),))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(test_pcn),))
+
+        def txn(tt, qty, lf, lt, t):
+            cur.execute(
+                f'INSERT INTO {SCHEMA}."tblTransaction" '
+                '(trantype, item, pcn, mpn, tranqty, tran_time, loc_from, loc_to, userid) '
+                'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                (tt, item, str(test_pcn), 'RLOC-MPN', str(qty), t, lf, lt, 'regression@test.com'))
+        txn('INDF', 50, 'n/a', 'Rec Area', '01/10/26 09:00:00')
+        txn('PTWY', 50, 'Rec Area', bin_a, '01/11/26 09:00:00')   # put away to bin A
+        txn('PTWY', 50, bin_a, bin_b, '01/13/26 09:00:00')        # relocate to bin B (latest placement)
+        txn('PICK', 5, bin_b, 'MFG Floor', '01/14/26 09:00:00')   # outflow — must be ignored
+
+        # Inventory row starts STALE on the floor (the reported symptom).
+        _seed_warehouse_row(cur, test_pcn, item, mpn='RLOC-MPN', onhandqty=45, loc_to='MFG Floor')
+
+        # The EXACT location-reconcile SQL shipped in _sync_onhand_from_transactions.
+        cur.execute(f"""
+            WITH placements AS (
+                SELECT pcn, loc_to, id,
+                    CASE
+                      WHEN tran_time ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' THEN tran_time::timestamptz
+                      WHEN tran_time ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{2}}\\s+[0-9]{{2}}:[0-9]{{2}}' THEN to_timestamp(tran_time, 'MM/DD/YY HH24:MI:SS')
+                      ELSE NULL
+                    END AS st
+                FROM {SCHEMA}."tblTransaction"
+                WHERE COALESCE(reversed, false) = false
+                  AND trantype IN ('PTWY','RESTOCK','INDF','STOCK')
+                  AND (loc_to ~ '^[0-9]{{6,7}}$'
+                       OR loc_to IN ('MFG Floor','Rec Area','Count Area','Stock Room'))
+            ),
+            latest_place AS (
+                SELECT DISTINCT ON (pcn) pcn, loc_to AS place_loc
+                FROM placements
+                ORDER BY pcn, st DESC NULLS LAST, id DESC
+            )
+            UPDATE {SCHEMA}."tblWhse_Inventory" w
+            SET loc_to = p.place_loc
+            FROM latest_place p
+            WHERE w.pcn = p.pcn
+              AND w.onhandqty > 0
+              AND COALESCE(w.loc_to, '') <> p.place_loc
+        """)
+
+        cur.execute(f'SELECT loc_to FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(test_pcn),))
+        loc = cur.fetchone()['loc_to']
+        assert loc == bin_b, (
+            f"location reconcile must follow the latest placement (bin {bin_b}), got {loc!r} "
+            f"(bin_a {bin_a} = ignored older placement; 'MFG Floor' = wrongly followed the PICK)")
+
+
 def test_onhand_reconcile_neutralizes_relabel_adjt():
     """The on-hand double-count root cause (2026-06-12): a part RENUMBER/relabel
     was logged as an ADJT carrying the part's FULL qty, with loc_from/loc_to set
@@ -867,6 +943,7 @@ TESTS = [
     test_shortage_report_alt_part_qty_and_same_mpn_visibility,
     test_shortage_report_own_stock_is_case_insensitive,
     test_shortage_report_counts_mfg_floor_stock,
+    test_location_reconcile_follows_latest_placement,
     test_onhand_reconcile_neutralizes_relabel_adjt,
     test_bom_python_parser_finds_lines_across_sheets,
     test_return_connection_never_leaks_foreign_connection,

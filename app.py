@@ -3262,6 +3262,55 @@ def _sync_onhand_from_transactions():
             conn.commit()
             if updated > 0:
                 logger.info(f"On-hand reconcile: updated {updated} inventory rows from transaction log")
+
+            # --- LOCATION reconcile (2026-06-15) -----------------------------
+            # Warehouse Inventory loc_to went stale because put-away/relocate
+            # happens in the legacy Access system and arrives as imported PTWY
+            # transactions; KOSH never reflected those into tblWhse_Inventory.
+            # (KOSH only set loc_to on its own PICK/RESTOCK ops.) So History
+            # showed the true bin while Warehouse Inventory showed the old one.
+            #
+            # Fix: set loc_to to each STOCKED pcn's latest PLACEMENT location —
+            # the loc_to of the most recent (by chronological tran_time, NOT id,
+            # which the Access import left out of order) PTWY/RESTOCK/INDF/STOCK
+            # whose loc_to is a real bin/area. We deliberately use placement
+            # events only: a PICK is an OUTFLOW to the floor and a partial/zero
+            # pick must leave the remainder in its bin (KOSH's pick logic already
+            # keeps the bin on a partial pick), so following the last *placement*
+            # is what matches the physical location of the on-hand. Restricted to
+            # onhandqty > 0 — a fully-picked (0 on-hand) row's stock is on the
+            # floor, not back in its old bin. Not activity-gated, so the first
+            # run backfills every stale row and it self-heals thereafter.
+            cur.execute("""
+                WITH placements AS (
+                    SELECT pcn, loc_to, id,
+                        CASE
+                          WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN tran_time::timestamptz
+                          WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN to_timestamp(tran_time, 'MM/DD/YY HH24:MI:SS')
+                          ELSE NULL
+                        END AS st
+                    FROM pcb_inventory."tblTransaction"
+                    WHERE COALESCE(reversed, false) = false
+                      AND trantype IN ('PTWY','RESTOCK','INDF','STOCK')
+                      AND (loc_to ~ '^[0-9]{6,7}$'
+                           OR loc_to IN ('MFG Floor','Rec Area','Count Area','Stock Room'))
+                ),
+                latest_place AS (
+                    SELECT DISTINCT ON (pcn) pcn, loc_to AS place_loc
+                    FROM placements
+                    ORDER BY pcn, st DESC NULLS LAST, id DESC
+                )
+                UPDATE pcb_inventory."tblWhse_Inventory" w
+                SET loc_to = p.place_loc
+                FROM latest_place p
+                WHERE w.pcn = p.pcn
+                  AND w.onhandqty > 0
+                  AND COALESCE(w.loc_to, '') <> p.place_loc
+            """)
+            loc_updated = cur.rowcount
+            conn.commit()
+            if loc_updated > 0:
+                logger.info(f"Location reconcile: updated {loc_updated} inventory rows to latest placement location from History")
         except Exception as e:
             logger.error(f"On-hand reconcile error: {e}")
             if conn:
