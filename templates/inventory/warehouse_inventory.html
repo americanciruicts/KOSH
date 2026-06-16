@@ -70,17 +70,17 @@
             <div class="col-md-2">
                 <label for="search_mpn" class="form-label small fw-semibold mb-2" style="color: #475569;">MPN</label>
                 <input type="text" class="form-control" id="search_mpn" name="search_mpn"
-                       value="{{ request.args.get('search_mpn', '') }}" placeholder="Search MPN..." style="border-radius: 6px;">
+                       value="{{ request.args.get('search_mpn', '') }}" placeholder="Exact MPN" style="border-radius: 6px;">
             </div>
             <div class="col-md-2">
                 <label for="search_location" class="form-label small fw-semibold mb-2" style="color: #475569;">Location</label>
                 <input type="text" class="form-control" id="search_location" name="search_location"
-                       value="{{ request.args.get('search_location', '') }}" placeholder="Location..." style="border-radius: 6px;">
+                       value="{{ request.args.get('search_location', '') }}" placeholder="Exact location" style="border-radius: 6px;">
             </div>
             <div class="col-md-3">
                 <label for="search_description" class="form-label small fw-semibold mb-2" style="color: #475569;">Description</label>
                 <input type="text" class="form-control" id="search_description" name="search_description"
-                       value="{{ request.args.get('search_description', '') }}" placeholder="Search by description..." style="border-radius: 6px;">
+                       value="{{ request.args.get('search_description', '') }}" placeholder="Exact description" style="border-radius: 6px;">
             </div>
             <div class="col-md-2">
                 <label for="per_page" class="form-label small fw-semibold mb-2" style="color: #475569;">Per Page</label>

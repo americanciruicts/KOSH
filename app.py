@@ -4413,16 +4413,19 @@ def warehouse_inventory():
             params.append(search_pcn)
 
         if search_mpn:
-            query += " AND LOWER(w.mpn::text) LIKE %s"
-            params.append(f"%{search_mpn.lower()}%")
+            # EXACT match (consistent with PCN/Item): return only the typed MPN.
+            query += " AND LOWER(TRIM(w.mpn::text)) = %s"
+            params.append(search_mpn.lower())
 
         if search_location:
-            query += " AND LOWER(w.loc_to::text) LIKE %s"
-            params.append(f"%{search_location.lower()}%")
+            # EXACT match: '1101101' returns only that bin, not 11011010/etc.
+            query += " AND LOWER(TRIM(w.loc_to::text)) = %s"
+            params.append(search_location.lower())
 
         if search_description:
-            query += " AND LOWER(COALESCE(p.description, '')) LIKE %s"
-            params.append(f"%{search_description.lower()}%")
+            # EXACT match: the full description text must match exactly.
+            query += " AND LOWER(TRIM(COALESCE(p.description, ''))) = %s"
+            params.append(search_description.lower())
 
         # Get total count for pagination
         count_query = f"SELECT COUNT(*) as total FROM ({query}) AS filtered"
