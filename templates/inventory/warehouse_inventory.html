@@ -631,13 +631,23 @@ document.addEventListener('DOMContentLoaded', function() {
     document.body.style.overflow = '';
     document.body.style.paddingRight = '';
 
-    // Focus PCN filter on page load and move cursor to end
+    // Auto-select the whole value whenever a filter field is focused, so a
+    // user clicking an already-filled field can immediately type over or
+    // delete it. setTimeout defers the select() until after the click places
+    // the caret, so it sticks on mouse-click (not just keyboard tab).
+    ['search_pcn','search_item','search_mpn','search_location','search_description'].forEach(function(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('focus', function() {
+            const self = this;
+            setTimeout(function() { self.select(); }, 0);
+        });
+    });
+
+    // Focus the PCN filter on page load (the focus handler above selects it).
     const pcnInput = document.getElementById('search_pcn');
     if (pcnInput) {
         pcnInput.focus();
-        const v = pcnInput.value;
-        pcnInput.value = '';
-        pcnInput.value = v;
     }
 
     const jumpInput = document.getElementById('jumpToPageInput');
