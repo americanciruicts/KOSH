@@ -6338,6 +6338,18 @@ def pcn_history():
                 # Get all transactions for the PCN (no pagination, show everything)
                 # Format tran_time consistently as MM/DD/YYYY HH:MI:SS AM/PM for ALL date formats
                 query = """
+                    WITH locvocab AS (
+                        -- Real warehouse LOCATIONS, learned from NON-ADJT activity, so a
+                        -- renumber mistakenly logged as ADJT (loc fields are ITEM numbers,
+                        -- not bins) can be told apart from a genuine location adjustment.
+                        -- Same vocabulary the reconcile uses (app.py:3123).
+                        SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM pcb_inventory."tblTransaction"
+                            WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
+                        UNION
+                        SELECT DISTINCT LOWER(TRIM(loc_from)) FROM pcb_inventory."tblTransaction"
+                            WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
+                        UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('n/a'),('na'),('')
+                    )
                     SELECT id, trantype, item, mpn, tranqty,
                            CASE
                                WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN
@@ -6347,6 +6359,16 @@ def pcn_history():
                                ELSE tran_time
                            END as tran_time,
                            loc_from, loc_to, wo, po, reversed,
+                           -- A renumber/relabel logged as ADJT carries the part's FULL qty
+                           -- with loc_from/loc_to = OLD/NEW item numbers. Counting it as
+                           -- +qty injects phantom on-hand (the double-count bug). Flag it so
+                           -- the running balance below treats it as quantity-neutral, exactly
+                           -- like the reconcile that feeds Warehouse Inventory (app.py:3165).
+                           (trantype = 'ADJT'
+                              AND LOWER(TRIM(COALESCE(loc_from,''))) <> LOWER(TRIM(COALESCE(loc_to,'')))
+                              AND NOT (LOWER(TRIM(COALESCE(loc_to,'')))  IN (SELECT v FROM locvocab) OR COALESCE(loc_to,'')  ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_to,'')) = '')
+                              AND NOT (LOWER(TRIM(COALESCE(loc_from,''))) IN (SELECT v FROM locvocab) OR COALESCE(loc_from,'') ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_from,'')) = '')
+                           ) AS is_relabel,
                            CASE
                                WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN tran_time::timestamptz
                                WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
@@ -6393,6 +6415,8 @@ def pcn_history():
                         balance = tq  # physical recount resets baseline
                         row['balance'] = balance
                         continue
+                    elif row.get('is_relabel'):
+                        delta = 0  # renumber logged as ADJT = quantity-neutral (no phantom)
                     elif tt in ('INDF', 'STOCK', 'PCN Generation', 'RESTOCK', 'ADJT'):
                         delta = tq
                     elif tt in ('PICK', 'PURGE'):
@@ -6406,6 +6430,7 @@ def pcn_history():
                     row.pop('sort_time', None)
                     row.pop('id', None)
                     row.pop('reversed', None)
+                    row.pop('is_relabel', None)
 
                 # Get PCN info from warehouse inventory
                 cur.execute("""

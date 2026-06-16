@@ -928,6 +928,85 @@ def test_onhand_reconcile_neutralizes_relabel_adjt():
             f'renumber-aware reconcile must neutralize the relabel -> on-hand 0, got {corrected}')
 
 
+def test_pcn_history_balance_matches_reconcile_on_relabel():
+    """PCN History's per-row 'On Hand' (running balance) must use the SAME
+    relabel-neutral math as the reconcile that feeds Warehouse Inventory, or the
+    two screens disagree (e.g. PCN 1247 showed 18000 in history but 9000 in the
+    warehouse). Regression for that mismatch: replay INDF +1000, relabel-ADJT
+    +1000, PICK -1000 the way the /pcn-history route does. The PICK row must land
+    at 0 (full reel picked), NOT 1000 (the old phantom). The buggy replay that
+    counts the relabel as +qty would leave 1000 after the pick.
+    """
+    test_pcn = 99932
+    test_mpn = 'RELABEL-MPN-2'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor()
+
+        def txn(tt, qty, lf, lt, t):
+            cur.execute(
+                f'INSERT INTO {SCHEMA}."tblTransaction" '
+                '(trantype, item, pcn, mpn, tranqty, tran_time, loc_from, loc_to, userid) '
+                'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                (tt, 'RELABELNEW-2', str(test_pcn), test_mpn, str(qty), t, lf, lt, 'regression@test.com'))
+        txn('INDF', 1000, 'n/a', 'Rec Area', '01/10/26 09:00:00')
+        txn('ADJT', 1000, 'RELABELOLD-1', 'RELABELNEW-2', '01/11/26 09:00:00')  # the relabel
+        txn('PICK', 1000, '1202233', 'MFG Floor', '01/12/26 09:00:00')
+
+        # Pull rows the way the route does: with the is_relabel flag, oldest-first.
+        cur.execute(f"""
+            WITH locvocab AS (
+                SELECT DISTINCT LOWER(TRIM(loc_to)) v FROM {SCHEMA}."tblTransaction"
+                    WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
+                UNION SELECT DISTINCT LOWER(TRIM(loc_from)) FROM {SCHEMA}."tblTransaction"
+                    WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
+                UNION VALUES ('mfg floor'),('rec area'),('count area'),('n/a'),('na'),('')
+            )
+            SELECT trantype, tranqty,
+                   (trantype='ADJT'
+                      AND LOWER(TRIM(COALESCE(loc_from,''))) <> LOWER(TRIM(COALESCE(loc_to,'')))
+                      AND NOT (LOWER(TRIM(COALESCE(loc_to,'')))  IN (SELECT v FROM locvocab) OR COALESCE(loc_to,'')  ~ '^[0-9]{{6,}}$' OR TRIM(COALESCE(loc_to,''))='')
+                      AND NOT (LOWER(TRIM(COALESCE(loc_from,''))) IN (SELECT v FROM locvocab) OR COALESCE(loc_from,'') ~ '^[0-9]{{6,}}$' OR TRIM(COALESCE(loc_from,''))='')
+                   ) is_relabel
+            FROM {SCHEMA}."tblTransaction"
+            WHERE pcn::text = %s AND tranqty ~ '^-?[0-9]+$'
+            ORDER BY tran_time ASC
+        """, (str(test_pcn),))
+        rows = cur.fetchall()  # (trantype, tranqty, is_relabel) oldest-first
+
+        # Replay the route's balance loop, both fixed (honor is_relabel) and buggy.
+        def replay(honor_relabel):
+            bal = 0
+            picked_bal = None
+            for tt, tq, is_relabel in rows:
+                q = int(tq)
+                if tt == 'RNDT':
+                    bal = q
+                    continue
+                if honor_relabel and is_relabel:
+                    delta = 0
+                elif tt in ('INDF', 'STOCK', 'PCN Generation', 'RESTOCK', 'ADJT'):
+                    delta = q
+                elif tt in ('PICK', 'PURGE'):
+                    delta = -q
+                else:
+                    delta = 0
+                bal = max(0, bal + delta)
+                if tt == 'PICK':
+                    picked_bal = bal
+            return bal, picked_bal
+
+        fixed_final, fixed_after_pick = replay(honor_relabel=True)
+        buggy_final, buggy_after_pick = replay(honor_relabel=False)
+
+        assert fixed_after_pick == 0, (
+            f'after fully picking the reel, history on-hand must be 0, got {fixed_after_pick}')
+        assert buggy_after_pick == 1000, (
+            f'old replay should show the 1000 phantom after pick, got {buggy_after_pick}')
+        assert fixed_final == 0 and buggy_final == 1000, (
+            f'fixed final={fixed_final} (want 0), buggy final={buggy_final} (want 1000)')
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -945,6 +1024,7 @@ TESTS = [
     test_shortage_report_counts_mfg_floor_stock,
     test_location_reconcile_follows_latest_placement,
     test_onhand_reconcile_neutralizes_relabel_adjt,
+    test_pcn_history_balance_matches_reconcile_on_relabel,
     test_bom_python_parser_finds_lines_across_sheets,
     test_return_connection_never_leaks_foreign_connection,
     test_quantity_fields_are_not_number_spinners,
