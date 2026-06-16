@@ -84,7 +84,7 @@
             </div>
             <div class="col-md-2">
                 <label for="per_page" class="form-label small fw-semibold mb-2" style="color: #475569;">Per Page</label>
-                <select class="form-select" id="per_page" name="per_page" style="border-radius: 6px;">
+                <select class="form-select" id="per_page" name="per_page" onchange="this.form.submit()" style="border-radius: 6px;">
                     <option value="10" {% if pagination.per_page == 10 %}selected{% endif %}>10</option>
                     <option value="25" {% if pagination.per_page == 25 %}selected{% endif %}>25</option>
                     <option value="50" {% if pagination.per_page == 50 %}selected{% endif %}>50</option>
@@ -197,12 +197,19 @@
 
         <!-- Advanced Pagination -->
         {% if pagination.total_pages > 1 %}
+        {# Carry the active filters + per_page through every page link so paging
+           doesn't reset the search. Only include non-empty filters for clean URLs. #}
+        {% set filter_args = {} %}
+        {% for k in ['search_pcn','search_item','search_mpn','search_location','search_description'] %}
+            {% if request.args.get(k, '') %}{% set _ = filter_args.update({k: request.args.get(k)}) %}{% endif %}
+        {% endfor %}
+        {% set _ = filter_args.update({'per_page': pagination.per_page}) %}
         <div class="card-footer bg-light">
             <nav aria-label="Inventory pagination">
                 <ul class="pagination justify-content-center mb-3">
                     <!-- Previous button -->
                     <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
-                        <a class="page-link" href="{% if pagination.has_prev %}{{ url_for('warehouse_inventory', page=pagination.prev_num, per_page=pagination.per_page) }}{% else %}#{% endif %}"
+                        <a class="page-link" href="{% if pagination.has_prev %}{{ url_for('warehouse_inventory', page=pagination.prev_num, **filter_args) }}{% else %}#{% endif %}"
                            {% if not pagination.has_prev %}tabindex="-1" aria-disabled="true"{% endif %}>
                             <i class="bi bi-chevron-left"></i> Previous
                         </a>
@@ -211,7 +218,7 @@
                     <!-- First page -->
                     {% if pagination.page > 3 %}
                     <li class="page-item">
-                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=1, per_page=pagination.per_page) }}">1</a>
+                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=1, **filter_args) }}">1</a>
                     </li>
                     {% if pagination.page > 4 %}
                     <li class="page-item disabled">
@@ -223,7 +230,7 @@
                     <!-- Page numbers -->
                     {% for page_num in pagination.pages %}
                     <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
-                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=page_num, per_page=pagination.per_page) }}">
+                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=page_num, **filter_args) }}">
                             {{ page_num }}
                         </a>
                     </li>
@@ -237,13 +244,13 @@
                     </li>
                     {% endif %}
                     <li class="page-item">
-                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=pagination.total_pages, per_page=pagination.per_page) }}">{{ pagination.total_pages }}</a>
+                        <a class="page-link" href="{{ url_for('warehouse_inventory', page=pagination.total_pages, **filter_args) }}">{{ pagination.total_pages }}</a>
                     </li>
                     {% endif %}
 
                     <!-- Next button -->
                     <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
-                        <a class="page-link" href="{% if pagination.has_next %}{{ url_for('warehouse_inventory', page=pagination.next_num, per_page=pagination.per_page) }}{% else %}#{% endif %}"
+                        <a class="page-link" href="{% if pagination.has_next %}{{ url_for('warehouse_inventory', page=pagination.next_num, **filter_args) }}{% else %}#{% endif %}"
                            {% if not pagination.has_next %}tabindex="-1" aria-disabled="true"{% endif %}>
                             Next <i class="bi bi-chevron-right"></i>
                         </a>
