@@ -4400,12 +4400,17 @@ def warehouse_inventory():
         params = []
 
         if search_item:
-            query += " AND LOWER(w.item::text) LIKE %s"
-            params.append(f"%{search_item.lower()}%")
+            # EXACT item-number match (not substring): searching '1234L-5' must
+            # return only item 1234L-5, never 1234L-50/-55/etc. TRIM guards against
+            # stray whitespace stored on legacy rows.
+            query += " AND LOWER(TRIM(w.item::text)) = %s"
+            params.append(search_item.lower())
 
         if search_pcn:
-            query += " AND w.pcn::text LIKE %s"
-            params.append(f"{search_pcn}%")
+            # EXACT PCN match (not prefix): '1234' returns only PCN 1234,
+            # not 12340/12345/etc.
+            query += " AND TRIM(w.pcn::text) = %s"
+            params.append(search_pcn)
 
         if search_mpn:
             query += " AND LOWER(w.mpn::text) LIKE %s"

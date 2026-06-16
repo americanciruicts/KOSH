@@ -60,12 +60,12 @@
             <div class="col-md-2">
                 <label for="search_pcn" class="form-label small fw-semibold mb-2" style="color: #475569;">PCN</label>
                 <input type="text" class="form-control" id="search_pcn" name="search_pcn" autofocus
-                       value="{{ request.args.get('search_pcn', '') }}" placeholder="Enter PCN number" style="border-radius: 6px;">
+                       value="{{ request.args.get('search_pcn', '') }}" placeholder="Exact PCN number" style="border-radius: 6px;">
             </div>
             <div class="col-md-2">
                 <label for="search_item" class="form-label small fw-semibold mb-2" style="color: #475569;">Item Number</label>
                 <input type="text" class="form-control" id="search_item" name="search_item"
-                       value="{{ request.args.get('search_item', '') }}" placeholder="Search by item..." style="border-radius: 6px;">
+                       value="{{ request.args.get('search_item', '') }}" placeholder="Exact item no. (e.g. 1234L-5)" style="border-radius: 6px;">
             </div>
             <div class="col-md-2">
                 <label for="search_mpn" class="form-label small fw-semibold mb-2" style="color: #475569;">MPN</label>
