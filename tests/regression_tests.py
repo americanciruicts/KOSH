@@ -838,7 +838,7 @@ def test_location_reconcile_follows_latest_placement():
                     END AS st
                 FROM {SCHEMA}."tblTransaction"
                 WHERE COALESCE(reversed, false) = false
-                  AND trantype IN ('PTWY','RESTOCK','INDF','STOCK')
+                  AND trantype IN ('PTWY','RESTOCK','INDF','STOCK','ADJT')
                   AND (loc_to ~ '^[0-9]{{6,7}}$'
                        OR loc_to IN ('MFG Floor','Rec Area','Count Area','Stock Room'))
             ),
@@ -860,6 +860,73 @@ def test_location_reconcile_follows_latest_placement():
         assert loc == bin_b, (
             f"location reconcile must follow the latest placement (bin {bin_b}), got {loc!r} "
             f"(bin_a {bin_a} = ignored older placement; 'MFG Floor' = wrongly followed the PICK)")
+
+
+def test_location_reconcile_honors_manual_adjt_edit():
+    """Manual relocation bug (2026-06-16): a user changing the bin in the KOSH
+    Warehouse Inventory editor saves loc_to AND logs an ADJT carrying the new bin,
+    but the location reconcile only treated PTWY/RESTOCK/INDF/STOCK as placements —
+    so within 5 minutes it reverted the row to the last imported PTWY and the manual
+    change 'didn't stick'. The reconcile now also honors a genuine location-move
+    ADJT (loc_to is a real bin). A relabel/renumber ADJT (loc_to is an ITEM number)
+    must STILL be ignored. This test seeds a PTWY to bin A, a later manual ADJT to
+    bin B, and a still-later relabel ADJT (loc_to = item number); the reconcile must
+    land on bin B.
+    """
+    sys.path.insert(0, '/app')
+    from psycopg2.extras import RealDictCursor
+    test_pcn = 99934
+    item = 'RLOC2-1'
+    bin_a = '1404612'
+    bin_b = '1404708'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(f'DELETE FROM {SCHEMA}."tblTransaction" WHERE pcn = %s', (str(test_pcn),))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(test_pcn),))
+
+        def txn(tt, qty, lf, lt, t):
+            cur.execute(
+                f'INSERT INTO {SCHEMA}."tblTransaction" '
+                '(trantype, item, pcn, mpn, tranqty, tran_time, loc_from, loc_to, userid) '
+                'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                (tt, item, str(test_pcn), 'RLOC2-MPN', str(qty), t, lf, lt, 'regression@test.com'))
+        txn('INDF', 50, 'n/a', 'Rec Area', '01/10/26 09:00:00')
+        txn('PTWY', 50, 'Rec Area', bin_a, '01/11/26 09:00:00')      # imported put-away to bin A
+        txn('ADJT', 0,  bin_a, bin_b, '01/15/26 09:00:00')           # MANUAL editor relocation to bin B
+        txn('ADJT', 0,  'RLOC2-1', 'RLOC2-NEW', '01/16/26 09:00:00') # relabel (item->item) — must be IGNORED
+
+        # Row is stale on bin A (what the old reconcile would force it back to).
+        _seed_warehouse_row(cur, test_pcn, item, mpn='RLOC2-MPN', onhandqty=50, loc_to=bin_a)
+
+        cur.execute(f"""
+            WITH placements AS (
+                SELECT pcn, loc_to, id,
+                    CASE
+                      WHEN tran_time ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' THEN tran_time::timestamptz
+                      WHEN tran_time ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{2}}\\s+[0-9]{{2}}:[0-9]{{2}}' THEN to_timestamp(tran_time, 'MM/DD/YY HH24:MI:SS')
+                      ELSE NULL
+                    END AS st
+                FROM {SCHEMA}."tblTransaction"
+                WHERE COALESCE(reversed, false) = false
+                  AND trantype IN ('PTWY','RESTOCK','INDF','STOCK','ADJT')
+                  AND (loc_to ~ '^[0-9]{{6,7}}$'
+                       OR loc_to IN ('MFG Floor','Rec Area','Count Area','Stock Room'))
+            ),
+            latest_place AS (
+                SELECT DISTINCT ON (pcn) pcn, loc_to AS place_loc
+                FROM placements ORDER BY pcn, st DESC NULLS LAST, id DESC
+            )
+            UPDATE {SCHEMA}."tblWhse_Inventory" w
+            SET loc_to = p.place_loc
+            FROM latest_place p
+            WHERE w.pcn = p.pcn AND w.onhandqty > 0 AND COALESCE(w.loc_to, '') <> p.place_loc
+        """)
+        cur.execute(f'SELECT loc_to FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(test_pcn),))
+        loc = cur.fetchone()['loc_to']
+        assert loc == bin_b, (
+            f"reconcile must honor the manual ADJT relocation to bin {bin_b}, got {loc!r} "
+            f"(bin_a {bin_a} = reverted manual edit; relabel ADJT must be ignored)")
 
 
 def test_onhand_reconcile_neutralizes_relabel_adjt():
@@ -1095,6 +1162,7 @@ TESTS = [
     test_shortage_report_own_stock_is_case_insensitive,
     test_shortage_report_counts_mfg_floor_stock,
     test_location_reconcile_follows_latest_placement,
+    test_location_reconcile_honors_manual_adjt_edit,
     test_onhand_reconcile_neutralizes_relabel_adjt,
     test_pcn_history_balance_matches_reconcile_on_relabel,
     test_pcn_history_relabel_neutral_on_real_pcns,

@@ -3291,7 +3291,15 @@ def _sync_onhand_from_transactions():
                         END AS st
                     FROM pcb_inventory."tblTransaction"
                     WHERE COALESCE(reversed, false) = false
-                      AND trantype IN ('PTWY','RESTOCK','INDF','STOCK')
+                      -- ADJT is included so a MANUAL location change made in the
+                      -- KOSH Warehouse Inventory editor (logged as an ADJT whose
+                      -- loc_to is the new bin) is honored as the latest placement.
+                      -- Without it the reconcile reverted every manual relocation
+                      -- back to the last imported PTWY within 5 minutes. The loc_to
+                      -- filter below keeps this safe: a relabel/renumber ADJT carries
+                      -- an ITEM number in loc_to (letters/dashes, or not 6-7 digits),
+                      -- so it fails the filter and is never treated as a placement.
+                      AND trantype IN ('PTWY','RESTOCK','INDF','STOCK','ADJT')
                       AND (loc_to ~ '^[0-9]{6,7}$'
                            OR loc_to IN ('MFG Floor','Rec Area','Count Area','Stock Room'))
                 ),
