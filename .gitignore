@@ -4,3 +4,17 @@
 backups/
 samples/
 reelChange/
+
+# secrets (added by cleanup)
+.env
+.env.*
+!.env.example
+!**/.env.example
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.next/
+.pytest_cache/
+*.egg-info/
