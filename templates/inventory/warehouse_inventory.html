@@ -642,6 +642,15 @@ document.addEventListener('DOMContentLoaded', function() {
             const self = this;
             setTimeout(function() { self.select(); }, 0);
         });
+        // When an APPLIED filter field is cleared, drop that filter right away
+        // (re-submit with it empty) so the user doesn't have to click Clear.
+        // defaultValue is the value the page loaded with, so this only fires for
+        // filters that were actually active — not for fields the user just typed.
+        el.addEventListener('input', function() {
+            if (this.value === '' && this.defaultValue !== '') {
+                this.form.submit();
+            }
+        });
     });
 
     // Focus the PCN filter on page load (the focus handler above selects it).
