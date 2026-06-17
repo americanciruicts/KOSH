@@ -3010,6 +3010,78 @@ def _sync_adjt_to_inventory():
 threading.Thread(target=_sync_adjt_to_inventory, daemon=True).start()
 
 
+# --- LOCATION reconcile SQL (shared by the background thread and the
+# regression suite, so the test locks the EXACT query that ships) ---------
+# Set each STOCKED pcn's loc_to to its latest PLACEMENT location — the loc_to
+# of the most recent (by chronological tran_time, NOT row id, which the Access
+# import left out of order) PTWY/RESTOCK/INDF/STOCK/ADJT whose loc_to is a real
+# location. A location is EITHER a numeric bin of ANY length OR a recognized
+# location name (learned from non-ADJT activity); a relabel/renumber ADJT parks
+# an ITEM number in loc_to, which is non-numeric and unknown to the vocab, so it
+# is never written as a location. PICK/PURGE outflows are excluded so a partial/
+# zero pick can't drag remaining bin stock onto MFG Floor. onhandqty > 0 only —
+# a fully-picked row's stock is on the floor, not back in its old bin.
+_LOCATION_RECONCILE_SQL = """
+                WITH locvocab AS (
+                    -- Real warehouse LOCATIONS, learned from NON-ADJT activity
+                    -- (PICK/STOCK/RESTOCK/PTWY/INDF record real bins/areas). This
+                    -- is how we accept ANY-length text location (e.g. 'back room')
+                    -- without hard-coding a list, while still rejecting an item
+                    -- number that a relabel ADJT parks in loc_to.
+                    SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM pcb_inventory."tblTransaction"
+                        WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
+                    UNION
+                    SELECT DISTINCT LOWER(TRIM(loc_from)) FROM pcb_inventory."tblTransaction"
+                        WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
+                    UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('stock room'),('n/a'),('na'),('')
+                ),
+                placements AS (
+                    SELECT pcn, loc_to, id,
+                        CASE
+                          WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN tran_time::timestamptz
+                          WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN to_timestamp(tran_time, 'MM/DD/YY HH24:MI:SS')
+                          ELSE NULL
+                        END AS st
+                    FROM pcb_inventory."tblTransaction"
+                    WHERE COALESCE(reversed, false) = false
+                      -- ADJT is included so a MANUAL location change made in the
+                      -- KOSH Warehouse Inventory editor (logged as an ADJT whose
+                      -- loc_to is the new bin) is honored as the latest placement.
+                      -- Without it the reconcile reverted every manual relocation
+                      -- back to the last imported PTWY within 5 minutes.
+                      AND trantype IN ('PTWY','RESTOCK','INDF','STOCK','ADJT')
+                      AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
+                      -- A location is EITHER a numeric bin of ANY length (2205301,
+                      -- 14051021, ...) OR a recognized location name. A relabel/
+                      -- renumber ADJT parks an ITEM number (e.g. 8233L-5) in loc_to;
+                      -- it is non-numeric and not in locvocab, so it is never written
+                      -- as a location. A prior {6,7}-digit filter silently dropped
+                      -- every 8-digit bin (2306 txns / 41 whse rows), which is why
+                      -- relocations like PCN 45504 -> 14051021 kept getting reverted.
+                      AND (loc_to ~ '^[0-9]+$'
+                           OR LOWER(TRIM(loc_to)) IN (SELECT v FROM locvocab))
+                ),
+                latest_place AS (
+                    SELECT DISTINCT ON (pcn) pcn, loc_to AS place_loc
+                    FROM placements
+                    ORDER BY pcn, st DESC NULLS LAST, id DESC
+                )
+                UPDATE pcb_inventory."tblWhse_Inventory" w
+                SET loc_to = p.place_loc
+                FROM latest_place p
+                WHERE w.pcn = p.pcn
+                  AND w.onhandqty > 0
+                  AND COALESCE(w.loc_to, '') <> p.place_loc
+"""
+
+
+def reconcile_warehouse_locations(cur):
+    """Run the location reconcile once on an open cursor; return rows updated.
+    Caller owns the transaction (commit/rollback)."""
+    cur.execute(_LOCATION_RECONCILE_SQL)
+    return cur.rowcount
+
+
 # Background sync: reconcile on-hand qty from transaction log.
 # Access's tblWhse_Inventory.OnHandQty is NOT decremented on PICK, so importing
 # from Access would otherwise resurrect quantities for parts that KOSH already
@@ -3265,57 +3337,10 @@ def _sync_onhand_from_transactions():
 
             # --- LOCATION reconcile (2026-06-15) -----------------------------
             # Warehouse Inventory loc_to went stale because put-away/relocate
-            # happens in the legacy Access system and arrives as imported PTWY
-            # transactions; KOSH never reflected those into tblWhse_Inventory.
-            # (KOSH only set loc_to on its own PICK/RESTOCK ops.) So History
-            # showed the true bin while Warehouse Inventory showed the old one.
-            #
-            # Fix: set loc_to to each STOCKED pcn's latest PLACEMENT location —
-            # the loc_to of the most recent (by chronological tran_time, NOT id,
-            # which the Access import left out of order) PTWY/RESTOCK/INDF/STOCK
-            # whose loc_to is a real bin/area. We deliberately use placement
-            # events only: a PICK is an OUTFLOW to the floor and a partial/zero
-            # pick must leave the remainder in its bin (KOSH's pick logic already
-            # keeps the bin on a partial pick), so following the last *placement*
-            # is what matches the physical location of the on-hand. Restricted to
-            # onhandqty > 0 — a fully-picked (0 on-hand) row's stock is on the
-            # floor, not back in its old bin. Not activity-gated, so the first
-            # run backfills every stale row and it self-heals thereafter.
-            cur.execute("""
-                WITH placements AS (
-                    SELECT pcn, loc_to, id,
-                        CASE
-                          WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN tran_time::timestamptz
-                          WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN to_timestamp(tran_time, 'MM/DD/YY HH24:MI:SS')
-                          ELSE NULL
-                        END AS st
-                    FROM pcb_inventory."tblTransaction"
-                    WHERE COALESCE(reversed, false) = false
-                      -- ADJT is included so a MANUAL location change made in the
-                      -- KOSH Warehouse Inventory editor (logged as an ADJT whose
-                      -- loc_to is the new bin) is honored as the latest placement.
-                      -- Without it the reconcile reverted every manual relocation
-                      -- back to the last imported PTWY within 5 minutes. The loc_to
-                      -- filter below keeps this safe: a relabel/renumber ADJT carries
-                      -- an ITEM number in loc_to (letters/dashes, or not 6-7 digits),
-                      -- so it fails the filter and is never treated as a placement.
-                      AND trantype IN ('PTWY','RESTOCK','INDF','STOCK','ADJT')
-                      AND (loc_to ~ '^[0-9]{6,7}$'
-                           OR loc_to IN ('MFG Floor','Rec Area','Count Area','Stock Room'))
-                ),
-                latest_place AS (
-                    SELECT DISTINCT ON (pcn) pcn, loc_to AS place_loc
-                    FROM placements
-                    ORDER BY pcn, st DESC NULLS LAST, id DESC
-                )
-                UPDATE pcb_inventory."tblWhse_Inventory" w
-                SET loc_to = p.place_loc
-                FROM latest_place p
-                WHERE w.pcn = p.pcn
-                  AND w.onhandqty > 0
-                  AND COALESCE(w.loc_to, '') <> p.place_loc
-            """)
-            loc_updated = cur.rowcount
+            # arrives as imported PTWY/ADJT transactions; sync the latest
+            # placement back into tblWhse_Inventory. Query + rationale live in
+            # _LOCATION_RECONCILE_SQL so the regression suite locks it.
+            loc_updated = reconcile_warehouse_locations(cur)
             conn.commit()
             if loc_updated > 0:
                 logger.info(f"Location reconcile: updated {loc_updated} inventory rows to latest placement location from History")

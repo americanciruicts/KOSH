@@ -802,11 +802,15 @@ def test_location_reconcile_follows_latest_placement():
     """
     sys.path.insert(0, '/app')
     from psycopg2.extras import RealDictCursor
+    from app import reconcile_warehouse_locations  # the SHIPPED query, not a copy
 
     test_pcn = 99933
     item = 'RLOC-1'
-    bin_a = '1404612'
-    bin_b = '1404708'
+    # 8-DIGIT bins on purpose: the 2026-06-17 recurrence (PCN 45504 -> 14051021)
+    # was an 8-digit bin that a stale {6,7}-digit filter silently dropped. Test
+    # with 8-digit bins so that regression can never ship green again.
+    bin_a = '14046120'
+    bin_b = '14047080'
 
     with isolated_txn() as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -827,33 +831,8 @@ def test_location_reconcile_follows_latest_placement():
         # Inventory row starts STALE on the floor (the reported symptom).
         _seed_warehouse_row(cur, test_pcn, item, mpn='RLOC-MPN', onhandqty=45, loc_to='MFG Floor')
 
-        # The EXACT location-reconcile SQL shipped in _sync_onhand_from_transactions.
-        cur.execute(f"""
-            WITH placements AS (
-                SELECT pcn, loc_to, id,
-                    CASE
-                      WHEN tran_time ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' THEN tran_time::timestamptz
-                      WHEN tran_time ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{2}}\\s+[0-9]{{2}}:[0-9]{{2}}' THEN to_timestamp(tran_time, 'MM/DD/YY HH24:MI:SS')
-                      ELSE NULL
-                    END AS st
-                FROM {SCHEMA}."tblTransaction"
-                WHERE COALESCE(reversed, false) = false
-                  AND trantype IN ('PTWY','RESTOCK','INDF','STOCK','ADJT')
-                  AND (loc_to ~ '^[0-9]{{6,7}}$'
-                       OR loc_to IN ('MFG Floor','Rec Area','Count Area','Stock Room'))
-            ),
-            latest_place AS (
-                SELECT DISTINCT ON (pcn) pcn, loc_to AS place_loc
-                FROM placements
-                ORDER BY pcn, st DESC NULLS LAST, id DESC
-            )
-            UPDATE {SCHEMA}."tblWhse_Inventory" w
-            SET loc_to = p.place_loc
-            FROM latest_place p
-            WHERE w.pcn = p.pcn
-              AND w.onhandqty > 0
-              AND COALESCE(w.loc_to, '') <> p.place_loc
-        """)
+        # Call the EXACT function the background thread ships — no SQL copy here.
+        reconcile_warehouse_locations(cur)
 
         cur.execute(f'SELECT loc_to FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(test_pcn),))
         loc = cur.fetchone()['loc_to']
@@ -875,10 +854,12 @@ def test_location_reconcile_honors_manual_adjt_edit():
     """
     sys.path.insert(0, '/app')
     from psycopg2.extras import RealDictCursor
+    from app import reconcile_warehouse_locations  # the SHIPPED query, not a copy
     test_pcn = 99934
     item = 'RLOC2-1'
-    bin_a = '1404612'
-    bin_b = '1404708'
+    # 8-digit bins — the exact recurrence shape (manual ADJT into an 8-digit bin).
+    bin_a = '14046120'
+    bin_b = '14047080'
 
     with isolated_txn() as conn:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -893,35 +874,14 @@ def test_location_reconcile_honors_manual_adjt_edit():
                 (tt, item, str(test_pcn), 'RLOC2-MPN', str(qty), t, lf, lt, 'regression@test.com'))
         txn('INDF', 50, 'n/a', 'Rec Area', '01/10/26 09:00:00')
         txn('PTWY', 50, 'Rec Area', bin_a, '01/11/26 09:00:00')      # imported put-away to bin A
-        txn('ADJT', 0,  bin_a, bin_b, '01/15/26 09:00:00')           # MANUAL editor relocation to bin B
+        txn('ADJT', 0,  bin_a, bin_b, '01/15/26 09:00:00')           # MANUAL editor relocation to bin B (8-digit)
         txn('ADJT', 0,  'RLOC2-1', 'RLOC2-NEW', '01/16/26 09:00:00') # relabel (item->item) — must be IGNORED
 
         # Row is stale on bin A (what the old reconcile would force it back to).
         _seed_warehouse_row(cur, test_pcn, item, mpn='RLOC2-MPN', onhandqty=50, loc_to=bin_a)
 
-        cur.execute(f"""
-            WITH placements AS (
-                SELECT pcn, loc_to, id,
-                    CASE
-                      WHEN tran_time ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' THEN tran_time::timestamptz
-                      WHEN tran_time ~ '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{2}}\\s+[0-9]{{2}}:[0-9]{{2}}' THEN to_timestamp(tran_time, 'MM/DD/YY HH24:MI:SS')
-                      ELSE NULL
-                    END AS st
-                FROM {SCHEMA}."tblTransaction"
-                WHERE COALESCE(reversed, false) = false
-                  AND trantype IN ('PTWY','RESTOCK','INDF','STOCK','ADJT')
-                  AND (loc_to ~ '^[0-9]{{6,7}}$'
-                       OR loc_to IN ('MFG Floor','Rec Area','Count Area','Stock Room'))
-            ),
-            latest_place AS (
-                SELECT DISTINCT ON (pcn) pcn, loc_to AS place_loc
-                FROM placements ORDER BY pcn, st DESC NULLS LAST, id DESC
-            )
-            UPDATE {SCHEMA}."tblWhse_Inventory" w
-            SET loc_to = p.place_loc
-            FROM latest_place p
-            WHERE w.pcn = p.pcn AND w.onhandqty > 0 AND COALESCE(w.loc_to, '') <> p.place_loc
-        """)
+        # Call the EXACT shipped function — no divergent SQL copy in the test.
+        reconcile_warehouse_locations(cur)
         cur.execute(f'SELECT loc_to FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(test_pcn),))
         loc = cur.fetchone()['loc_to']
         assert loc == bin_b, (
