@@ -5420,10 +5420,12 @@ def export_shortage_report(report_id):
 
         ws.merge_cells(f'A2:{last_col}2')
         ws['A2'] = f"Generated: {report['created_at'].strftime('%Y-%m-%d %H:%M') if report['created_at'] else 'N/A'} by {report['created_by']} | Rev: {report.get('job_rev', 'N/A')} | Order Qty: {report.get('order_qty', 'N/A')}"
+        ws['A2'].font = Font(bold=True)
         ws['A2'].alignment = Alignment(horizontal='center')
 
         ws.merge_cells(f'A3:{last_col}3')
         ws['A3'] = f"Shortage Items: {report['shortage_lines']} of {report['total_lines']} BOM lines"
+        ws['A3'].font = Font(bold=True)
         ws['A3'].alignment = Alignment(horizontal='center')
 
         # Headers (row 5)
@@ -5448,6 +5450,7 @@ def export_shortage_report(report_id):
                     value = get_export_cell_value(item, col_def['key'])
                     cell = ws.cell(row=row_idx, column=col_idx, value=value)
                     cell.border = border
+                    cell.font = Font(bold=True)
                     if is_shortage:
                         cell.fill = shortage_fill
                     elif col_def['key'] in highlighted_columns:
@@ -5485,7 +5488,7 @@ def export_shortage_report(report_id):
                     cell = ws.cell(row=row_idx, column=col_idx, value=value)
                     cell.border = border
                     cell.fill = subrow_fill
-                    cell.font = Font(italic=True, color="64748B")
+                    cell.font = Font(bold=True, italic=True, color="64748B")
                 row_idx += 1
 
         # Column widths
