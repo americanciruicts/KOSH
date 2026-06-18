@@ -1106,11 +1106,83 @@ def test_pcn_history_relabel_neutral_on_real_pcns():
             'expected the fix to remove phantom on at least one real relabel PCN')
 
 
+def test_pcn_history_anchored_to_inventory_no_doubling():
+    """PCN History must ANCHOR its on-hand trail to the authoritative Warehouse
+    Inventory value and never double a RESTOCK that follows an RNDT recount.
+
+    Regression for PCN 41664 (reported 2026-06-18): the ledger replay showed
+    4000 (RNDT recount 2000 + RESTOCK 2000) while Warehouse Inventory — the
+    correct value — showed 2000. Calls the SHIPPED
+    compute_anchored_history_balances so the screen and this test can't diverge.
+    """
+    sys.path.insert(0, '/app')
+    from datetime import datetime, timezone
+    try:
+        from app import compute_anchored_history_balances
+    except ImportError:
+        print('    [skip] compute_anchored_history_balances not in this build yet')
+        return  # pre-rebuild container lacks the new function; runs post-rebuild
+
+    def row(tt, qty, mins, is_relabel=False):
+        return {'trantype': tt, 'tranqty': str(qty), 'reversed': False,
+                'is_relabel': is_relabel,
+                'sort_time': datetime(2026, 3, 20, 12, mins, 0, tzinfo=timezone.utc),
+                'id': mins}
+
+    # PCN 41664 shape: received 1000, picked 1000, recount 2000, restock 2000.
+    txns = [row('INDF', 1000, 1), row('PICK', 1000, 2),
+            row('RNDT', 2000, 3), row('RESTOCK', 2000, 4)]
+    anchor = 2000  # authoritative Warehouse Inventory on-hand
+    compute_anchored_history_balances(txns, anchor)
+    newest = max(txns, key=lambda r: r['sort_time'])
+    assert newest['balance'] == anchor, (
+        f'newest history row must equal Warehouse Inventory {anchor}, got '
+        f"{newest['balance']} — RESTOCK-after-recount doubling not removed")
+    assert newest['balance'] != 4000, 'PCN History must not double to 4000'
+
+    # The anchor invariant must hold for ANY anchor value, so the two screens
+    # always agree on the current on-hand regardless of ledger completeness.
+    for a in (0, 79, 500, 12345):
+        compute_anchored_history_balances(txns, a)
+        nm = max(txns, key=lambda r: r['sort_time'])
+        assert nm['balance'] == a, f'newest must equal anchor {a}, got {nm["balance"]}'
+
+
+def test_pcn_history_relabel_adjt_is_quantity_neutral_in_anchor():
+    """A renumber logged as ADJT must stay quantity-neutral in the shipped
+    anchored balance (no phantom on-hand). INDF +1000, relabel-ADJT (neutral),
+    PICK -1000 with anchor 0 -> trail 1000, 1000, 0."""
+    sys.path.insert(0, '/app')
+    from datetime import datetime, timezone
+    try:
+        from app import compute_anchored_history_balances
+    except ImportError:
+        print('    [skip] compute_anchored_history_balances not in this build yet')
+        return  # pre-rebuild container lacks the new function; runs post-rebuild
+
+    def row(tt, qty, mins, is_relabel=False):
+        return {'trantype': tt, 'tranqty': str(qty), 'reversed': False,
+                'is_relabel': is_relabel,
+                'sort_time': datetime(2026, 1, 10, 9, mins, 0, tzinfo=timezone.utc),
+                'id': mins}
+
+    txns = [row('INDF', 1000, 1), row('ADJT', 1000, 2, is_relabel=True),
+            row('PICK', 1000, 3)]
+    compute_anchored_history_balances(txns, 0)  # fully picked -> anchor 0
+    by_t = sorted(txns, key=lambda r: r['sort_time'])
+    assert by_t[0]['balance'] == 1000, f"INDF row got {by_t[0]['balance']}"
+    assert by_t[1]['balance'] == 1000, (
+        f"relabel ADJT must be neutral (no phantom), got {by_t[1]['balance']}")
+    assert by_t[2]['balance'] == 0, f"after full pick got {by_t[2]['balance']}"
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
 TESTS = [
+    test_pcn_history_anchored_to_inventory_no_doubling,
+    test_pcn_history_relabel_adjt_is_quantity_neutral_in_anchor,
     test_restock_allowed_after_purge_following_restock,
     test_restock_allowed_when_zero_onhand_even_if_last_restock,
     test_restock_blocked_when_already_restocked_with_stock_present,

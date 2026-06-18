@@ -3087,6 +3087,209 @@ def reconcile_warehouse_locations(cur):
 # from Access would otherwise resurrect quantities for parts that KOSH already
 # picked. This recomputes onhandqty from KOSH's tblTransaction log, which is
 # authoritative because every KOSH PICK/RESTOCK/STOCK/RNDT logs there.
+# On-hand reconcile query, extracted to module scope (2026-06-18) so the
+# regression suite runs the EXACT shipped SQL instead of a drifting copy.
+# This is the bug Preet kept seeing recur: a guard change here silently
+# broke Warehouse Inventory vs PCN History and no test caught it.
+_ONHAND_RECONCILE_SQL = """
+                WITH locvocab AS (
+                    -- Real warehouse LOCATIONS, learned from NON-ADJT activity
+                    -- (PICK/STOCK/RESTOCK/PTWY/INDF/PURGE record real bins/areas).
+                    -- Used below to tell a genuine ADJT (loc fields are locations)
+                    -- from a renumber mistakenly logged as ADJT (loc fields are ITEM
+                    -- numbers). Learning locations from data survives the 10-char
+                    -- truncation of loc_to (matching item spelling would not).
+                    SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM pcb_inventory."tblTransaction"
+                        WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
+                    UNION
+                    SELECT DISTINCT LOWER(TRIM(loc_from)) FROM pcb_inventory."tblTransaction"
+                        WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
+                    UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('n/a'),('na'),('')
+                ),
+                parsed AS (
+                    -- Parse tran_time to a real timestamp so ordering is by
+                    -- BUSINESS time, not by row id. id ordering is unsafe here
+                    -- because Access data was migrated in batches and id !=
+                    -- chronological order. Without this, the "last RNDT" pick
+                    -- below grabs whichever RNDT was imported last, not the
+                    -- most recent one in real time.
+                    SELECT
+                        pcn::text AS pcn,
+                        -- Normalize MPN (strip -, #, space, ., /) so spelling variants
+                        -- of the SAME part on a PCN (ERJ-3EKF1002V vs ERJ3EKF1002V)
+                        -- group together; otherwise a reel's history fragments and the
+                        -- wrong RNDT baseline is chosen. Same norm the shortage report uses.
+                        LOWER(TRANSLATE(COALESCE(mpn,''), '-# ./', '')) AS mpn_key,
+                        id, trantype, tranqty, COALESCE(reversed, false) AS reversed,
+                        CASE
+                            WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                                THEN tran_time::timestamptz
+                            WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}'
+                                THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
+                            ELSE NULL
+                        END AS ts,
+                        -- A renumber/relabel mistakenly logged as ADJT carries the
+                        -- part's FULL qty with loc_from/loc_to = OLD/NEW item numbers
+                        -- (not locations). Counting it as +qty injected phantom stock
+                        -- (the on-hand double-count root cause, e.g. PCN 30314). Flag it
+                        -- so the net math treats it as quantity-neutral. A genuine ADJT
+                        -- has real locations in loc_from/loc_to and is unaffected.
+                        (trantype = 'ADJT'
+                           AND LOWER(TRIM(COALESCE(loc_from,''))) <> LOWER(TRIM(COALESCE(loc_to,'')))
+                           AND NOT (LOWER(TRIM(COALESCE(loc_to,'')))  IN (SELECT v FROM locvocab) OR COALESCE(loc_to,'')  ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_to,'')) = '')
+                           AND NOT (LOWER(TRIM(COALESCE(loc_from,''))) IN (SELECT v FROM locvocab) OR COALESCE(loc_from,'') ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_from,'')) = '')
+                        ) AS is_relabel
+                    FROM pcb_inventory."tblTransaction"
+                ),
+                last_rndt AS (
+                    SELECT DISTINCT ON (pcn, mpn_key)
+                           pcn, mpn_key,
+                           id AS rndt_id,
+                           ts AS rndt_ts,
+                           tranqty::integer AS rndt_qty
+                    FROM parsed
+                    WHERE trantype = 'RNDT'
+                      AND reversed = false
+                      AND tranqty ~ '^-?[0-9]+$'
+                    -- Order by chronological ts; fallback to id when ts NULL
+                    ORDER BY pcn, mpn_key, ts DESC NULLS LAST, id DESC
+                ),
+                activity AS (
+                    SELECT pcn, mpn_key,
+                           SUM(CASE WHEN trantype = 'PICK' THEN 1 ELSE 0 END) AS pick_count,
+                           COUNT(*) FILTER (WHERE trantype IN ('RNDT','RESTOCK','ADJT','SCRA')) AS touch_count,
+                           MAX(id) FILTER (WHERE trantype = 'ADJT') AS last_adjt_id,
+                           MAX(id) AS last_txn_id
+                    FROM parsed
+                    WHERE reversed = false
+                      AND tranqty ~ '^-?[0-9]+$'
+                    GROUP BY pcn, mpn_key
+                ),
+                net AS (
+                    SELECT t.pcn, t.mpn_key,
+                           GREATEST(0,
+                             COALESCE(MAX(r.rndt_qty), 0)
+                             + SUM(CASE
+                                 -- Renumber logged as ADJT = quantity-neutral (fixes
+                                 -- the phantom-stock double-count). MUST be first.
+                                 WHEN t.is_relabel THEN 0
+                                 WHEN t.trantype = 'INDF' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'STOCK' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'PCN Generation' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'RESTOCK' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'ADJT' THEN t.tranqty::integer
+                                 WHEN t.trantype = 'PICK' THEN -t.tranqty::integer
+                                 WHEN t.trantype = 'PURGE' THEN -t.tranqty::integer
+                                 -- SCRA = parts scrapped: leaves inventory, so it
+                                 -- subtracts. Was previously unhandled (ELSE 0), which
+                                 -- left scrapped qty on-hand. Same sign in History replay.
+                                 WHEN t.trantype = 'SCRA' THEN -t.tranqty::integer
+                                 ELSE 0
+                               END)
+                           ) AS qty
+                    FROM parsed t
+                    LEFT JOIN last_rndt r
+                      ON t.pcn = r.pcn AND t.mpn_key = r.mpn_key
+                    WHERE t.reversed = false
+                      AND t.tranqty ~ '^-?[0-9]+$'
+                      -- Only include txns AT or AFTER the chronological last
+                      -- RNDT. Fall back to id comparison when ts is NULL.
+                      AND (
+                          r.rndt_id IS NULL
+                          OR (r.rndt_ts IS NOT NULL AND t.ts IS NOT NULL AND t.ts >= r.rndt_ts)
+                          OR (r.rndt_ts IS NULL AND t.id >= r.rndt_id)
+                      )
+                    GROUP BY t.pcn, t.mpn_key
+                )
+                , to_update AS (
+                    SELECT w.id, w.pcn::text AS pcn, w.item, w.mpn,
+                           w.onhandqty AS prior_qty, n.qty AS new_qty
+                    FROM pcb_inventory."tblWhse_Inventory" w
+                    JOIN net n
+                      ON w.pcn::text = n.pcn
+                     AND LOWER(TRANSLATE(COALESCE(w.mpn,''), '-# ./', '')) = n.mpn_key
+                    JOIN activity a
+                      ON a.pcn = n.pcn AND a.mpn_key = n.mpn_key
+                    WHERE w.onhandqty IS DISTINCT FROM n.qty
+                      AND (a.pick_count > 0 OR a.touch_count > 0)
+                      -- REMEDIATION GUARD (2026-06-12): only LOWER on-hand, never raise
+                      -- it. The stored Warehouse Inventory value comes from the
+                      -- authoritative migration snapshot; the imported Access ledger is
+                      -- INCOMPLETE, so a replay-computed value that is HIGHER than stored
+                      -- is the RESTOCK/RNDT double-count (parts counted by a recount and
+                      -- then "restocked" again), not real stock. Raising on-hand would
+                      -- spread that doubling (e.g. PCN 41664 2000->4000). So we only
+                      -- apply the computed value when it LOWERS on-hand (genuine
+                      -- relabel-phantom corrections). Real receipts raise on-hand via
+                      -- restock_pcb/stock's own UPDATE, which keeps onhand and mfg_qty
+                      -- in sync. See _ONHAND_RECONCILE_SQL regression tests.
+                      AND n.qty < w.onhandqty
+                ),
+                log_update AS (
+                    INSERT INTO pcb_inventory."tblReconcileAudit"
+                        (pcn, item, mpn, prior_qty, new_qty, source)
+                    SELECT pcn, item, mpn, prior_qty, new_qty, 'auto_reconcile'
+                    FROM to_update
+                    RETURNING 1
+                )
+                UPDATE pcb_inventory."tblWhse_Inventory" w
+                SET onhandqty = u.new_qty
+                FROM to_update u
+                WHERE w.id = u.id"""
+
+
+def reconcile_onhand_from_ledger(cur):
+    """Run the shipped on-hand reconcile once on an open cursor and return
+    the number of inventory rows updated. Used by the background thread AND
+    the regression suite so the two can never diverge."""
+    cur.execute(_ONHAND_RECONCILE_SQL)
+    return cur.rowcount
+
+
+def _history_delta(row):
+    """Signed on-hand effect of one transaction row for the PCN History trail.
+    RNDT/PTWY/PN_CHANGE/UPDATE are quantity-NEUTRAL here: the absolute on-hand
+    comes from the anchor (Warehouse Inventory), not from an RNDT recount
+    baseline. That is what removes the RESTOCK-after-recount double-count
+    (e.g. PCN 41664 was 2000 then a RESTOCK pushed the replay to 4000)."""
+    if bool(row.get('reversed')):
+        return 0
+    try:
+        tq = int(str(row.get('tranqty') or '').strip())
+    except (TypeError, ValueError):
+        return 0
+    if row.get('is_relabel'):
+        return 0  # renumber logged as ADJT = quantity-neutral
+    tt = row.get('trantype') or ''
+    if tt in ('INDF', 'STOCK', 'PCN Generation', 'RESTOCK', 'ADJT'):
+        return tq
+    if tt in ('PICK', 'PURGE', 'SCRA'):
+        return -tq  # SCRA = scrapped, leaves inventory
+    return 0
+
+
+def compute_anchored_history_balances(transactions, anchor):
+    """Assign row['balance'] = on-hand AFTER each transaction, ANCHORED so the
+    newest row equals `anchor` (the authoritative Warehouse Inventory on-hand
+    for the PCN). Walks the trail backward from the anchor:
+        on-hand after row i = on-hand after row (i+1) - delta(row i+1)
+    This guarantees PCN History's current on-hand always equals Warehouse
+    Inventory, for every PCN, with no doubling — even when the imported Access
+    ledger is incomplete or internally inconsistent. Each row must carry
+    trantype, tranqty, reversed, is_relabel, sort_time, id. Mutates in place."""
+    def _sort_key(r):
+        st = r.get('sort_time')
+        return (0 if st is None else 1,
+                st.timestamp() if st is not None else 0.0,
+                r.get('id') or 0)
+    chron = sorted(transactions, key=_sort_key)
+    running = int(anchor or 0)
+    for row in reversed(chron):
+        row['balance'] = max(0, running)
+        running -= _history_delta(row)
+    return transactions
+
+
 def _sync_onhand_from_transactions():
     """Recompute onhandqty from the transaction log once per interval.
     Runs every 5 minutes. Only rewrites rows whose computed value differs from
@@ -3191,146 +3394,7 @@ def _sync_onhand_from_transactions():
             # transactions recorded after it. If no RNDT exists, sum from
             # the start. RESTOCK is a positive contributor, and ADJT is a
             # signed delta logged by manual warehouse edits.
-            cur.execute("""
-                WITH locvocab AS (
-                    -- Real warehouse LOCATIONS, learned from NON-ADJT activity
-                    -- (PICK/STOCK/RESTOCK/PTWY/INDF/PURGE record real bins/areas).
-                    -- Used below to tell a genuine ADJT (loc fields are locations)
-                    -- from a renumber mistakenly logged as ADJT (loc fields are ITEM
-                    -- numbers). Learning locations from data survives the 10-char
-                    -- truncation of loc_to (matching item spelling would not).
-                    SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM pcb_inventory."tblTransaction"
-                        WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
-                    UNION
-                    SELECT DISTINCT LOWER(TRIM(loc_from)) FROM pcb_inventory."tblTransaction"
-                        WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
-                    UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('n/a'),('na'),('')
-                ),
-                parsed AS (
-                    -- Parse tran_time to a real timestamp so ordering is by
-                    -- BUSINESS time, not by row id. id ordering is unsafe here
-                    -- because Access data was migrated in batches and id !=
-                    -- chronological order. Without this, the "last RNDT" pick
-                    -- below grabs whichever RNDT was imported last, not the
-                    -- most recent one in real time.
-                    SELECT
-                        pcn::text AS pcn,
-                        -- Normalize MPN (strip -, #, space, ., /) so spelling variants
-                        -- of the SAME part on a PCN (ERJ-3EKF1002V vs ERJ3EKF1002V)
-                        -- group together; otherwise a reel's history fragments and the
-                        -- wrong RNDT baseline is chosen. Same norm the shortage report uses.
-                        LOWER(TRANSLATE(COALESCE(mpn,''), '-# ./', '')) AS mpn_key,
-                        id, trantype, tranqty, COALESCE(reversed, false) AS reversed,
-                        CASE
-                            WHEN tran_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-                                THEN tran_time::timestamptz
-                            WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}'
-                                THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
-                            ELSE NULL
-                        END AS ts,
-                        -- A renumber/relabel mistakenly logged as ADJT carries the
-                        -- part's FULL qty with loc_from/loc_to = OLD/NEW item numbers
-                        -- (not locations). Counting it as +qty injected phantom stock
-                        -- (the on-hand double-count root cause, e.g. PCN 30314). Flag it
-                        -- so the net math treats it as quantity-neutral. A genuine ADJT
-                        -- has real locations in loc_from/loc_to and is unaffected.
-                        (trantype = 'ADJT'
-                           AND LOWER(TRIM(COALESCE(loc_from,''))) <> LOWER(TRIM(COALESCE(loc_to,'')))
-                           AND NOT (LOWER(TRIM(COALESCE(loc_to,'')))  IN (SELECT v FROM locvocab) OR COALESCE(loc_to,'')  ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_to,'')) = '')
-                           AND NOT (LOWER(TRIM(COALESCE(loc_from,''))) IN (SELECT v FROM locvocab) OR COALESCE(loc_from,'') ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_from,'')) = '')
-                        ) AS is_relabel
-                    FROM pcb_inventory."tblTransaction"
-                ),
-                last_rndt AS (
-                    SELECT DISTINCT ON (pcn, mpn_key)
-                           pcn, mpn_key,
-                           id AS rndt_id,
-                           ts AS rndt_ts,
-                           tranqty::integer AS rndt_qty
-                    FROM parsed
-                    WHERE trantype = 'RNDT'
-                      AND reversed = false
-                      AND tranqty ~ '^-?[0-9]+$'
-                    -- Order by chronological ts; fallback to id when ts NULL
-                    ORDER BY pcn, mpn_key, ts DESC NULLS LAST, id DESC
-                ),
-                activity AS (
-                    SELECT pcn, mpn_key,
-                           SUM(CASE WHEN trantype = 'PICK' THEN 1 ELSE 0 END) AS pick_count,
-                           COUNT(*) FILTER (WHERE trantype IN ('RNDT','RESTOCK','ADJT')) AS touch_count,
-                           MAX(id) FILTER (WHERE trantype = 'ADJT') AS last_adjt_id,
-                           MAX(id) AS last_txn_id
-                    FROM parsed
-                    WHERE reversed = false
-                      AND tranqty ~ '^-?[0-9]+$'
-                    GROUP BY pcn, mpn_key
-                ),
-                net AS (
-                    SELECT t.pcn, t.mpn_key,
-                           GREATEST(0,
-                             COALESCE(MAX(r.rndt_qty), 0)
-                             + SUM(CASE
-                                 -- Renumber logged as ADJT = quantity-neutral (fixes
-                                 -- the phantom-stock double-count). MUST be first.
-                                 WHEN t.is_relabel THEN 0
-                                 WHEN t.trantype = 'INDF' THEN t.tranqty::integer
-                                 WHEN t.trantype = 'STOCK' THEN t.tranqty::integer
-                                 WHEN t.trantype = 'PCN Generation' THEN t.tranqty::integer
-                                 WHEN t.trantype = 'RESTOCK' THEN t.tranqty::integer
-                                 WHEN t.trantype = 'ADJT' THEN t.tranqty::integer
-                                 WHEN t.trantype = 'PICK' THEN -t.tranqty::integer
-                                 WHEN t.trantype = 'PURGE' THEN -t.tranqty::integer
-                                 ELSE 0
-                               END)
-                           ) AS qty
-                    FROM parsed t
-                    LEFT JOIN last_rndt r
-                      ON t.pcn = r.pcn AND t.mpn_key = r.mpn_key
-                    WHERE t.reversed = false
-                      AND t.tranqty ~ '^-?[0-9]+$'
-                      -- Only include txns AT or AFTER the chronological last
-                      -- RNDT. Fall back to id comparison when ts is NULL.
-                      AND (
-                          r.rndt_id IS NULL
-                          OR (r.rndt_ts IS NOT NULL AND t.ts IS NOT NULL AND t.ts >= r.rndt_ts)
-                          OR (r.rndt_ts IS NULL AND t.id >= r.rndt_id)
-                      )
-                    GROUP BY t.pcn, t.mpn_key
-                )
-                , to_update AS (
-                    SELECT w.id, w.pcn::text AS pcn, w.item, w.mpn,
-                           w.onhandqty AS prior_qty, n.qty AS new_qty
-                    FROM pcb_inventory."tblWhse_Inventory" w
-                    JOIN net n
-                      ON w.pcn::text = n.pcn
-                     AND LOWER(TRANSLATE(COALESCE(w.mpn,''), '-# ./', '')) = n.mpn_key
-                    JOIN activity a
-                      ON a.pcn = n.pcn AND a.mpn_key = n.mpn_key
-                    WHERE w.onhandqty IS DISTINCT FROM n.qty
-                      AND (a.pick_count > 0 OR a.touch_count > 0)
-                      -- REMEDIATION GUARD (2026-06-12, temporary): only LOWER on-hand,
-                      -- never raise it. This applies the relabel-phantom corrections
-                      -- (downward) while suppressing the ~370 pre-existing "stale
-                      -- catch-up" INCREASES that come from incomplete pre-migration
-                      -- ledger history (the reconcile-non-convergence issue, tracked
-                      -- separately). Direct STOCK/RESTOCK ops still raise on-hand via
-                      -- their own UPDATEs, so availability is unaffected. Remove this
-                      -- line once ledger non-convergence is resolved.
-                      AND n.qty < w.onhandqty
-                ),
-                log_update AS (
-                    INSERT INTO pcb_inventory."tblReconcileAudit"
-                        (pcn, item, mpn, prior_qty, new_qty, source)
-                    SELECT pcn, item, mpn, prior_qty, new_qty, 'auto_reconcile'
-                    FROM to_update
-                    RETURNING 1
-                )
-                UPDATE pcb_inventory."tblWhse_Inventory" w
-                SET onhandqty = u.new_qty
-                FROM to_update u
-                WHERE w.id = u.id
-            """)
-            updated = cur.rowcount
+            updated = reconcile_onhand_from_ledger(cur)
             conn.commit()
             if updated > 0:
                 logger.info(f"On-hand reconcile: updated {updated} inventory rows from transaction log")
@@ -6427,56 +6491,7 @@ def pcn_history():
                 cur.execute(query, (search_pcn,))
                 transactions = [dict(row) for row in cur.fetchall()]
 
-                # Compute running on-hand balance per row using the SAME math
-                # as the reconcile thread. Users see the on-hand AFTER each
-                # transaction, so a signed ADJT tranqty like -85 can't be
-                # misread as the current on-hand. RNDT resets the baseline.
-                # Order oldest-first to replay the running balance. sort_time is
-                # a tz-aware datetime for parseable rows and None for unparseable
-                # legacy ones; never put both in one comparable slot or Python 3
-                # raises TypeError comparing datetime to int. NULL rows form the
-                # oldest baseline; .timestamp() keeps the rest numeric.
-                def _balance_sort_key(r):
-                    st = r.get('sort_time')
-                    return (0 if st is None else 1,
-                            st.timestamp() if st is not None else 0.0,
-                            r.get('id') or 0)
-                chron = sorted(transactions, key=_balance_sort_key)
-                balance = 0
-                for row in chron:
-                    tq_str = str(row.get('tranqty') or '').strip()
-                    try:
-                        tq = int(tq_str)
-                        valid = True
-                    except (TypeError, ValueError):
-                        tq = 0
-                        valid = False
-                    reversed_row = bool(row.get('reversed'))
-                    tt = row.get('trantype') or ''
-                    if reversed_row or not valid:
-                        delta = 0
-                    elif tt == 'RNDT':
-                        balance = tq  # physical recount resets baseline
-                        row['balance'] = balance
-                        continue
-                    elif row.get('is_relabel'):
-                        delta = 0  # renumber logged as ADJT = quantity-neutral (no phantom)
-                    elif tt in ('INDF', 'STOCK', 'PCN Generation', 'RESTOCK', 'ADJT'):
-                        delta = tq
-                    elif tt in ('PICK', 'PURGE'):
-                        delta = -tq
-                    else:
-                        delta = 0
-                    balance = max(0, balance + delta)
-                    row['balance'] = balance
-                # Drop the helper field so template doesn't need it
-                for row in transactions:
-                    row.pop('sort_time', None)
-                    row.pop('id', None)
-                    row.pop('reversed', None)
-                    row.pop('is_relabel', None)
-
-                # Get PCN info from warehouse inventory
+                # Get PCN info from warehouse inventory (header detail).
                 cur.execute("""
                     SELECT item, mpn, dc, onhandqty, mfg_qty, loc_to, msd, po
                     FROM pcb_inventory."tblWhse_Inventory"
@@ -6486,6 +6501,29 @@ def pcn_history():
                 result = cur.fetchone()
                 if result:
                     pcn_info = dict(result)
+
+                # ANCHOR the on-hand trail to the authoritative Warehouse
+                # Inventory value (summed across any duplicate rows / MPNs for
+                # this PCN). The imported Access ledger is incomplete and
+                # double-counts a RESTOCK that follows an RNDT recount, so we do
+                # NOT trust a forward replay for the absolute number. Walking the
+                # trail backward from tblWhse_Inventory guarantees the two views
+                # always agree on the current on-hand, with no doubling.
+                cur.execute("""
+                    SELECT COALESCE(SUM(onhandqty), 0)
+                    FROM pcb_inventory."tblWhse_Inventory"
+                    WHERE pcn::text = %s
+                """, (search_pcn,))
+                anchor_row = cur.fetchone()
+                anchor = int(anchor_row[0]) if anchor_row and anchor_row[0] is not None else 0
+
+                compute_anchored_history_balances(transactions, anchor)
+                # Drop the helper fields so the template doesn't need them
+                for row in transactions:
+                    row.pop('sort_time', None)
+                    row.pop('id', None)
+                    row.pop('reversed', None)
+                    row.pop('is_relabel', None)
 
             return render_template('pcn/pcn_history.html',
                                  transactions=transactions,
