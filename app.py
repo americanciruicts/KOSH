@@ -6509,13 +6509,15 @@ def pcn_history():
                 # NOT trust a forward replay for the absolute number. Walking the
                 # trail backward from tblWhse_Inventory guarantees the two views
                 # always agree on the current on-hand, with no doubling.
+                # NOTE: cur is a RealDictCursor here, so fetchone() returns a
+                # dict — read the aggregate by its alias, never by index [0].
                 cur.execute("""
-                    SELECT COALESCE(SUM(onhandqty), 0)
+                    SELECT COALESCE(SUM(onhandqty), 0) AS total
                     FROM pcb_inventory."tblWhse_Inventory"
                     WHERE pcn::text = %s
                 """, (search_pcn,))
                 anchor_row = cur.fetchone()
-                anchor = int(anchor_row[0]) if anchor_row and anchor_row[0] is not None else 0
+                anchor = int(anchor_row['total']) if anchor_row and anchor_row.get('total') is not None else 0
 
                 compute_anchored_history_balances(transactions, anchor)
                 # Drop the helper fields so the template doesn't need them

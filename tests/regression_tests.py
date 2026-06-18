@@ -1176,6 +1176,51 @@ def test_pcn_history_relabel_adjt_is_quantity_neutral_in_anchor():
     assert by_t[2]['balance'] == 0, f"after full pick got {by_t[2]['balance']}"
 
 
+def test_pcn_history_route_anchor_uses_dict_cursor():
+    """The /pcn-history route fetches with a RealDictCursor, so the anchor
+    query must read the aggregate BY ALIAS (anchor_row['total']), never by
+    index [0] — [0] raises KeyError: 0 and broke the whole page on 2026-06-18
+    ("Error loading PCN history: 0"). Exercise the exact data path: seed a PCN,
+    run the route's anchor query with a RealDictCursor, then the shipped
+    compute, asserting no exception and newest row == seeded Warehouse on-hand.
+    """
+    sys.path.insert(0, '/app')
+    try:
+        from app import compute_anchored_history_balances
+    except ImportError:
+        print('    [skip] compute_anchored_history_balances not in this build yet')
+        return
+    from psycopg2.extras import RealDictCursor
+    test_pcn = 99004
+    item = 'REGRESS-ANCHOR-DICTCUR'
+    with isolated_txn() as conn:
+        cur = conn.cursor()
+        _seed_warehouse_row(cur, test_pcn, item, mpn='ANCHOR-MPN',
+                            onhandqty=500, loc_to='1501999')
+        _seed_txn(cur, 'INDF', item, test_pcn, 500)
+        _seed_txn(cur, 'RESTOCK', item, test_pcn, 500)  # would double to 1000 w/o anchor
+        with conn.cursor(cursor_factory=RealDictCursor) as dcur:
+            dcur.execute(
+                'SELECT COALESCE(SUM(onhandqty),0) AS total FROM '
+                f'{SCHEMA}."tblWhse_Inventory" WHERE pcn::text=%s', (str(test_pcn),))
+            ar = dcur.fetchone()
+            anchor = int(ar['total']) if ar and ar.get('total') is not None else 0
+            assert anchor == 500, f'anchor should equal seeded on-hand 500, got {anchor}'
+            dcur.execute(
+                "SELECT id, trantype, tranqty, COALESCE(reversed,false) AS reversed, "
+                "to_timestamp(tran_time,'MM/DD/YY HH24:MI:SS') AS sort_time, "
+                "false AS is_relabel "
+                f'FROM {SCHEMA}."tblTransaction" WHERE pcn::text=%s '
+                'AND COALESCE(reversed,false)=false', (str(test_pcn),))
+            txns = [dict(r) for r in dcur.fetchall()]
+        compute_anchored_history_balances(txns, anchor)  # must not raise
+        newest = max(txns, key=lambda r: (r['sort_time'] is not None,
+                                          r['sort_time'] or 0, r['id']))
+        assert newest['balance'] == 500, (
+            f'newest history row must equal Warehouse 500 (no doubling), '
+            f"got {newest['balance']}")
+
+
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
@@ -1183,6 +1228,7 @@ def test_pcn_history_relabel_adjt_is_quantity_neutral_in_anchor():
 TESTS = [
     test_pcn_history_anchored_to_inventory_no_doubling,
     test_pcn_history_relabel_adjt_is_quantity_neutral_in_anchor,
+    test_pcn_history_route_anchor_uses_dict_cursor,
     test_restock_allowed_after_purge_following_restock,
     test_restock_allowed_when_zero_onhand_even_if_last_restock,
     test_restock_blocked_when_already_restocked_with_stock_present,
