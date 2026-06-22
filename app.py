@@ -3201,6 +3201,23 @@ _ONHAND_RECONCILE_SQL = """
                       )
                     GROUP BY t.pcn, t.mpn_key
                 )
+                , latest_event AS (
+                    -- The most recent MATERIAL transaction per (pcn, mpn). When this
+                    -- is a fresh receipt (RESTOCK/STOCK) the row's on-hand was just
+                    -- established by that receipt's own UPDATE. The historical Access
+                    -- ledger is INCOMPLETE for some parts (more PICKs than stock-ins),
+                    -- so replaying it nets negative -> GREATEST(0,...) clamps to 0, and
+                    -- the lower-only guard below would then WIPE the fresh restock
+                    -- (e.g. PCN 42137: parts@ restocked 15 on 6/18, reconcile zeroed it
+                    -- 4 hours later; 62 such rows were sitting at 0). Never lower a row
+                    -- whose latest event is a receipt. A PICK/RNDT/etc. as the latest
+                    -- event is unaffected, so genuine phantom-high stock is still cut.
+                    SELECT DISTINCT ON (pcn, mpn_key) pcn, mpn_key, trantype AS last_type
+                    FROM parsed
+                    WHERE reversed = false
+                      AND trantype IN ('PICK','PURGE','SCRA','RESTOCK','STOCK','INDF','ADJT','PCN Generation')
+                    ORDER BY pcn, mpn_key, ts DESC NULLS LAST, id DESC
+                )
                 , to_update AS (
                     SELECT w.id, w.pcn::text AS pcn, w.item, w.mpn,
                            w.onhandqty AS prior_qty, n.qty AS new_qty
@@ -3210,8 +3227,14 @@ _ONHAND_RECONCILE_SQL = """
                      AND LOWER(TRANSLATE(COALESCE(w.mpn,''), '-# ./', '')) = n.mpn_key
                     JOIN activity a
                       ON a.pcn = n.pcn AND a.mpn_key = n.mpn_key
+                    LEFT JOIN latest_event le
+                      ON le.pcn = n.pcn AND le.mpn_key = n.mpn_key
                     WHERE w.onhandqty IS DISTINCT FROM n.qty
                       AND (a.pick_count > 0 OR a.touch_count > 0)
+                      -- Never lower a row whose most recent material event is a fresh
+                      -- receipt: the receipt set the authoritative on-hand and the
+                      -- incomplete historical ledger must not overwrite it. (2026-06-22)
+                      AND COALESCE(le.last_type, '') NOT IN ('RESTOCK','STOCK')
                       -- REMEDIATION GUARD (2026-06-12): only LOWER on-hand, never raise
                       -- it. The stored Warehouse Inventory value comes from the
                       -- authoritative migration snapshot; the imported Access ledger is

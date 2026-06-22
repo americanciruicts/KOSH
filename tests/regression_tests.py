@@ -955,6 +955,70 @@ def test_onhand_reconcile_neutralizes_relabel_adjt():
             f'renumber-aware reconcile must neutralize the relabel -> on-hand 0, got {corrected}')
 
 
+def test_onhand_reconcile_never_wipes_fresh_restock():
+    """Wiped-restock bug (2026-06-22): the on-hand reconcile replays the WHOLE
+    imported Access ledger, but that ledger is INCOMPLETE for some parts (more
+    PICKs than stock-ins), so the replay nets negative and GREATEST(0,...) clamps
+    to 0. The lower-only guard then saw computed 0 < stored qty and OVERWROTE a
+    fresh, real restock with 0 — Warehouse showed 0 while PCN History correctly
+    showed the restock. 62 production rows sat at 0 this way (e.g. PCN 42137:
+    parts@ restocked 15 on 6/18, reconcile zeroed it 4 hours later).
+
+    Seeds the exact shape: INDF +500, PICK -570 (broken ledger -> net <0), then a
+    later RESTOCK +15 as the most-recent material event, with the warehouse row at
+    15 (what restock_pcb set). The reconcile must LEAVE it at 15 — never lower a
+    row whose latest event is a fresh receipt. A control PCN whose latest event is
+    a PICK (genuine phantom-high stock) must STILL be lowered, proving the guard
+    didn't disable real corrections.
+    """
+    sys.path.insert(0, '/app')
+    from psycopg2.extras import RealDictCursor
+    from app import reconcile_onhand_from_ledger  # the SHIPPED query, not a copy
+
+    restock_pcn = 99936      # latest event = RESTOCK -> must be protected
+    control_pcn = 99937      # latest event = PICK   -> phantom-high must be cut
+    item_r = 'RWIPE-1'
+    item_c = 'RWIPE-CTRL'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        for p in (restock_pcn, control_pcn):
+            cur.execute(f'DELETE FROM {SCHEMA}."tblTransaction" WHERE pcn = %s', (str(p),))
+            cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(p),))
+
+        def txn(item, pcn, tt, qty, lf, lt, t):
+            cur.execute(
+                f'INSERT INTO {SCHEMA}."tblTransaction" '
+                '(trantype, item, pcn, mpn, tranqty, tran_time, loc_from, loc_to, userid) '
+                'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                (tt, item, str(pcn), item + '-MPN', str(qty), t, lf, lt, 'regression@test.com'))
+
+        # --- protected PCN: incomplete ledger nets negative, then a fresh restock
+        txn(item_r, restock_pcn, 'INDF',    500, 'n/a',       'Rec Area',  '01/10/26 09:00:00')
+        txn(item_r, restock_pcn, 'PICK',    570, '1404706',   'MFG Floor', '01/12/26 09:00:00')
+        txn(item_r, restock_pcn, 'RESTOCK',  15, 'MFG Floor', '1605003',   '06/18/26 07:30:00')
+        _seed_warehouse_row(cur, restock_pcn, item_r, mpn=item_r + '-MPN', onhandqty=15, loc_to='1605003')
+
+        # --- control PCN: genuine phantom-high stock (latest event is a PICK)
+        txn(item_c, control_pcn, 'INDF', 100, 'n/a',     'Rec Area',  '01/10/26 09:00:00')
+        txn(item_c, control_pcn, 'PICK', 100, '1404706', 'MFG Floor', '01/12/26 09:00:00')
+        _seed_warehouse_row(cur, control_pcn, item_c, mpn=item_c + '-MPN', onhandqty=80, loc_to='1605003')
+
+        reconcile_onhand_from_ledger(cur)
+
+        cur.execute(f'SELECT onhandqty FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(restock_pcn),))
+        r_qty = cur.fetchone()['onhandqty']
+        assert r_qty == 15, (
+            f'reconcile must NOT wipe a fresh restock: expected 15, got {r_qty} '
+            f'(0 == the production bug where parts@ restocks vanished)')
+
+        cur.execute(f'SELECT onhandqty FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(control_pcn),))
+        c_qty = cur.fetchone()['onhandqty']
+        assert c_qty == 0, (
+            f'reconcile must STILL lower phantom-high stock when latest event is a '
+            f'PICK: expected 0, got {c_qty} (the guard must not disable real corrections)')
+
+
 def test_pcn_history_balance_matches_reconcile_on_relabel():
     """PCN History's per-row 'On Hand' (running balance) must use the SAME
     relabel-neutral math as the reconcile that feeds Warehouse Inventory, or the
@@ -1242,6 +1306,7 @@ TESTS = [
     test_location_reconcile_follows_latest_placement,
     test_location_reconcile_honors_manual_adjt_edit,
     test_onhand_reconcile_neutralizes_relabel_adjt,
+    test_onhand_reconcile_never_wipes_fresh_restock,
     test_pcn_history_balance_matches_reconcile_on_relabel,
     test_pcn_history_relabel_neutral_on_real_pcns,
     test_bom_python_parser_finds_lines_across_sheets,
