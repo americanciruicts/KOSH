@@ -121,7 +121,7 @@ bug — it's structural. The two screens are **two different computations**:
 - **● When** — 2026-06-23 · commit `e88ae7b` · **Deployed:** ✅
 - **● Verified** — 2026-06-23 · Code inspection confirmed bin-first logic active in production
 - **● Did it handle it?** — Yes. Verified live (line 3 → 2204207). Fleet-wide **1,492 items** mis-pointing → 0.
-- **📚 Engineering docs** — See `bug_memory/bug_01_shortage_report_mfg_floor_instead_of_real_bin/` for comprehensive analysis, UAT plan, verification queries, and risk review.
+- **📚 Engineering docs** — See `bug_memory/bug01-shortage-report-mfg-floor-instead-of-real-bin/` for comprehensive analysis, UAT plan, verification queries, and risk review.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---

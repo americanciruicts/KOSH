@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nBug #1 (Shortage report showed MFG Floor instead of real bin) -- Verified fix and comprehensive engineering documentation\n\n✅ VERIFIED: Bin-first location ranking logic is active in production code\n\nWhat was done:\n- Verified app.py @ L5153, L8432, L8734 has correct bin-first ORDER BY logic\n- Verified item search @ L4522 has exact-or-prefix matching\n- Created comprehensive engineering documentation (7 files)\n- Updated BUG HISTORY.md with verification date and actual fixed code\n\nFix details:\n- Location ranking now prioritizes bin stock over MFG Floor\n- ORDER BY: (onhandqty>0) DESC, onhandqty DESC, floor DESC\n- This corrects 1,492 items that were showing wrong locations\n\nEngineering docs added:\n- BUG_01_COMPLETE_ANALYSIS.md (800 lines - full technical analysis)\n- BUG_01_SUMMARY.md (executive summary)\n- bug_01_risk_review.md (deployment risk analysis)\n- bug_01_uat_test_plan.md (manual testing checklist)\n- bug_01_verification_queries.sql (10 SQL validation queries)\n- ENGINEERING_WORK_COMPLETED.md (work summary)\n- README.md (quick start guide)\n\nStatus: ✅ Fix verified in production, comprehensive documentation added\n\nRelated: Original bug reported by Theresa 2026-06-23 (job 5455M)\nCommit: e88ae7b (original deployment)\nEOF\n)\")",
+      "Bash(git push:*)",
+      "Bash(git commit:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
