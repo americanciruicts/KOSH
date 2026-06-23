@@ -4520,11 +4520,23 @@ def warehouse_inventory():
         params = []
 
         if search_item:
-            # EXACT item-number match (not substring): searching '1234L-5' must
-            # return only item 1234L-5, never 1234L-50/-55/etc. TRIM guards against
-            # stray whitespace stored on legacy rows.
-            query += " AND LOWER(TRIM(w.item::text)) = %s"
-            params.append(search_item.lower())
+            # EXACT-match-wins, else PREFIX (Theresa 2026-06-23): typing a complete
+            # item ('1234L-5') returns ONLY that item (never 1234L-50/-55), but
+            # typing a base/partial ('1234L-' or '1234L') lists EVERY variant
+            # 1234L-1, 1234L-5, 1234L-10... The NOT EXISTS makes exact take
+            # precedence: if any item equals the term, only exact rows return;
+            # otherwise the term is treated as a starts-with prefix. TRIM guards
+            # legacy whitespace; %/_ in the term are escaped so they stay literal.
+            term = search_item.lower()
+            like_term = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+            query += """ AND (
+                LOWER(TRIM(w.item::text)) = %s
+                OR (NOT EXISTS (
+                        SELECT 1 FROM pcb_inventory."tblWhse_Inventory" we
+                        WHERE LOWER(TRIM(we.item::text)) = %s)
+                    AND LOWER(TRIM(w.item::text)) LIKE %s ESCAPE '\\')
+            )"""
+            params.extend([term, term, like_term])
 
         if search_pcn:
             # EXACT PCN match (not prefix): '1234' returns only PCN 1234,
@@ -5109,7 +5121,13 @@ def shortage_report():
 # share an aci_pn to the row carrying the line's real qty (alternates like
 # "ZSUB FOR ABOVE" have a blank/0 qty); (2) matches on-hand to THIS job's own
 # part only (w.item = aci_pn), summed across its lots INCLUDING MFG-Floor stock
-# (3) consolidates to one row per BOM line (pcn/location show the fullest lot).
+# (3) consolidates to one row per BOM line. The displayed pcn/location prefer a
+# lot with REAL BIN stock (onhandqty>0), ordered by bin qty, and only fall back
+# to a MFG-Floor-only lot when nothing is in a bin — so the report points the
+# picker at the bin where the part actually is, not a floor lot with 0 pickable
+# stock (the bug Theresa hit on job 5455M: line 3 showed MFG Floor while 278 sat
+# in bin 2204207 under a different PCN). On-hand SUM still includes floor qty so
+# a job with floor stock isn't flagged as a false shortage.
 _SHORTAGE_MATCH_SQL = """
     WITH bom_lines AS (
         SELECT DISTINCT ON (b.aci_pn)
@@ -5130,9 +5148,9 @@ _SHORTAGE_MATCH_SQL = """
             -- 0 rows with both onhandqty>0 AND mfg_qty>0), so summing can't
             -- double-count. mfg_qty is TEXT — parse defensively.
             COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
-            (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
-            (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
-            (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
+            (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
+            (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
+            (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
         FROM bom_lines bl
         LEFT JOIN pcb_inventory."tblWhse_Inventory" w
             -- Case-insensitive: inventory stores the SAME part number in mixed
@@ -8409,9 +8427,9 @@ def job_detail(job_number):
                 SELECT
                     bl.aci_pn,
                     COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
-                    (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
-                    (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
-                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
+                    (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
+                    (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
+                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
                 LEFT JOIN pcb_inventory."tblWhse_Inventory" w
                     ON w.item = bl.aci_pn
@@ -8711,9 +8729,9 @@ def job_export(job_number):
                 SELECT
                     bl.aci_pn,
                     COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
-                    (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
-                    (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
-                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
+                    (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
+                    (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
+                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
                 LEFT JOIN pcb_inventory."tblWhse_Inventory" w
                     ON w.item = bl.aci_pn

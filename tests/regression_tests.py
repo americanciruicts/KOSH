@@ -722,6 +722,63 @@ def test_shortage_report_own_stock_is_case_insensitive():
             f"only the genuinely different PN should be a row entry, got {sub_rows!r}")
 
 
+def test_shortage_report_shows_bin_location_not_floor():
+    """Shortage-report location bug (2026-06-23, Theresa / job 5455M line 3): the
+    displayed PCN/location was chosen by HIGHEST (bin + MFG-floor) total, so when a
+    part had a big MFG-Floor-only lot and a smaller real BIN lot, the report pointed
+    the picker at 'MFG Floor' (0 pickable) and HID the bin where the part actually
+    was. The fix ranks the displayed lot bin-first: a lot with onhandqty>0 wins, so
+    the report shows the real bin; it only falls back to MFG Floor when nothing is
+    in a bin. On-hand SUM still includes floor qty (must not re-flag false shortage).
+
+    Seeds a small BIN lot (50 @ a bin) + a LARGER floor-only lot (840 @ MFG Floor)
+    and asserts the report's location/pcn are the BIN lot, not the floor lot.
+    """
+    sys.path.insert(0, '/app')
+    import app as app_module
+    from psycopg2.extras import RealDictCursor
+
+    job = 'REGRESS-BINLOC-9999'
+    aci_pn = 'RBINLOC-1'
+    mpn = 'RGMPN-BINLOC-1'
+    bin_loc = '2204207'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(f'DELETE FROM {SCHEMA}."tblBOM" WHERE job = %s', (job,))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn IN %s', (('99344', '99345'),))
+
+        # BOM needs 1000 so on-hand (890) < req -> a shortage line is kept and we
+        # can read its displayed location/pcn.
+        cur.execute(
+            f'INSERT INTO {SCHEMA}."tblBOM" (line, "DESC", man, mpn, aci_pn, qty, cost, job, job_rev) '
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            ('10', 'Regress binloc', 'RegressMan', mpn, aci_pn, '1000', '1.00', job, 'A'))
+
+        # Small BIN lot (50 @ real bin) + LARGER floor-only lot (840 @ MFG Floor).
+        # OLD logic ranked by total -> picked the 840 floor lot -> showed 'MFG Floor'.
+        _seed_warehouse_row(cur, 99344, aci_pn, mpn=mpn, onhandqty=50, mfg_qty='0', loc_to=bin_loc)
+        _seed_warehouse_row(cur, 99345, aci_pn, mpn=mpn, onhandqty=0, mfg_qty='840', loc_to='MFG Floor')
+
+        result = app_module._persist_shortage_report(
+            cur, job, order_qty=1, report_name='regress', notes='', username='regression@test.com')
+        assert result is not None, 'shortage report should generate'
+        cur.execute(
+            f'SELECT pcn, location, qty_on_hand FROM {SCHEMA}."tblShortageReportItems" WHERE report_id = %s',
+            (result['report_id'],))
+        rows = cur.fetchall()
+        assert len(rows) == 1, f'expected 1 shortage line, got {len(rows)}'
+        r = rows[0]
+        assert r['location'] == bin_loc, (
+            f"displayed location must be the real BIN {bin_loc} (where 50 pickable units are), "
+            f"not 'MFG Floor' (the bug); got {r['location']!r}")
+        assert str(r['pcn']) == '99344', (
+            f"displayed PCN must be the bin lot 99344, not the floor lot 99345; got {r['pcn']}")
+        assert r['qty_on_hand'] == 890, (
+            f"on-hand must still SUM bin 50 + floor 840 = 890 (don't re-flag false shortage); "
+            f"got {r['qty_on_hand']}")
+
+
 def test_shortage_report_counts_mfg_floor_stock():
     """Task 2 (2026-06-15, owner-reversed from CANCELLED): the shortage report
     MUST count this job's own MFG-Floor stock toward on-hand, so a job whose
@@ -1303,6 +1360,7 @@ TESTS = [
     test_shortage_report_alt_part_qty_and_same_mpn_visibility,
     test_shortage_report_own_stock_is_case_insensitive,
     test_shortage_report_counts_mfg_floor_stock,
+    test_shortage_report_shows_bin_location_not_floor,
     test_location_reconcile_follows_latest_placement,
     test_location_reconcile_honors_manual_adjt_edit,
     test_onhand_reconcile_neutralizes_relabel_adjt,
