@@ -6,10 +6,10 @@ repo so the history can never be lost (the recurring-bug problem was partly *bec
 fixes lived only in code/conversation and weren't written down).
 
 ## Files
-- **`BUG_HISTORY.md`** — the full log (newest bug at top). One entry per distinct bug.
+- **`BUG HISTORY.md`** — the full log (newest bug at top). One entry per distinct bug.
 
 ## Entry template (for a NEW distinct bug)
-Prepend a new block to `BUG_HISTORY.md`:
+Prepend a new block to `BUG HISTORY.md`:
 
 ```
 ## YYYY-MM-DD — <short title>   [status: FIXED | PARTIAL | RECURRING | OPEN]
@@ -41,7 +41,7 @@ new case reports** sub-section:
 This makes recurring bugs visible at a glance — if an entry's Recurrence list keeps
 growing, the underlying fix isn't holding and the problem is likely **data-model
 level** (see the "Warehouse Inventory != PCN History" and "Recurring root cause"
-sections in `BUG_HISTORY.md`), which is what the inventory/PCN/transaction rebuild is for.
+sections in `BUG HISTORY.md`), which is what the inventory/PCN/transaction rebuild is for.
 
 ## Other rules
 1. **One entry per distinct bug.** Recurrences stack under it (above rule).
