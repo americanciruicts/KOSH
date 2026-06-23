@@ -103,8 +103,25 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `app.py` — `_SHORTAGE_MATCH_SQL` › `inv` CTE location pick **@ L5153** (mirrored job views **@ L8432, L8734**)
   - ◦ `app.py` — `warehouse_inventory()` search_item filter **@ L4522**
   - ◦ `tests/regression_tests.py` — `test_shortage_report_shows_bin_location_not_floor`
+- **📝 Fixed Code** — The actual implementation in app.py:
+  ```python
+  # Line 5153 (and mirrored @ 8432, 8734) - Bin-first location ranking:
+  (array_agg(COALESCE(w.loc_to, '')
+      ORDER BY
+          (COALESCE(w.onhandqty,0) > 0) DESC,  # ✅ Bin exists first (TRUE > FALSE)
+          COALESCE(w.onhandqty,0) DESC,        # ✅ Highest bin quantity
+          (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST  # ✅ Floor quantity
+  ))[1] as location
+
+  # Line 4522-4539 - Exact-or-prefix item search:
+  # EXACT-match-wins, else PREFIX (Theresa 2026-06-23)
+  LOWER(TRIM(w.item::text)) = %s  # Exact match first
+  OR (NOT EXISTS (...) AND LOWER(TRIM(w.item::text)) LIKE %s)  # Prefix if no exact
+  ```
 - **● When** — 2026-06-23 · commit `e88ae7b` · **Deployed:** ✅
+- **● Verified** — 2026-06-23 · Code inspection confirmed bin-first logic active in production
 - **● Did it handle it?** — Yes. Verified live (line 3 → 2204207). Fleet-wide **1,492 items** mis-pointing → 0.
+- **📚 Engineering docs** — See `bug_memory/bug_01_shortage_report_mfg_floor_instead_of_real_bin/` for comprehensive analysis, UAT plan, verification queries, and risk review.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
