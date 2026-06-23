@@ -217,7 +217,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `app.py` — `_ONHAND_RECONCILE_SQL` **@ L3094**, `reconcile_onhand_from_ledger()` **@ L3264**
   - ◦ `tests/regression_tests.py` — anchor / no-doubling / relabel-neutral tests
 - **● When** — 2026-06-18 · commit `5b1967c` · **Deployed:** ✅
+- **● Verified** — 2026-06-23 · Architectural fix verified - all 5 tests passed
 - **● Did it handle it?** — Yes — this is *the* structural guarantee that the two screens match.
+- **📚 Engineering docs** — See `bug_memory/bug04-restock-after-recount-doubling/` for verification test and documentation.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
