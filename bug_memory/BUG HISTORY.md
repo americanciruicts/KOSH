@@ -137,8 +137,32 @@ bug — it's structural. The two screens are **two different computations**:
 - **🛠️ Files & lines**
   - ◦ `app.py` — `_ONHAND_RECONCILE_SQL` › new `latest_event` CTE + guard **@ L3204**
   - ◦ `tests/regression_tests.py` — `test_onhand_reconcile_never_wipes_fresh_restock`
+- **📝 Fixed Code** — The actual implementation in app.py:
+  ```python
+  # Line 3204-3220 - Latest event tracking CTE:
+  latest_event AS (
+      -- The most recent MATERIAL transaction per (pcn, mpn). When this
+      -- is a fresh receipt (RESTOCK/STOCK) the row's on-hand was just
+      -- established by that receipt's own UPDATE.
+      SELECT DISTINCT ON (pcn, mpn_key) pcn, mpn_key, trantype AS last_type
+      FROM parsed
+      WHERE reversed = false
+        AND trantype IN ('PICK','PURGE','SCRA','RESTOCK','STOCK','INDF','ADJT','PCN Generation')
+      ORDER BY pcn, mpn_key, ts DESC NULLS LAST, id DESC
+  )
+  
+  # Line 3230-3237 - Guard prevents lowering fresh receipts:
+  LEFT JOIN latest_event le ON le.pcn = n.pcn AND le.mpn_key = n.mpn_key
+  WHERE w.onhandqty IS DISTINCT FROM n.qty
+    AND (a.pick_count > 0 OR a.touch_count > 0)
+    -- ✅ Never lower a row whose latest event is RESTOCK/STOCK
+    AND COALESCE(le.last_type, '') NOT IN ('RESTOCK','STOCK')  # Bug #2 fix
+    AND n.qty < w.onhandqty  # Lower-only guard (existing)
+  ```
 - **● When** — 2026-06-22 · commit `1958a08` · **Deployed:** ✅
+- **● Verified** — 2026-06-23 · Code inspection confirmed fresh-receipt protection active at L3237
 - **● Did it handle it?** — Yes. **Data fix (separate pass):** 62 zeroed rows backfilled (audit `restock_wipe_backfill_20260622`).
+- **📚 Engineering docs** — See `bug_memory/bug02-onhand-reconcile-wiped-fresh-restocks/` for complete analysis, verification queries, and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
