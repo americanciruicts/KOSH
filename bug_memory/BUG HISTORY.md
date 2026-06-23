@@ -178,8 +178,28 @@ bug — it's structural. The two screens are **two different computations**:
 - **🛠️ Files & lines**
   - ◦ `app.py` — `pcn_history()` anchor read **@ L6556** (route `def pcn_history` **@ L6471**)
   - ◦ `tests/regression_tests.py` — RealDictCursor anchor-path test
+- **📝 Fixed Code** — The actual implementation in app.py:
+  ```python
+  # Line 6553-6554 - Comment explains the fix:
+  # NOTE: cur is a RealDictCursor here, so fetchone() returns a
+  # dict — read the aggregate by its alias, never by index [0].
+  
+  # Line 6556 - Query with explicit alias:
+  cur.execute("""
+      SELECT COALESCE(SUM(onhandqty), 0) AS total  # ✅ Explicit alias
+      FROM pcb_inventory."tblWhse_Inventory"
+      WHERE pcn::text = %s
+  """, (search_pcn,))
+  
+  # Line 6561 - Read by alias with safety:
+  anchor_row = cur.fetchone()
+  anchor = int(anchor_row['total']) if anchor_row and anchor_row.get('total') is not None else 0  # ✅ Dict access
+  # Before fix: anchor = int(anchor_row[0])  # ❌ KeyError: 0
+  ```
 - **● When** — 2026-06-18 · commit `069819e` · **Deployed:** ✅
-- **● Did it handle it?** — Yes.
+- **● Verified** — 2026-06-23 · Code inspection confirmed RealDictCursor dict access at L6561
+- **● Did it handle it?** — Yes. PCN History fully functional for all PCNs.
+- **📚 Engineering docs** — See `bug_memory/bug03-pcn-history-page-crashed/` for complete analysis, tests, and verification queries.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
