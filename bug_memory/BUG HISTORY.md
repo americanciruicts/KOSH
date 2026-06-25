@@ -312,7 +312,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `app.py` — `_SHORTAGE_MATCH_SQL` › `inv` CTE **@ L5142** (+ mirrored job views **@ L8421, L8724**)
   - ◦ `tests/regression_tests.py` — `test_shortage_report_counts_mfg_floor_stock`
 - **● When** — 2026-06-15 · commit `0a020fc` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (shortage report, job view 1, job view 2, documentation)
 - **● Did it handle it?** — Yes.
+- **📚 Engineering docs** — See `bug_memory/bug-09-shortage-report-ignored-mfg-floor-stock/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
