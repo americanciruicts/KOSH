@@ -274,7 +274,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `app.py` — `pcn_history()` balance replay + `_history_delta()` **@ L3272** / route **@ L6471**
   - ◦ `tests/regression_tests.py` — `test_pcn_history_balance_matches_reconcile_on_relabel` (+ real-PCN test `5adb737`)
 - **● When** — 2026-06-16 · commit `6c2ded8` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (_history_delta relabel check, is_relabel predicate, documentation, function exists)
 - **● Did it handle it?** — Yes (PCN 1247 → 9,000; full pick → 0).
+- **📚 Engineering docs** — See `bug_memory/bug-07-pcn-history-ne-warehouse-on-relabels/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
