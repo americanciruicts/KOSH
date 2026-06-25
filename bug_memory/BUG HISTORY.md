@@ -255,7 +255,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `app.py` — `_LOCATION_RECONCILE_SQL` placements set **@ L3024**
   - ◦ `tests/regression_tests.py` — `test_location_reconcile_honors_manual_adjt_edit`
 - **● When** — 2026-06-16 · commit `5de9e4c` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 3 TESTS PASSED (ADJT in placements, documentation, relabel filter)
 - **● Did it handle it?** — Yes.
+- **📚 Engineering docs** — See `bug_memory/bug-06-manual-bin-edits-didnt-stick/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
