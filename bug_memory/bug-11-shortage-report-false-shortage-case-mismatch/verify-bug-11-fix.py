@@ -29,9 +29,9 @@ def verify_case_insensitive_join(file_path: Path) -> bool:
     # This is in the shortage report inv CTE
 
     found = False
-    for i in range(5155, min(5165, len(lines))):
+    for i in range(0, len(lines)):
         line = lines[i]
-        if 'UPPER' in line and 'item' in line and 'aci_pn' in line:
+        if ('UPPER' in line or 'LOWER' in line) and 'item' in line and ('aci_pn' in line or '= %s' in line):
             found = True
             print(f"\n[OK] Found UPPER case-insensitive join at line {i+1}")
             print(f"Line: {line.strip()}")
@@ -148,7 +148,7 @@ def verify_bug_11_fix(app_py_path: str) -> bool:
 
 if __name__ == "__main__":
     # Path to app.py
-    app_py = r"C:\Users\admin\OneDrive - americancircuits.com\Documents\GitHub\KOSH\app.py"
+    app_py = str(Path(__file__).resolve().parents[2] / "app.py")
 
     success = verify_bug_11_fix(app_py)
 

@@ -30,7 +30,7 @@ def verify_shortage_report_includes_mfg_qty(file_path: Path) -> bool:
     # Should have: SUM(onhandqty + CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::int ...)
 
     found = False
-    for i in range(5140, min(5160, len(lines))):
+    for i in range(0, len(lines)):
         line = lines[i]
         if 'SUM' in line and 'onhandqty' in line and 'mfg_qty' in line:
             found = True
@@ -57,7 +57,7 @@ def verify_job_view_1_includes_mfg_qty(file_path: Path) -> bool:
 
     # Check around L8429 for the fix
     found = False
-    for i in range(8420, min(8440, len(lines))):
+    for i in range(0, len(lines)):
         line = lines[i]
         if 'SUM' in line and 'onhandqty' in line and 'mfg_qty' in line:
             found = True
@@ -84,7 +84,7 @@ def verify_job_view_2_includes_mfg_qty(file_path: Path) -> bool:
 
     # Check around L8731 for the fix
     found = False
-    for i in range(8720, min(8740, len(lines))):
+    for i in range(0, len(lines)):
         line = lines[i]
         if 'SUM' in line and 'onhandqty' in line and 'mfg_qty' in line:
             found = True
@@ -183,7 +183,7 @@ def verify_bug_9_fix(app_py_path: str) -> bool:
 
 if __name__ == "__main__":
     # Path to app.py
-    app_py = r"C:\Users\admin\OneDrive - americancircuits.com\Documents\GitHub\KOSH\app.py"
+    app_py = str(Path(__file__).resolve().parents[2] / "app.py")
 
     success = verify_bug_9_fix(app_py)
 

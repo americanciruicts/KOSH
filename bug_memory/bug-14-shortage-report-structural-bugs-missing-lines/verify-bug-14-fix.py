@@ -29,7 +29,7 @@ def verify_deterministic_dedup_qty_desc(file_path: Path) -> bool:
     # Look for DISTINCT ON with ORDER BY ... qty DESC
     # This should be in bom_lines CTE around L5140
     found = False
-    for i in range(5130, min(5145, len(lines))):
+    for i in range(0, len(lines)):
         line = lines[i]
         if 'ORDER BY' in line and 'qty' in line and 'DESC' in line:
             found = True
@@ -178,7 +178,7 @@ def verify_bug_14_fix(app_py_path: str) -> bool:
 
 if __name__ == "__main__":
     # Path to app.py
-    app_py = r"C:\Users\admin\OneDrive - americancircuits.com\Documents\GitHub\KOSH\app.py"
+    app_py = str(Path(__file__).resolve().parents[2] / "app.py")
 
     success = verify_bug_14_fix(app_py)
 

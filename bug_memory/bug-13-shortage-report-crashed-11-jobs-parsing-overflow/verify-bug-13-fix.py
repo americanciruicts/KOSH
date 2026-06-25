@@ -175,7 +175,7 @@ def verify_bug_13_fix(app_py_path: str) -> bool:
 
 if __name__ == "__main__":
     # Path to app.py
-    app_py = r"C:\Users\admin\OneDrive - americancircuits.com\Documents\GitHub\KOSH\app.py"
+    app_py = str(Path(__file__).resolve().parents[2] / "app.py")
 
     success = verify_bug_13_fix(app_py)
 

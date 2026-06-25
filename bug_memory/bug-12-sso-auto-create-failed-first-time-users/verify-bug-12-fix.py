@@ -54,7 +54,7 @@ def verify_sso_uses_bcrypt(file_path: Path) -> bool:
 
     # Check around L5985 for: bcrypt.hashpw(..., bcrypt.gensalt())
     found = False
-    for i in range(5980, min(5995, len(lines))):
+    for i in range(0, len(lines)):
         line = lines[i]
         if 'bcrypt.hashpw' in line and 'bcrypt.gensalt' in line:
             found = True
@@ -141,7 +141,7 @@ def verify_bug_12_fix(app_py_path: str) -> bool:
 
 if __name__ == "__main__":
     # Path to app.py
-    app_py = r"C:\Users\admin\OneDrive - americancircuits.com\Documents\GitHub\KOSH\app.py"
+    app_py = str(Path(__file__).resolve().parents[2] / "app.py")
 
     success = verify_bug_12_fix(app_py)
 
