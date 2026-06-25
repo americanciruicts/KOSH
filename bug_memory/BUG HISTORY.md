@@ -407,7 +407,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `templates/reports/shortage_report_view.html`
   - ◦ `tests/regression_tests.py` — `test_shortage_report_alt_part_qty_and_same_mpn_visibility`
 - **● When** — 2026-06-03/04 · commits `73f8664`, `1e81161`, `2c6515f`, `b48263f` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (deterministic dedup, single builder, single SQL source, documentation)
 - **● Did it handle it?** — Yes.
+- **📚 Engineering docs** — See `bug_memory/bug-14-shortage-report-structural-bugs-missing-lines/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
