@@ -424,7 +424,9 @@ bug — it's structural. The two screens are **two different computations**:
 - **● Fix** — add connection cleanup; require login on `/source*`, PCN/PO/valuation APIs; `total_cost` = full-BOM required (deduped), `shortage_cost` = shortfall only; notifications query cached 30s.
 - **🛠️ Files & lines** — `app.py` (`get_po_history`, `get_locations`, `database_health_check`; shortage cost in `_persist_shortage_report()` **@ L5236**) (+ `715862c`)
 - **● When** — 2026-06-01 · commit `ef8e4b0` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · Connection cleanup, cost distinction verified
 - **● Did it handle it?** — Yes.
+- **📚 Engineering docs** — See `bug_memory/bug-15-connection-leaks-open-routes-wrong-cost/`
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
@@ -441,7 +443,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `app.py` — `return_connection` · `Dockerfile.webapp` (gunicorn CMD **@ L49-50**)
   - ◦ `tests/regression_tests.py` — `test_return_connection_never_leaks_foreign_connection`
 - **● When** — 2026-05-29 · commits `9ee8436`, `9ff6c81`, `961275b`, `e0d7324` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · return_connection closes rejected connections
 - **● Did it handle it?** — Yes.
+- **📚 Engineering docs** — See `bug_memory/bug-16-db-connection-leak-pool-exhaustion/`
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
