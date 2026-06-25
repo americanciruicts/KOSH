@@ -236,7 +236,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `app.py` — `_LOCATION_RECONCILE_SQL` **@ L3024**, `reconcile_warehouse_locations()` **@ L3078**
   - ◦ `tests/regression_tests.py` — location-reconcile tests (now run the shipped query)
 - **● When** — 2026-06-17 · commit `3fb6463` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (regex accepts any-length bins, locvocab check, function exists, fix documented)
 - **● Did it handle it?** — Yes — corrected 318 stale rows.
+- **📚 Engineering docs** — See `bug_memory/bug-05-location-reconcile-dropped-8digit-bins/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
