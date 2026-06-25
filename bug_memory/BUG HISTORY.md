@@ -293,7 +293,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `app.py` — `_LOCATION_RECONCILE_SQL` **@ L3024**, `reconcile_warehouse_locations()` **@ L3078** (snapshot `tblWhse_Inventory_locbak_20260615`)
   - ◦ `tests/regression_tests.py` — `test_location_reconcile_follows_latest_placement`
 - **● When** — 2026-06-15 · commit `b06f52b` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (_LOCATION_RECONCILE_SQL exists, reconcile function, chronological order, picks/purges ignored)
 - **● Did it handle it?** — Yes.
+- **📚 Engineering docs** — See `bug_memory/bug-08-warehouse-inventory-location-never-synced/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
