@@ -367,7 +367,9 @@ bug — it's structural. The two screens are **two different computations**:
 - **● Fix** — use the `bcrypt` library directly (matches the rest of the app).
 - **🛠️ Files & lines** — `app.py` (SSO callback auto-create branch, near `login()` **@ L3664**)
 - **● When** — 2026-06-05 · commit `e7a7bcf` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 3 TESTS PASSED (bcrypt imported, SSO uses bcrypt, no passlib)
 - **● Did it handle it?** — Yes.
+- **📚 Engineering docs** — See `bug_memory/bug-12-sso-auto-create-failed-first-time-users/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
