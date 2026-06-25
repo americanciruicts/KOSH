@@ -3165,11 +3165,14 @@ _ONHAND_RECONCILE_SQL = """
                       AND tranqty ~ '^-?[0-9]+$'
                     GROUP BY pcn, mpn_key
                 ),
-                net AS (
+                net_deltas AS (
+                    -- One signed on-hand delta per transaction in the post-RNDT
+                    -- window, carrying the RNDT baseline (`base`) and the
+                    -- chronological keys so we can apply a RUNNING floor below.
                     SELECT t.pcn, t.mpn_key,
-                           GREATEST(0,
-                             COALESCE(MAX(r.rndt_qty), 0)
-                             + SUM(CASE
+                           COALESCE(r.rndt_qty, 0) AS base,
+                           t.ts, t.id,
+                           (CASE
                                  -- Renumber logged as ADJT = quantity-neutral (fixes
                                  -- the phantom-stock double-count). MUST be first.
                                  WHEN t.is_relabel THEN 0
@@ -3185,8 +3188,7 @@ _ONHAND_RECONCILE_SQL = """
                                  -- left scrapped qty on-hand. Same sign in History replay.
                                  WHEN t.trantype = 'SCRA' THEN -t.tranqty::integer
                                  ELSE 0
-                               END)
-                           ) AS qty
+                            END) AS delta
                     FROM parsed t
                     LEFT JOIN last_rndt r
                       ON t.pcn = r.pcn AND t.mpn_key = r.mpn_key
@@ -3199,7 +3201,36 @@ _ONHAND_RECONCILE_SQL = """
                           OR (r.rndt_ts IS NOT NULL AND t.ts IS NOT NULL AND t.ts >= r.rndt_ts)
                           OR (r.rndt_ts IS NULL AND t.id >= r.rndt_id)
                       )
-                    GROUP BY t.pcn, t.mpn_key
+                ),
+                net_run AS (
+                    -- Running cumulative delta in BUSINESS-TIME order, so we can
+                    -- see the deepest the on-hand ever dipped, not just the final sum.
+                    SELECT pcn, mpn_key, base, delta,
+                           SUM(delta) OVER (
+                               PARTITION BY pcn, mpn_key
+                               ORDER BY ts ASC NULLS FIRST, id ASC
+                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                           ) AS run_delta
+                    FROM net_deltas
+                ),
+                net AS (
+                    -- RUNNING-floor reconcile (reflection at 0):
+                    --     on-hand = (base + total) - LEAST(0, base + deepest dip)
+                    -- The old code summed first and clamped ONCE at the end, so an
+                    -- OVER-PICK (more picked than was ever on hand — a double-entered
+                    -- or erroneous PICK) drove the sum negative and a later receipt
+                    -- only refilled it back toward 0, ZEROING parts that are
+                    -- physically present. Real example PCN 9141: RNDT 1800, PICK 3600
+                    -- (only 1800 ever existed), RESTOCK 1800 -> old math = 0, true = 1800.
+                    -- Flooring the running balance at each step (you cannot pick below
+                    -- empty) recovers the real qty. This value is ALWAYS >= the old
+                    -- GREATEST(0, sum), and the reconcile below only ever LOWERS, so
+                    -- the change can never wipe more stock than before — only less.
+                    SELECT pcn, mpn_key,
+                           (MAX(base) + COALESCE(SUM(delta), 0))
+                             - LEAST(0, MAX(base) + MIN(run_delta)) AS qty
+                    FROM net_run
+                    GROUP BY pcn, mpn_key
                 )
                 , latest_event AS (
                     -- The most recent MATERIAL transaction per (pcn, mpn). When this
@@ -3497,12 +3528,21 @@ def _nightly_integrity_check():
                 ),
                 last_rndt AS (SELECT DISTINCT ON (pcn,mpn_key) pcn,mpn_key,id rndt_id,ts rndt_ts,tranqty::int rndt_qty
                   FROM parsed WHERE trantype='RNDT' AND reversed=false ORDER BY pcn,mpn_key,ts DESC NULLS LAST,id DESC),
-                net AS (SELECT t.pcn,t.mpn_key, GREATEST(0, COALESCE(MAX(r.rndt_qty),0)+SUM(CASE WHEN t.is_relabel THEN 0
+                net_deltas AS (SELECT t.pcn,t.mpn_key, COALESCE(r.rndt_qty,0) base, t.ts, t.id,
+                     (CASE WHEN t.is_relabel THEN 0
                      WHEN t.trantype IN ('INDF','STOCK','PCN Generation','RESTOCK','ADJT') THEN t.tranqty::int
-                     WHEN t.trantype IN ('PICK','PURGE') THEN -t.tranqty::int ELSE 0 END)) qty
+                     WHEN t.trantype IN ('PICK','PURGE') THEN -t.tranqty::int ELSE 0 END) delta
                   FROM parsed t LEFT JOIN last_rndt r ON t.pcn=r.pcn AND t.mpn_key=r.mpn_key
-                  WHERE t.reversed=false AND (r.rndt_id IS NULL OR (r.rndt_ts IS NOT NULL AND t.ts>=r.rndt_ts) OR (r.rndt_ts IS NULL AND t.id>=r.rndt_id))
-                  GROUP BY t.pcn,t.mpn_key)
+                  WHERE t.reversed=false AND (r.rndt_id IS NULL OR (r.rndt_ts IS NOT NULL AND t.ts>=r.rndt_ts) OR (r.rndt_ts IS NULL AND t.id>=r.rndt_id))),
+                net_run AS (SELECT pcn,mpn_key,base,delta,
+                     SUM(delta) OVER (PARTITION BY pcn,mpn_key ORDER BY ts ASC NULLS FIRST, id ASC
+                                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) run_delta
+                  FROM net_deltas),
+                net AS (SELECT pcn,mpn_key,
+                     -- running-floor (see _ONHAND_RECONCILE_SQL): over-picks no longer
+                     -- bury later receipts, so this monitor stops false-flagging them.
+                     (MAX(base)+COALESCE(SUM(delta),0)) - LEAST(0, MAX(base)+MIN(run_delta)) qty
+                  FROM net_run GROUP BY pcn,mpn_key)
                 SELECT count(*) FROM pcb_inventory."tblWhse_Inventory" w JOIN net n
                   ON w.pcn::text=n.pcn AND lower(translate(coalesce(w.mpn,''),'-# ./',''))=n.mpn_key
                 WHERE w.onhandqty > n.qty

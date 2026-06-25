@@ -1076,6 +1076,61 @@ def test_onhand_reconcile_never_wipes_fresh_restock():
             f'PICK: expected 0, got {c_qty} (the guard must not disable real corrections)')
 
 
+def test_onhand_reconcile_overpick_does_not_zero_refilled_stock():
+    """Over-pick burial bug (2026-06-25): the reconcile ledger summed every
+    delta and clamped ONCE with GREATEST(0, ...). When a PICK removed MORE than
+    was ever on hand (a double-entered/erroneous pick), the sum went negative and
+    a later receipt only refilled it back toward 0 — zeroing parts that are
+    physically present. Real shape, PCN 9141 (6779ML-100): RNDT 1800, then a
+    PICK 3600 (only 1800 ever existed), then RESTOCK 1800. Old math:
+    1800 - 3600 + 1800 = 0. True on-hand: 1800 (sitting in its bin).
+
+    The fix applies a RUNNING floor (you cannot pick below empty), so the dip is
+    absorbed at the pick and the later receipt rebuilds from 0.
+
+    To prove the LEDGER itself is fixed — not just masked by the
+    never-lower-a-fresh-receipt guard — this seeds the refill as a genuine ADJT
+    (real locations, NOT a relabel), so the latest event is ADJT and the guard
+    does NOT protect the row. With the warehouse seeded phantom-high (5000), the
+    reconcile must LOWER it to the true 1800. The pre-fix math would have lowered
+    it all the way to 0 (the data loss).
+    """
+    sys.path.insert(0, '/app')
+    from psycopg2.extras import RealDictCursor
+    from app import reconcile_onhand_from_ledger  # the SHIPPED query, not a copy
+
+    pcn = 99938
+    item = 'OVERPICK-1'
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(f'DELETE FROM {SCHEMA}."tblTransaction" WHERE pcn = %s', (str(pcn),))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(pcn),))
+
+        def txn(tt, qty, lf, lt, t):
+            cur.execute(
+                f'INSERT INTO {SCHEMA}."tblTransaction" '
+                '(trantype, item, pcn, mpn, tranqty, tran_time, loc_from, loc_to, userid) '
+                'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                (tt, item, str(pcn), item + '-MPN', str(qty), t, lf, lt, 'regression@test.com'))
+
+        txn('RNDT',  1800, 'MFG Floor', 'Count Area', '01/10/26 09:00:00')  # baseline 1800
+        txn('PICK',  3600, '1605003',   'MFG Floor',  '01/12/26 09:00:00')  # over-pick (>on hand)
+        # Genuine ADJT (real bin locations -> NOT a relabel) refills +1800. Being
+        # an ADJT (not RESTOCK/STOCK), it does NOT trip the fresh-receipt guard,
+        # so the row is eligible to be lowered — exposing the ledger value.
+        txn('ADJT',  1800, 'Rec Area',  '1605003',    '01/14/26 09:00:00')
+        _seed_warehouse_row(cur, pcn, item, mpn=item + '-MPN', onhandqty=5000, loc_to='1605003')
+
+        reconcile_onhand_from_ledger(cur)
+
+        cur.execute(f'SELECT onhandqty FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(pcn),))
+        qty = cur.fetchone()['onhandqty']
+        assert qty == 1800, (
+            f'over-pick must not bury later stock: expected the running-floor ledger '
+            f'value 1800, got {qty} (0 == the pre-fix sum-then-clamp data loss)')
+
+
 def test_pcn_history_balance_matches_reconcile_on_relabel():
     """PCN History's per-row 'On Hand' (running balance) must use the SAME
     relabel-neutral math as the reconcile that feeds Warehouse Inventory, or the
@@ -1365,6 +1420,7 @@ TESTS = [
     test_location_reconcile_honors_manual_adjt_edit,
     test_onhand_reconcile_neutralizes_relabel_adjt,
     test_onhand_reconcile_never_wipes_fresh_restock,
+    test_onhand_reconcile_overpick_does_not_zero_refilled_stock,
     test_pcn_history_balance_matches_reconcile_on_relabel,
     test_pcn_history_relabel_neutral_on_real_pcns,
     test_bom_python_parser_finds_lines_across_sheets,

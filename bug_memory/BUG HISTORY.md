@@ -89,6 +89,22 @@ bug — it's structural. The two screens are **two different computations**:
 
 ---
 
+<h3 id="bug19">🟥 <span style="color:#c0392b">19 — Over-pick buried later stock → ledger computed 0 (false WHSE≠HIST)</span> <code>[WHSE≠HIST]</code> ✅</h3>
+
+> **Date:** 2026-06-25 · **Severity:** 🟥 Critical · **Area:** Inventory / Reconcile · **Reported by:** Preet (Warehouse vs PCN History discrepancy review)
+
+- **● Issue** — the reconcile/diagnostic ledger computed **0 on-hand** for parts that physically have stock, making Warehouse Inventory look like phantom stock vs the ledger. A proposed one-off `bug_memory/fix-bidirectional-reconcile.sql` would have "corrected" Warehouse *down to those 0s*, deleting real inventory.
+- **● Example** — PCN **9141** (6779ML-100): `RNDT 1800`, then `PICK 3600` (only 1800 ever existed — a double-entered/erroneous pick), then `RESTOCK 1800`. Old math: `1800 − 3600 + 1800 = 0`. True on-hand: **1800** (in bin 1501601). 25 PCNs (~5,800 units) were flagged this way; all latest-event = RESTOCK.
+- **● Root cause** — the `net` ledger **summed every delta and clamped once** with `GREATEST(0, base + Σdelta)`. An over-pick drove the running total negative and a later receipt only refilled it back toward 0, so the receipt's units were "absorbed" by the earlier impossible pick.
+- **● Fixed (what changed)** — replaced sum-then-clamp with a **running floor at 0** (Skorokhod reflection): `on-hand = (base + Σdelta) − LEAST(0, base + min running balance)`. You can't pick below empty, so the dip is absorbed at the pick and later receipts rebuild from 0. Implemented as `net_deltas → net_run (window) → net` in `app.py` `_ONHAND_RECONCILE_SQL` (the shipped `reconcile_onhand_from_ledger`) and mirrored in the nightly integrity-monitor ledger.
+- **● When** — 2026-06-25 · commit `<hash>` · **Deployed:** ✅ Docker + Vercel.
+- **● Did it handle it?** — Yes. Live-DB validation: pcn 9141 ledger `0 → 1800` (= Warehouse); phantom rows (WHSE > ledger by >5) **25 → 0**; invariant **new ≥ old across all 35,294 (pcn,mpn) groups, 0 violations** (37 raised). Since the reconcile is **lower-only**, a never-lower ledger can only lower *less* → **provably no new data loss**. **No warehouse rows were mutated** — fixing the math made Warehouse and the ledger agree on their own.
+- **● Guard** — `tests/regression_tests.py::test_onhand_reconcile_overpick_does_not_zero_refilled_stock` (over-pick + non-receipt refill, phantom-high warehouse → reconcile lowers to the true 1800, not 0).
+- **● Scope/impact** — code/computation fix only; no data backfill needed. The `fix-bidirectional-reconcile.sql` script was **NOT run** (it would have wiped the 25 RESTOCK rows).
+- **🔁 Recurrences / new case reports:** _none yet._
+
+---
+
 <h3 id="bug1">🟧 <span style="color:#e67e22">1 — Shortage report showed "MFG Floor" instead of the real bin</span> <code>[WHSE≠HIST]</code> ✅</h3>
 
 > **Date:** 2026-06-23 · **Severity:** 🟧 High · **Area:** Shortage / Location · **Reported by:** Theresa (job 5455M / WO# 24214-2 + screenshot)
