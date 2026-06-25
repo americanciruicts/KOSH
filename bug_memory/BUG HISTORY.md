@@ -384,7 +384,9 @@ bug — it's structural. The two screens are **two different computations**:
 - **● Fix** — tolerant parsing (clean number else 0); `ceil(qty*order_qty)`; cost integer part capped at 6 digits; applied to all query sites.
 - **🛠️ Files & lines** — `app.py` — `_SHORTAGE_MATCH_SQL` **@ L5131** + mirrored job views **@ L8421, L8724** + Python req math in `_persist_shortage_report()` **@ L5236**
 - **● When** — 2026-06-04 · commits `a283a43`, `70f6fdd` (+ export `a607a90`, `17191ba`) · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (tolerant qty parsing, tolerant cost parsing, ceil req calc, documentation)
 - **● Did it handle it?** — Yes (11 jobs).
+- **📚 Engineering docs** — See `bug_memory/bug-13-shortage-report-crashed-11-jobs-parsing-overflow/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
