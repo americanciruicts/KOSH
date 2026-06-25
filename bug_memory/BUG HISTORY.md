@@ -333,7 +333,9 @@ bug — it's structural. The two screens are **two different computations**:
   - ◦ `tests/regression_tests.py` — `test_onhand_reconcile_neutralizes_relabel_adjt`
   - ◦ docs: `MAJOR_DATA_INTEGRITY_ISSUE.md`
 - **● When** — 2026-06-12 · commit `0d3682c` (+ monitor `4a5a3ea`, `0ecc242`) · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (_ONHAND_RECONCILE_SQL exists, is_relabel predicate, quantity-neutral, documentation)
 - **● Did it handle it?** — Yes (verified on a staging copy; monitored nightly).
+- **📚 Engineering docs** — See `bug_memory/bug-10-phantom-stock-15m-phantom-units/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
