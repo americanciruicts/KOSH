@@ -351,7 +351,9 @@ bug — it's structural. The two screens are **two different computations**:
 - **🛠️ Files & lines**
   - ◦ `app.py` — `_SHORTAGE_MATCH_SQL` join **@ L5142** · `tests/regression_tests.py` — `test_shortage_report_own_stock_is_case_insensitive` · `CHANGELOG.md`
 - **● When** — 2026-06-12 · commit `9a54620` · **Deployed:** ✅
+- **● Verified** — 2026-06-25 · ALL 3 TESTS PASSED (case-insensitive join, documentation, _SHORTAGE_MATCH_SQL)
 - **● Did it handle it?** — Yes.
+- **📚 Engineering docs** — See `bug_memory/bug-11-shortage-report-false-shortage-case-mismatch/` for verification tests and technical details.
 - **🔁 Recurrences / new case reports:** _none yet._
 
 ---
