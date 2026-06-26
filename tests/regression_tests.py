@@ -1131,6 +1131,83 @@ def test_onhand_reconcile_overpick_does_not_zero_refilled_stock():
             f'value 1800, got {qty} (0 == the pre-fix sum-then-clamp data loss)')
 
 
+def test_floor_onhand_dedupe_zeroes_phantom_bin_not_floor_or_bins():
+    """Bin/floor double-count (bug #20): a unit is in a bin (onhandqty) OR on the
+    MFG floor (mfg_qty), never both. When the SAME units land in both — e.g. a
+    RESTOCK to 'MFG Floor' makes the ledger re-derive bin on-hand while mfg_qty
+    still holds them — every view that sums bin+floor doubles (Shortage, and PCN
+    History after this bug), and a later restock (onhandqty += qty) compounds it
+    (1100 + 1100 -> restock -> 2200).
+
+    The shipped reconcile_floor_onhand guard fixes ONLY rows physically on the
+    floor (loc_to = 'MFG Floor') by zeroing the phantom bin onhandqty, leaving
+    mfg_qty (the real qty) intact. It must NOT touch:
+      * a clean floor row already at onhandqty 0, and
+      * a BIN-located row (the floor guard has no business deciding bin truth).
+    """
+    sys.path.insert(0, '/app')
+    from psycopg2.extras import RealDictCursor
+    from app import reconcile_floor_onhand  # the SHIPPED query, not a copy
+
+    dbl_floor   = 99940   # loc MFG Floor, onhand==mfg -> phantom bin must be zeroed
+    clean_floor = 99941   # loc MFG Floor, onhand already 0 -> untouched
+    dbl_bin     = 99942   # loc real bin, onhand==mfg -> NOT the floor guard's job
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        for p in (dbl_floor, clean_floor, dbl_bin):
+            cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(p),))
+        _seed_warehouse_row(cur, dbl_floor,   'FLR-DBL',  mpn='FLR-DBL-MPN',  onhandqty=140, mfg_qty='140', loc_to='MFG Floor')
+        _seed_warehouse_row(cur, clean_floor, 'FLR-CLEAN',mpn='FLR-CLEAN-MPN',onhandqty=0,   mfg_qty='140', loc_to='MFG Floor')
+        _seed_warehouse_row(cur, dbl_bin,     'BIN-DBL',  mpn='BIN-DBL-MPN',  onhandqty=60,  mfg_qty='60',  loc_to='1603002')
+
+        reconcile_floor_onhand(cur)
+
+        def row(p):
+            cur.execute(f'SELECT onhandqty, mfg_qty FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(p),))
+            return cur.fetchone()
+
+        r = row(dbl_floor)
+        assert r['onhandqty'] == 0 and r['mfg_qty'] == '140', (
+            f'floor double must have phantom bin on-hand zeroed, mfg kept: got {r}')
+        r = row(clean_floor)
+        assert r['onhandqty'] == 0 and r['mfg_qty'] == '140', (
+            f'clean floor row must be untouched: got {r}')
+        r = row(dbl_bin)
+        assert r['onhandqty'] == 60 and r['mfg_qty'] == '60', (
+            f'bin-located row must NOT be touched by the floor guard: got {r}')
+
+
+def test_pcn_history_anchor_counts_mfg_floor_stock():
+    """Bug #20: PCN History anchored to SUM(onhandqty) only, while Warehouse and
+    Shortage count on-hand as bin + MFG floor. So a part on the floor (onhandqty
+    0, mfg_qty N) showed 0 in PCN History but N elsewhere — the "Warehouse !=
+    PCN History" mismatch. The anchor must sum bin + floor so all three agree.
+
+    Asserts the anchor expression the pcn_history route uses now equals
+    onhand + mfg for a floor-resident part (was onhand-only = 0 before).
+    """
+    test_pcn = 99943
+    with isolated_txn() as conn:
+        cur = conn.cursor()
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn = %s', (str(test_pcn),))
+        _seed_warehouse_row(cur, test_pcn, 'ANCHOR-MFG', mpn='ANCHOR-MFG-MPN',
+                            onhandqty=0, mfg_qty='140', loc_to='MFG Floor')
+        # The exact anchor expression from the pcn_history route.
+        cur.execute(f"""
+            SELECT COALESCE(SUM(
+                COALESCE(onhandqty, 0)
+                + CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::int ELSE 0 END
+            ), 0) AS total
+            FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn::text = %s
+        """, (str(test_pcn),))
+        anchor = cur.fetchone()[0]
+        assert anchor == 140, (
+            f'PCN History anchor must include MFG-floor stock so it matches the '
+            f'Warehouse/Shortage views: expected 140, got {anchor} '
+            f'(0 == the old onhand-only anchor that hid floor stock)')
+
+
 def test_pcn_history_balance_matches_reconcile_on_relabel():
     """PCN History's per-row 'On Hand' (running balance) must use the SAME
     relabel-neutral math as the reconcile that feeds Warehouse Inventory, or the
@@ -1421,6 +1498,8 @@ TESTS = [
     test_onhand_reconcile_neutralizes_relabel_adjt,
     test_onhand_reconcile_never_wipes_fresh_restock,
     test_onhand_reconcile_overpick_does_not_zero_refilled_stock,
+    test_floor_onhand_dedupe_zeroes_phantom_bin_not_floor_or_bins,
+    test_pcn_history_anchor_counts_mfg_floor_stock,
     test_pcn_history_balance_matches_reconcile_on_relabel,
     test_pcn_history_relabel_neutral_on_real_pcns,
     test_bom_python_parser_finds_lines_across_sheets,

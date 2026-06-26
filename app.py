@@ -3300,6 +3300,42 @@ def reconcile_onhand_from_ledger(cur):
     return cur.rowcount
 
 
+# bin (onhandqty) and MFG floor (mfg_qty) are DISJOINT: a unit is either in a
+# warehouse bin OR out on the MFG floor, never both. When the same units are
+# recorded in BOTH (onhandqty>0 AND mfg_qty>0 on a row whose location IS the MFG
+# floor), every view that sums bin+floor (Shortage report, and PCN History after
+# bug #20) double-counts, and a later restock (onhandqty += qty) compounds it
+# (1100 on-hand + 1100 floor -> restock -> 2200). A part physically on the floor
+# has NO bin on-hand, so zero the phantom onhandqty and let mfg_qty carry it.
+# Only touches floor-located rows, only ever LOWERS onhandqty -> safe; logged to
+# tblReconcileAudit. See _ONHAND_RECONCILE_SQL regression tests (bug #20).
+_FLOOR_ONHAND_DEDUPE_SQL = """
+    WITH dbl AS (
+        SELECT id, pcn, item, mpn, onhandqty AS prior_qty
+        FROM pcb_inventory."tblWhse_Inventory"
+        WHERE LOWER(TRIM(COALESCE(loc_to, ''))) = 'mfg floor'
+          AND onhandqty > 0
+          AND mfg_qty ~ '^[1-9][0-9]*$'
+    ),
+    logged AS (
+        INSERT INTO pcb_inventory."tblReconcileAudit"
+            (pcn, item, mpn, prior_qty, new_qty, source)
+        SELECT pcn, item, mpn, prior_qty, 0, 'floor_onhand_dedupe' FROM dbl
+        RETURNING 1
+    )
+    UPDATE pcb_inventory."tblWhse_Inventory" w
+    SET onhandqty = 0
+    FROM dbl WHERE w.id = dbl.id"""
+
+
+def reconcile_floor_onhand(cur):
+    """Enforce the bin/floor disjoint invariant: a row sitting ON the MFG floor
+    cannot also hold bin on-hand. Zeroes the phantom onhandqty so bin+floor stops
+    double-counting. Shipped query shared with the regression suite (bug #20)."""
+    cur.execute(_FLOOR_ONHAND_DEDUPE_SQL)
+    return cur.rowcount
+
+
 def _history_delta(row):
     """Signed on-hand effect of one transaction row for the PCN History trail.
     RNDT/PTWY/PN_CHANGE/UPDATE are quantity-NEUTRAL here: the absolute on-hand
@@ -3462,6 +3498,15 @@ def _sync_onhand_from_transactions():
             conn.commit()
             if loc_updated > 0:
                 logger.info(f"Location reconcile: updated {loc_updated} inventory rows to latest placement location from History")
+
+            # --- FLOOR/BIN dedupe (2026-06-26, bug #20) ----------------------
+            # A part on the MFG floor must not also carry bin on-hand, or every
+            # bin+floor sum double-counts and restock compounds it. Zero the
+            # phantom onhandqty on floor-located rows.
+            floor_fixed = reconcile_floor_onhand(cur)
+            conn.commit()
+            if floor_fixed > 0:
+                logger.info(f"Floor/bin dedupe: zeroed phantom bin on-hand on {floor_fixed} MFG-floor rows")
         except Exception as e:
             logger.error(f"On-hand reconcile error: {e}")
             if conn:
@@ -5184,8 +5229,9 @@ _SHORTAGE_MATCH_SQL = """
             bl.aci_pn,
             -- On-hand now INCLUDES MFG-Floor stock (mfg_qty) so jobs with floor
             -- stock no longer flag a false shortage. Physical on-hand per lot =
-            -- bin on-hand + floor qty; these never overlap (Task-1 fix guarantees
-            -- 0 rows with both onhandqty>0 AND mfg_qty>0), so summing can't
+            -- bin on-hand + floor qty. These are SUPPOSED to be disjoint (a unit
+            -- is in a bin OR on the floor), and the reconcile_floor_onhand guard
+            -- (bug #20) enforces that on floor-located rows so this sum can't
             -- double-count. mfg_qty is TEXT — parse defensively.
             COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
             (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
@@ -6590,10 +6636,20 @@ def pcn_history():
                 # NOT trust a forward replay for the absolute number. Walking the
                 # trail backward from tblWhse_Inventory guarantees the two views
                 # always agree on the current on-hand, with no doubling.
+                #
+                # Total on-hand = bin (onhandqty) + MFG floor (mfg_qty). Both the
+                # Warehouse Inventory and Shortage views count floor stock as
+                # on-hand, so PCN History must too, or a part sitting on the MFG
+                # floor (onhandqty 0, mfg_qty N) shows 0 here while the other
+                # screens show N — the "Warehouse != PCN History" mismatch
+                # (bug #20). Summing both keeps all three views on ONE definition.
                 # NOTE: cur is a RealDictCursor here, so fetchone() returns a
                 # dict — read the aggregate by its alias, never by index [0].
                 cur.execute("""
-                    SELECT COALESCE(SUM(onhandqty), 0) AS total
+                    SELECT COALESCE(SUM(
+                        COALESCE(onhandqty, 0)
+                        + CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::int ELSE 0 END
+                    ), 0) AS total
                     FROM pcb_inventory."tblWhse_Inventory"
                     WHERE pcn::text = %s
                 """, (search_pcn,))
