@@ -89,6 +89,27 @@ bug — it's structural. The two screens are **two different computations**:
 
 ---
 
+<h3 id="bug20">🟥 <span style="color:#c0392b">20 — On-hand double-counted across bin + MFG floor (Warehouse ≠ PCN History; restock compounds)</span> <code>[WHSE≠HIST]</code> ✅</h3>
+
+> **Date:** 2026-06-26 · **Severity:** 🟥 Critical · **Area:** Inventory / On-hand · **Reported by:** Preet ("onhand 1100 + mfg 1100 → restock → 2200")
+
+- **● Issue (what was wrong):** the same physical units were counted in BOTH `onhandqty` (bin) and `mfg_qty` (MFG floor) on a row. Views that sum bin+floor (Shortage report) showed 2× the real qty, while PCN History (anchored to `onhandqty` only) showed 1×, so the two screens disagreed; and a restock (`onhandqty += qty`) on such a row compounded the double.
+- **● Example:** PCN **29862** (8461L-75): `onhandqty=140`, `mfg_qty=140`, `loc_to=MFG Floor` → Shortage showed **280**, PCN History showed **140**. Its only KOSH txn was a RESTOCK whose `loc_to` was 'MFG Floor'. 10 rows in this exact `onhand==mfg` state (5 floor-located, 5 bin-located).
+- **● Root cause:** bin and floor are meant to be DISJOINT (a unit is in a bin OR on the floor) but nothing enforced it; the on-hand reconcile re-derived bin on-hand for parts already on the floor (RESTOCK-to-MFG-Floor counts as +bin on the ledger) while `mfg_qty` still held them. Also the three views used DIFFERENT on-hand definitions (onhand-only vs onhand+floor), so they could never agree when floor stock existed.
+- **● Fixed (what changed):** (1) PCN History anchor now sums `onhandqty + mfg_qty` — one definition across all three views; (2) new shipped guard `reconcile_floor_onhand` (wired into the 5-min sync) zeroes phantom bin on-hand on rows physically on the MFG floor (lower-only, audit-logged) — fixes the 5 floor rows + prevents floor-class recurrence; (3) removed the false "0 rows with both onhand>0 and mfg>0" comment in the shortage SQL. Bin-located doubles are surfaced for explicit review, not auto-mutated.
+- **🛠️ Files & lines:** `app.py` — `pcn_history` anchor; `_FLOOR_ONHAND_DEDUPE_SQL` + `reconcile_floor_onhand`; `_sync_onhand_from_transactions` wiring; shortage on-hand comment. Folder: [`bug-20-onhand-mfg-floor-double-count/`](./bug-20-onhand-mfg-floor-double-count/).
+- **● When:** 2026-06-26 · commit `cd542da` · **Deployed:** ✅ Docker + Vercel.
+- **● Did it handle it?:** **Yes** — 3-level test-user run all green:
+  - **L1 code:** regression suite **28/28** (incl. the 2 new bug-20 guards) + all **20** per-bug verifiers pass.
+  - **L2 affected views as test user:** Warehouse Inventory **matches PCN History for all 10 PCNs** (one on-hand definition now); `/pcn-history` + `/warehouse-inventory` render 200 for the test user. **12/12.**
+  - **L3 full workflow as test user:** home → warehouse → shortage → PCN history → pick → restock all render for `regression@test.com`. **8/8.**
+  - Live container: the shipped `reconcile_floor_onhand` guard de-duped **19 floor-located rows (1,637 phantom bin units removed)**, audit-logged (`floor_onhand_dedupe`); the 5 floor-affected rows are now `onhand=0, mfg=N`.
+- **● Guard:** `test_floor_onhand_dedupe_zeroes_phantom_bin_not_floor_or_bins`, `test_pcn_history_anchor_counts_mfg_floor_stock`, `verify-bug-20-fix.py`. Full pass/fail log: [`TEST-RUN-2026-06-26-bug20.md`](./TEST-RUN-2026-06-26-bug20.md).
+- **● Scope/impact:** floor class (19 rows) auto-fixed + guarded against recurrence; **5 bin-located doubles (37921, 40044, 42625, 39355, 44833) deliberately NOT mutated** — deciding bin-vs-floor truth there isn't safe to automate; surfaced for explicit decision (`remediation-bug-20.sql` bin half awaits authorization). Code fix is the durable part; no broad data backfill.
+- **🔁 Recurrences / new case reports:** _none yet._
+
+---
+
 <h3 id="bug19">🟥 <span style="color:#c0392b">19 — Over-pick buried later stock → ledger computed 0 (false WHSE≠HIST)</span> <code>[WHSE≠HIST]</code> ✅</h3>
 
 > **Date:** 2026-06-25 · **Severity:** 🟥 Critical · **Area:** Inventory / Reconcile · **Reported by:** Preet (Warehouse vs PCN History discrepancy review)
