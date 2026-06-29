@@ -3,7 +3,7 @@
 <p align="center">
   <b>Permanent, human-readable record of every bug fixed in KOSH.</b><br>
   <span style="color:#7f8c8d">Window covered: <b>13 May 2026 → 23 June 2026</b> · 49 commits</span><br>
-  <span style="color:#7f8c8d">Document created: <b>2026-06-23</b> · Last updated: <b>2026-06-23</b></span>
+  <span style="color:#7f8c8d">Document created: <b>2026-06-23</b> · Last updated: <b>2026-06-29</b></span>
 </p>
 
 > 📌 **How to use:** one entry per distinct bug, newest first. When the **same** bug is
@@ -29,6 +29,7 @@
 
 | # | Date | Bug | Area | Sev | Status |
 |:-:|------|-----|------|:---:|:------:|
+| [21](#bug21) | 2026-06-29 | Generate-PCN MPN dropdown empty though BOM display shows the MPN (case-sensitive lookup) | BOM Loader / PCN | 🟧 | ✅ |
 | [1](#bug1) | 2026-06-23 | Shortage report showed "MFG Floor" instead of the real bin | Shortage / Location | 🟧 | ✅ |
 | [2](#bug2) | 2026-06-22 | On-hand reconcile wiped fresh restocks to 0 | Inventory / Reconcile | 🟥 | ✅ |
 | [3](#bug3) | 2026-06-18 | PCN History page crashed for every PCN | PCN History | 🟨 | ✅ |
@@ -86,6 +87,25 @@ bug — it's structural. The two screens are **two different computations**:
 ---
 
 # 📒 Detailed entries
+
+---
+
+<h3 id="bug21">🟧 <span style="color:#e67e22">21 — Generate-PCN MPN dropdown came up empty even though the BOM display shows the MPN (case-sensitive BOM lookup)</span> ✅</h3>
+
+> **Date:** 2026-06-29 · **Severity:** 🟧 High · **Area:** BOM Loader / Generate PCN · **Reported by:** Preet ("BOM Loader not working — line shows in the display but generating a PCN says MPN not available")
+
+- **● Issue (what was wrong):** on the Generate PCN page the **MPN dropdown populated with nothing** ("No MPNs found in BOM for this part"), so the user couldn't pick an MPN and the form blocked submission with the MPN-required message — even though the very same line's MPN was visible on the job / BOM display. Looked like the BOM Loader had failed; the BOM data was actually fine.
+- **● Example:** BOM part `8805L-5` (MPN `CMF50221R00FHEB`). Against the live `kosh` DB the endpoint's query returned `[]` when the part arrived as `8805l-5` (e.g. scanned/typed lower-case) but `['CMF50221R00FHEB']` with case-insensitive matching. The job display showed the MPN the whole time because it already matches case-insensitively.
+- **● Root cause:** `/api/bom/mpns/<part>` ([`api_get_mpns_for_part`](../app.py)) matched with an exact, **case-sensitive** `WHERE aci_pn = %s`. Part numbers reach the endpoint in mixed case (a scanned label's casing vs. the BOM-stored casing), so any case difference silently returned zero MPNs. Every other part-number lookup in KOSH (inventory join, shortage report — see [bug 11](#bug11)) already normalizes with `UPPER()`; this one endpoint was the lone case-sensitive holdout, so the PCN dropdown and the BOM display disagreed.
+- **● Fixed (what changed):** changed the lookup to `WHERE UPPER(aci_pn) = UPPER(%s)`, matching the rest of the app. One-line SQL change in `api_get_mpns_for_part`; no data migration (BOM data was never wrong).
+- **🛠️ Files & lines:** `app.py` — `api_get_mpns_for_part` (`/api/bom/mpns/<part_number>`).
+- **● When:** 2026-06-29 · commit `73d51e8` · **Deployed:** ✅ Docker + Vercel.
+- **● Did it handle it?:** **Yes** — new regression `test_bom_mpns_lookup_is_case_insensitive` seeds a BOM row and asserts the endpoint returns the MPN for lower/upper/exact casing. It **FAILS on the pre-fix container** (returned `[]` for `casetest-5`) and **PASSES on the fixed code**; full suite **29/29** green.
+- **● Guard:** `tests/regression_tests.py::test_bom_mpns_lookup_is_case_insensitive`.
+- **● Scope/impact:** code-only fix; affected any Generate-PCN attempt where the entered/scanned part number's case differed from the BOM-stored `aci_pn`. No rows mutated.
+
+### Recurrences / new case reports
+<!-- Same bug reported again? APPEND a dated line here. -->
 
 ---
 
