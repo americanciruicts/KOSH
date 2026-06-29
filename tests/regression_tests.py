@@ -364,6 +364,57 @@ def test_bom_load_inserts_every_item_received():
     cleanup.close()
 
 
+def test_bom_mpns_lookup_is_case_insensitive():
+    """Bug shape (2026-06-29): the Generate PCN page's MPN dropdown showed
+    "No MPNs found in BOM for this part" even though the job/BOM display
+    listed the MPN. Root cause: /api/bom/mpns/<part> matched with an exact
+    `aci_pn = %s`, but part numbers reach the endpoint in mixed case (scanned
+    label '8805l-5' vs BOM-stored '8805L-5'). The rest of the app matches
+    case-insensitively (UPPER), so the display showed the MPN while the PCN
+    dropdown came back empty. The endpoint must match case-insensitively.
+    """
+    sys.path.insert(0, '/app')
+    import app as app_module
+
+    test_job = 'REGRESS-MPNCASE-9999'
+    aci_pn_stored = 'CASETEST-5'        # stored in the BOM in this case
+    mpn_value = 'REGRESS-MPN-CASE-1'
+
+    cleanup = psycopg2.connect(DB_URL)
+    cleanup.autocommit = True
+    cur0 = cleanup.cursor()
+    cur0.execute(f'DELETE FROM {SCHEMA}."tblBOM" WHERE job::text = %s', (test_job,))
+    cur0.execute(
+        f'INSERT INTO {SCHEMA}."tblBOM" (line, "DESC", man, mpn, aci_pn, qty, cost, job, job_rev) '
+        f'VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)',
+        ('10', 'Case test part', 'TestMan', mpn_value, aci_pn_stored, '5', '1.00', test_job, 'A'),
+    )
+
+    try:
+        app_module.app.config['WTF_CSRF_ENABLED'] = False
+        client = app_module.app.test_client()
+        with client.session_transaction() as sess:
+            sess['user_id'] = 1
+            sess['username'] = 'regression@test.com'
+            sess['role'] = 'admin'
+
+        # Query the endpoint with a DIFFERENT case than what's stored.
+        for variant in (aci_pn_stored.lower(), aci_pn_stored.upper(), aci_pn_stored):
+            resp = client.get(f'/api/bom/mpns/{variant}')
+            assert resp.status_code == 200, (
+                f'expected 200 for {variant!r}, got {resp.status_code}'
+            )
+            body = resp.get_json()
+            mpns = [m['mpn'] for m in (body or {}).get('mpns', [])]
+            assert mpn_value in mpns, (
+                f'MPN dropdown lookup must be case-insensitive: querying '
+                f'{variant!r} should return {mpn_value!r}, got {mpns}'
+            )
+    finally:
+        cur0.execute(f'DELETE FROM {SCHEMA}."tblBOM" WHERE job::text = %s', (test_job,))
+    cleanup.close()
+
+
 def test_bom_python_parser_finds_lines_across_sheets():
     """Bug shape: 8813L-4DA file had Line 200 only on 'Assy BOM', not on
     'BOM to Load'. Multi-sheet merge logic should pick it up.
@@ -1489,6 +1540,7 @@ TESTS = [
     test_validate_location_auto_registers_unknown_7digit,
     test_purged_pcn_can_be_restocked_with_same_pcn,
     test_bom_load_inserts_every_item_received,
+    test_bom_mpns_lookup_is_case_insensitive,
     test_shortage_report_alt_part_qty_and_same_mpn_visibility,
     test_shortage_report_own_stock_is_case_insensitive,
     test_shortage_report_counts_mfg_floor_stock,

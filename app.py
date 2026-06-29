@@ -6253,11 +6253,17 @@ def api_get_mpns_for_part(part_number):
         conn = db_manager.get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Query BOM table to get all MPNs for this ACI part number
+        # Query BOM table to get all MPNs for this ACI part number.
+        # Case-INSENSITIVE match (UPPER both sides): part numbers reach this
+        # endpoint in mixed case (e.g. a scanned label '8805l-5' vs the BOM's
+        # stored '8805L-5'). An exact `aci_pn = %s` match silently returned 0
+        # MPNs, so the Generate PCN dropdown showed "No MPNs found" even though
+        # the job/BOM display — which already matches case-insensitively — shows
+        # the MPN fine. This now mirrors the rest of the app's UPPER() matching.
         cur.execute("""
             SELECT DISTINCT mpn
             FROM pcb_inventory."tblBOM"
-            WHERE aci_pn = %s AND mpn IS NOT NULL AND mpn != ''
+            WHERE UPPER(aci_pn) = UPPER(%s) AND mpn IS NOT NULL AND mpn != ''
             ORDER BY mpn
         """, (part_number,))
 
