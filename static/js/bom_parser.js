@@ -66,10 +66,30 @@
         return col;
     }
 
+    // Some BOM templates declare a massively oversized sheet range — e.g. the
+    // 8517L-2 "Assy BOM" tab claims A1:AI6588 (6,588 rows) but holds only ~11
+    // real rows of data. That bloats the .xlsx and makes sheet_to_json
+    // materialize thousands of empty rows, which on a normal PC freezes the
+    // in-browser parse long enough to look like the upload "failed". Recompute
+    // a TIGHT range from the cells that actually exist so we only ever process
+    // real data — whatever is on "BOM to Load" loads regardless of the bloat.
+    function tightRange(ws, XLSX) {
+        if (!ws || !ws['!ref']) return undefined;
+        var maxR = -1, maxC = -1;
+        for (var k in ws) {
+            if (!ws.hasOwnProperty(k) || k.charAt(0) === '!') continue;
+            var cell = XLSX.utils.decode_cell(k);
+            if (cell.r > maxR) maxR = cell.r;
+            if (cell.c > maxC) maxC = cell.c;
+        }
+        if (maxR < 0) return ws['!ref'];   // no data cells — leave as-is
+        return XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+    }
+
     function parseSheet(workbook, XLSX, sheetName) {
         var ws = workbook.Sheets[sheetName];
         if (!ws) return null;
-        var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', range: tightRange(ws, XLSX) });
         if (!rows || rows.length < 2) return null;
 
         var hr = findHeaderRow(rows);
@@ -230,6 +250,7 @@
         parseWorkbook: parseWorkbook,
         parseSheet: parseSheet,
         findHeaderRow: findHeaderRow,
-        buildColMap: buildColMap
+        buildColMap: buildColMap,
+        tightRange: tightRange
     };
 }));

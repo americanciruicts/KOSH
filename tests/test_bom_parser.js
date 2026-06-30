@@ -222,6 +222,26 @@ function runSynthetic() {
     check('clean: line numbers preserved (5,10,15)',
         JSON.stringify(r3.bom_items.map(i => i.line)) === JSON.stringify([5, 10, 15]),
         JSON.stringify(r3.bom_items.map(i => i.line)));
+
+    // Bloated declared range (real 8517L-2 "Assy BOM" shape: claims thousands
+    // of rows, has only a couple). Must still load the real lines, fast.
+    console.log('\n[synthetic: bloated declared range must still load + tighten]');
+    const wsB = XLSX.utils.aoa_to_sheet([header,
+        ['8517L-2', 5, '8517L-2-5', 'VTB8441BH', 'PHOTODIODE SENSOR', 1]]);
+    wsB['!ref'] = 'A1:AI6588';  // oversized range, only 2 real rows
+    check('bloat: tightRange shrinks A1:AI6588 to real extent',
+        KoshBomParser.tightRange(wsB, XLSX) !== 'A1:AI6588' &&
+        KoshBomParser.tightRange(wsB, XLSX).indexOf('6588') === -1,
+        'got ' + KoshBomParser.tightRange(wsB, XLSX));
+    const wbB = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbB, wsB, 'BOM to Load');
+    const t0 = Date.now();
+    const rB = KoshBomParser.parseWorkbook(wbB, XLSX);
+    check('bloat: still extracts the 1 real line', rB.bom_items.length === 1, 'got ' + rB.bom_items.length);
+    check('bloat: line 5 + MPN preserved',
+        rB.bom_items[0] && rB.bom_items[0].mpn === 'VTB8441BH' && rB.bom_items[0].aci_pn === '8517L-2-5',
+        JSON.stringify(rB.bom_items[0]));
+    check('bloat: parses fast (no 6588-row scan)', (Date.now() - t0) < 500, (Date.now() - t0) + 'ms');
 }
 
 console.log('KOSH BOM parser regression suite');
