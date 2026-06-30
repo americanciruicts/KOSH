@@ -443,10 +443,13 @@ def test_bom_python_parser_finds_lines_across_sheets():
     wb.save(buf)
     buf.seek(0)
 
+    # Preet 2026-06-30: load ONLY the "BOM to Load" sheet. The extra line 4
+    # that lives only on "Assy BOM" must NOT be pulled in anymore — whatever is
+    # on "BOM to Load" (lines 1-3) is exactly what loads.
     parsed = _python_multisheet_parse(buf.getvalue())
     line_nums = sorted(it['line'] for it in parsed)
-    assert line_nums == [1, 2, 3, 4], (
-        f'multi-sheet merge should yield lines 1-4, got {line_nums}'
+    assert line_nums == [1, 2, 3], (
+        f'must load ONLY "BOM to Load" lines 1-3 (not the Assy-BOM-only line 4), got {line_nums}'
     )
 
 
@@ -490,9 +493,11 @@ def _python_multisheet_parse(file_bytes):
             items.append({'line': ln})
         return items
 
+    # Mirror of the JS parser: read ONLY "BOM to Load" when present; fall back
+    # to all sheets only if that tab is absent.
     seen = set()
     merged = []
-    order = ['BOM to Load'] + [n for n in wb.sheetnames if n != 'BOM to Load']
+    order = ['BOM to Load'] if 'BOM to Load' in wb.sheetnames else list(wb.sheetnames)
     for name in order:
         if name not in wb.sheetnames:
             continue

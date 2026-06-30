@@ -138,33 +138,8 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
     </div>
 </div>
 
-<!-- Job Exists Modal -->
-<div class="modal fade" id="jobExistsModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header bg-warning">
-                <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>Job Already Exists</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <p>Job <strong id="existingJobNumber"></strong> already exists in the system.</p>
-                <div class="mb-2">
-                    <small class="text-muted">Status: <span id="existingJobStatus" class="badge bg-primary"></span></small><br>
-                    <small class="text-muted">Customer: <span id="existingJobCustomer"></span></small>
-                </div>
-                <p>Would you like to <strong>reload the BOM</strong> (replace existing data) or <strong>view the job</strong>?</p>
-            </div>
-            <div class="modal-footer">
-                <a id="viewJobLink" href="#" class="btn btn-primary">
-                    <i class="bi bi-eye me-1"></i>View Job
-                </a>
-                <button type="button" class="btn btn-warning" data-bs-dismiss="modal">
-                    <i class="bi bi-arrow-repeat me-1"></i>Reload BOM
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
+<!-- Job Exists Modal removed (Preet 2026-06-30): re-uploading an existing job
+     no longer interrupts the user; the Load step replaces the existing BOM. -->
 
 <!-- Jobs List -->
 <div class="card">
@@ -376,27 +351,11 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
                     displayPreview(result);
                     bomResetBtn.style.display = 'inline-block';
 
-                    // Check if job exists
-                    var jobNum = result.metadata.job;
-                    if (jobNum) {
-                        var csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-                        fetch(BACKEND_URL + '/api/bom/job-check/' + encodeURIComponent(jobNum), {
-                            headers: { 'X-CSRFToken': csrfToken },
-                            credentials: BACKEND_URL ? 'include' : 'same-origin'
-                        })
-                        .then(function(resp) { return resp.json(); })
-                        .then(function(checkResult) {
-                            if (checkResult.exists) {
-                                document.getElementById('existingJobNumber').textContent = jobNum;
-                                document.getElementById('existingJobStatus').textContent = checkResult.job.status || 'New';
-                                document.getElementById('existingJobCustomer').textContent = checkResult.job.customer || '-';
-                                document.getElementById('viewJobLink').href = '/jobs/' + encodeURIComponent(jobNum);
-                                var modal = new bootstrap.Modal(document.getElementById('jobExistsModal'));
-                                modal.show();
-                            }
-                        })
-                        .catch(function(e) { console.warn('Job check failed (non-critical):', e); });
-                    }
+                    // Preet 2026-06-30: do NOT interrupt with an "already in the
+                    // system" popup when re-uploading an existing job. The user
+                    // just wants to upload and have it replace the existing BOM.
+                    // (The Load step already deletes-then-inserts for the job.)
+                    // The old /api/bom/job-check + jobExistsModal was removed.
 
                     // Upload button must NOT look like its idle state — turn it
                     // green and tell the user explicitly what to do next.

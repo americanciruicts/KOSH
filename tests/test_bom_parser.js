@@ -242,6 +242,22 @@ function runSynthetic() {
         rB.bom_items[0] && rB.bom_items[0].mpn === 'VTB8441BH' && rB.bom_items[0].aci_pn === '8517L-2-5',
         JSON.stringify(rB.bom_items[0]));
     check('bloat: parses fast (no 6588-row scan)', (Date.now() - t0) < 500, (Date.now() - t0) + 'ms');
+
+    // Only the "BOM to Load" sheet is read — extra lines on other tabs are ignored.
+    console.log('\n[synthetic: only "BOM to Load" sheet is loaded]');
+    const wbOnly = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbOnly, XLSX.utils.aoa_to_sheet([header,
+        ['J', 1, 'J-1', 'MPN-1', 'D1', 1],
+        ['J', 2, 'J-2', 'MPN-2', 'D2', 1],
+        ['J', 3, 'J-3', 'MPN-3', 'D3', 1]]), 'BOM to Load');
+    XLSX.utils.book_append_sheet(wbOnly, XLSX.utils.aoa_to_sheet([header,
+        ['J', 4, 'J-4', 'MPN-4', 'EXTRA ON ASSY ONLY', 1]]), 'Assy BOM');
+    const rOnly = KoshBomParser.parseWorkbook(wbOnly, XLSX);
+    check('onlyBTL: loads exactly the 3 BOM-to-Load lines',
+        rOnly.bom_items.length === 3, 'got ' + rOnly.bom_items.length);
+    check('onlyBTL: the Assy-BOM-only line 4 is NOT loaded',
+        !rOnly.bom_items.some(i => i.line === 4),
+        JSON.stringify(rOnly.bom_items.map(i => i.line)));
 }
 
 console.log('KOSH BOM parser regression suite');

@@ -185,7 +185,16 @@
     }
 
     function parseWorkbook(workbook, XLSX) {
-        var preferredOrder = ['BOM to Load'].concat(workbook.SheetNames.filter(function (n) { return n !== 'BOM to Load'; }));
+        // Preet 2026-06-30: load ONLY the "BOM to Load" sheet — it is the
+        // single authoritative, curated list. We no longer merge extra lines
+        // from "Assy BOM" or any other tab (that cross-sheet merge is exactly
+        // what the user does NOT want). Whatever is on "BOM to Load" is what
+        // loads, nothing more. Fall back to scanning every sheet ONLY when a
+        // workbook has no "BOM to Load" tab at all, so non-standard files
+        // still parse instead of failing outright.
+        var preferredOrder = workbook.SheetNames.indexOf('BOM to Load') !== -1
+            ? ['BOM to Load']
+            : workbook.SheetNames.slice();
         var bomItems = [];
         var seenLines = {};
         var metadata = {};
