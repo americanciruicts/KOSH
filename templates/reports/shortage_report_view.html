@@ -145,9 +145,9 @@
             <button onclick="showExportModal()" class="btn btn-light btn-header-white btn-lg shadow-sm fw-bold" style="white-space: nowrap;">
                 <i class="bi bi-file-earmark-excel"></i> Export Excel
             </button>
-            <button onclick="window.print()" class="btn btn-lg fw-bold" style="background: rgba(255,255,255,0.2) !important; color: white !important; border: 2px solid rgba(255,255,255,0.6); white-space: nowrap;">
-                <i class="bi bi-printer" style="color: white !important;"></i> Print
-            </button>
+            <!-- Print button removed (Preet 2026-06-30): it printed the on-screen
+                 view, which differs from the authoritative Excel "pull sheet".
+                 Export Excel is the single source of truth for the report. -->
         </div>
     </div>
 </div>

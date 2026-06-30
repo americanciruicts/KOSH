@@ -71,22 +71,28 @@ app.config['COMPRESS_LEVEL'] = 6  # Balance between compression and speed
 app.config['COMPRESS_MIN_SIZE'] = 500  # Only compress responses > 500 bytes
 compress = Compress(app)
 
-# Column definitions for shortage/job report exports
+# Column definitions for shortage/job report exports.
+# Order + labels + defaults match the legacy "qryShortage Report by MPN" format
+# Preet asked for (sample: 6846 WO# 23878-2.xlsx):
+#   ACI PN | PCN | MPN | DESC | QTY | Job | Order Qty | REQ | Item | OnHandQty | LOC
+# The non-default columns below stay available in the Customize Export modal.
 SHORTAGE_EXPORT_COLUMNS = [
+    {'key': 'aci_pn',       'label': 'ACI PN',     'width': 15, 'default': True},
+    {'key': 'pcn',          'label': 'PCN',        'width': 12, 'default': True},
+    {'key': 'mpn',          'label': 'MPN',        'width': 25, 'default': True},
+    {'key': 'description',  'label': 'DESC',       'width': 32, 'default': True},
+    {'key': 'qty',          'label': 'QTY',        'width': 8,  'default': True},
+    {'key': 'job',          'label': 'Job',        'width': 12, 'default': True},
+    {'key': 'order_qty',    'label': 'Order Qty',  'width': 12, 'default': True},
+    {'key': 'req',          'label': 'REQ',        'width': 8,  'default': True},
+    {'key': 'item',         'label': 'Item',       'width': 15, 'default': True},
+    {'key': 'qty_on_hand',  'label': 'OnHandQty',  'width': 12, 'default': True},
+    {'key': 'location',     'label': 'LOC',        'width': 15, 'default': True},
+    # Optional columns (off by default; selectable in the Customize Export modal)
     {'key': 'line_no',      'label': 'LINE #',       'width': 8,  'default': False},
-    {'key': 'aci_pn',       'label': 'ACI PN',       'width': 15, 'default': True},
-    {'key': 'pcn',          'label': 'PCN',           'width': 12, 'default': True},
-    {'key': 'mpn',          'label': 'MPN',           'width': 25, 'default': True},
-    {'key': 'manufacturer', 'label': 'MANUFACTURER',  'width': 20, 'default': False},
-    {'key': 'description',  'label': 'DESCRIPTION',   'width': 30, 'default': False},
-    {'key': 'qty',          'label': 'QTY',           'width': 8,  'default': True},
-    {'key': 'order_qty',    'label': 'ORDER QTY',     'width': 12, 'default': True},
-    {'key': 'req',          'label': 'REQ',           'width': 8,  'default': True},
-    {'key': 'item',         'label': 'ITEM',          'width': 15, 'default': True},
-    {'key': 'qty_on_hand',  'label': 'ON HAND QTY',   'width': 14, 'default': True},
-    {'key': 'location',     'label': 'LOCATION',      'width': 15, 'default': True},
-    {'key': 'unit_cost',    'label': 'UNIT COST',     'width': 12, 'default': False},
-    {'key': 'line_cost',    'label': 'LINE COST',     'width': 12, 'default': False},
+    {'key': 'manufacturer', 'label': 'MANUFACTURER', 'width': 20, 'default': False},
+    {'key': 'unit_cost',    'label': 'UNIT COST',    'width': 12, 'default': False},
+    {'key': 'line_cost',    'label': 'LINE COST',    'width': 12, 'default': False},
 ]
 
 def get_export_cell_value(item, column_key, order_qty=None):
@@ -98,6 +104,7 @@ def get_export_cell_value(item, column_key, order_qty=None):
         'mpn':          lambda i: i.get('mpn', ''),
         'manufacturer': lambda i: i.get('manufacturer') or '',
         'description':  lambda i: i.get('description') or '',
+        'job':          lambda i: i.get('job') or '',
         'qty':          lambda i: i.get('qty', 0),
         'order_qty':    lambda i: i.get('order_qty') or order_qty or '',
         'req':          lambda i: i.get('req') or (int(i.get('qty', 0) or 0) * (order_qty or 1)),
@@ -5600,25 +5607,12 @@ def export_shortage_report(report_id):
             top=Side(style='thin'), bottom=Side(style='thin')
         )
 
-        # Title section
-        ws.merge_cells(f'A1:{last_col}1')
-        ws['A1'] = f"Shortage Report - Job: {report['job']}"
-        ws['A1'].font = Font(bold=True, size=16)
-        ws['A1'].alignment = Alignment(horizontal='center')
-
-        ws.merge_cells(f'A2:{last_col}2')
-        ws['A2'] = f"Generated: {report['created_at'].strftime('%Y-%m-%d %H:%M') if report['created_at'] else 'N/A'} by {report['created_by']} | Rev: {report.get('job_rev', 'N/A')} | Order Qty: {report.get('order_qty', 'N/A')}"
-        ws['A2'].font = Font(bold=True)
-        ws['A2'].alignment = Alignment(horizontal='center')
-
-        ws.merge_cells(f'A3:{last_col}3')
-        ws['A3'] = f"Shortage Items: {report['shortage_lines']} of {report['total_lines']} BOM lines"
-        ws['A3'].font = Font(bold=True)
-        ws['A3'].alignment = Alignment(horizontal='center')
-
-        # Headers (row 5)
+        # Flat, editable table that matches the legacy 6846 format the user asked
+        # for: a header row on row 1 and data immediately below (no merged title
+        # banner — merged cells make the sheet awkward to edit/filter/sort).
+        ws.freeze_panes = 'A2'
         for col_idx, col_def in enumerate(active_cols, 1):
-            cell = ws.cell(row=5, column=col_idx, value=col_def['label'])
+            cell = ws.cell(row=1, column=col_idx, value=col_def['label'])
             cell.font = header_font
             cell.fill = header_fill
             cell.border = border
@@ -5629,8 +5623,10 @@ def export_shortage_report(report_id):
         # row carrying the other part's PN/MPN/on-hand is fed through the same
         # column extractor so it honors whatever columns the user selected.
         subrow_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
-        row_idx = 6
+        row_idx = 2
         for item in items:
+            # Job column (6846 format) carries the report's job number on every row.
+            item['job'] = report['job']
             # Pull sheet: print the BOM line itself ONLY if it has stock on hand.
             if (item.get('qty_on_hand') or 0) > 0:
                 is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
@@ -5656,6 +5652,7 @@ def export_shortage_report(report_id):
                 sub_item = {
                     'aci_pn': sub.get('item') or '',
                     'item': sub.get('item') or '',
+                    'job': report['job'],
                     'pcn': sub.get('pcn') or '',
                     'mpn': sub.get('mpn') or item.get('mpn') or '',
                     'qty_on_hand': sub.get('qty') or 0,
@@ -8928,6 +8925,7 @@ def job_export(job_number):
 
         # Data rows
         for row_idx, item in enumerate(items, 6):
+            item['job'] = job_number  # populate the shared 'Job' column
             is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
             for col_idx, col_def in enumerate(active_cols, 1):
                 value = get_export_cell_value(item, col_def['key'], order_qty)
