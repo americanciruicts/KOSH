@@ -711,6 +711,55 @@ def test_shortage_report_alt_part_qty_and_same_mpn_visibility():
             f"row entry must carry other PN OTHERJOB-99 @ 50, got {sub_rows[0]!r}")
 
 
+def test_shortage_report_same_mpn_is_exact_not_prefix():
+    """Bug (Preet 2026-06-30): same-MPN visibility used a directional PREFIX
+    match (bom_key being a prefix of a longer stock MPN), which over-matched
+    DISTINCT parts — a BOM MPN '1.5KE15' pulled in stock '1.5KE150CA' (15V vs
+    150V), so a shortage for one number showed 12345/123456/... ("not the exact
+    match"). The match must be EXACT (normalized for case/-/space/./# only):
+    a longer MPN that merely STARTS WITH the BOM MPN must NOT be counted.
+    """
+    sys.path.insert(0, '/app')
+    import app as app_module
+    from psycopg2.extras import RealDictCursor
+
+    job = 'REGRESS-EXACT-9999'
+    aci_pn = 'REXACT-1'
+    mpn = '1.5KE15'            # short-ish; a longer MPN starts with it
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(f'DELETE FROM {SCHEMA}."tblBOM" WHERE job = %s', (job,))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn IN %s',
+                    (('99330', '99331', '99332'),))
+
+        cur.execute(
+            f'INSERT INTO {SCHEMA}."tblBOM" (line, "DESC", man, mpn, aci_pn, qty, cost, job, job_rev) '
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            ('10', 'Regress TVS', 'RegressMan', mpn, aci_pn, '10', '1.00', job, 'A'),
+        )
+        # own stock 0; same EXACT MPN under another PN = 7 (MUST show);
+        # a DIFFERENT longer MPN that starts with it under another PN = 999 (MUST NOT show)
+        _seed_warehouse_row(cur, 99330, aci_pn, mpn=mpn, onhandqty=0, loc_to='Count Area')
+        _seed_warehouse_row(cur, 99331, 'OTHEREXACT-1', mpn='1.5KE15', onhandqty=7, loc_to='Count Area')
+        _seed_warehouse_row(cur, 99332, 'OTHEREXACT-2', mpn='1.5KE150CA', onhandqty=999, loc_to='Count Area')
+
+        result = app_module._persist_shortage_report(
+            cur, job, order_qty=1, report_name='regress', notes='', username='regression@test.com')
+        assert result is not None, 'shortage report should generate'
+
+        cur.execute(
+            f'SELECT other_mpn_onhand, other_mpn_locations '
+            f'FROM {SCHEMA}."tblShortageReportItems" WHERE report_id = %s',
+            (result['report_id'],))
+        row = cur.fetchone()
+        assert row['other_mpn_onhand'] == 7, (
+            f"same-MPN visibility must be EXACT: only the 7 of '1.5KE15' counts, "
+            f"NOT the 999 of the distinct longer '1.5KE150CA'. got {row['other_mpn_onhand']}")
+        assert '1.5KE150CA' not in (row['other_mpn_locations'] or ''), (
+            f"longer distinct MPN must not appear, got {row['other_mpn_locations']!r}")
+
+
 def test_shortage_report_own_stock_is_case_insensitive():
     """Inventory stores the SAME part number in mixed case (BOM 'RCASE-1' vs
     stock 'rcase-1'). The job's own on-hand MUST aggregate across case — a
@@ -1542,6 +1591,7 @@ TESTS = [
     test_bom_load_inserts_every_item_received,
     test_bom_mpns_lookup_is_case_insensitive,
     test_shortage_report_alt_part_qty_and_same_mpn_visibility,
+    test_shortage_report_same_mpn_is_exact_not_prefix,
     test_shortage_report_own_stock_is_case_insensitive,
     test_shortage_report_counts_mfg_floor_stock,
     test_shortage_report_shows_bin_location_not_floor,

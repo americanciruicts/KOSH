@@ -5271,22 +5271,22 @@ _SHORTAGE_MATCH_SQL = """
         -- other_mpn_locations is a JSON breakdown rendered as indented ROW ENTRIES
         -- under each BOM line in the view + export (the old two-column display was
         -- removed 2026-06-12 at report users' request — see CHANGELOG).
-        -- MPN match mode (strict flag): Chemring jobs use STRICT exact-string
-        -- match (defense traceability — reel-suffix/format variants are NOT
-        -- interchangeable). Every other customer tolerates reel-suffix/format
-        -- differences via a NORMALIZED match (strip -, #, space, ., / and case),
-        -- plus a directional prefix so stock carrying a packaging suffix still
-        -- counts (BOM 'ADR03BUJZ' matches stock 'ADR03BUJZ-REEL7'). One-directional
-        -- on purpose: a BOM MPN is NOT matched to a SHORTER stock MPN, which would
-        -- over-match distinct parts (e.g. 'MMBT2222A-TP' vs 'MMBT2222').
+        -- MPN match mode (Preet 2026-06-30): EXACT MPN ONLY. Chemring jobs use a
+        -- STRICT exact-string match (defense traceability); every other customer
+        -- uses a NORMALIZED exact match (strip -, #, space, ., / and case) so
+        -- format-only differences still match, but NOTHING longer does.
+        -- The old directional prefix match (BOM key being a prefix of a longer
+        -- stock MPN) was REMOVED: for numeric/short MPNs it over-matched DISTINCT
+        -- parts — e.g. '1.5KE15'→'1.5KE150CA' (15V vs 150V), 'ERJ6ENF249'→
+        -- 'ERJ6ENF2491V' — flooding the same-MPN visibility rows with wrong parts
+        -- (the "1234 also shows 12345/123456" report). The separator info needed
+        -- to tell a reel suffix from a value-continuation is destroyed by
+        -- normalization, so exact-only is the correct, unambiguous rule.
         COALESCE((
             SELECT SUM(p.onhandqty) FROM mpn_pool p
             WHERE UPPER(p.item) <> UPPER(bl.aci_pn)
               AND COALESCE(bl.bom_mpn, '') != ''
-              AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE (
-                       p.nmpn = bl.bom_key
-                    OR (char_length(bl.bom_key) >= 6 AND p.nmpn LIKE bl.bom_key || '%%')
-                  ) END
+              AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE p.nmpn = bl.bom_key END
         ), 0) as other_mpn_onhand,
         (
             SELECT json_agg(json_build_object(
@@ -5302,10 +5302,7 @@ _SHORTAGE_MATCH_SQL = """
                 -- stock, already counted above — never list it as an arrow entry.
                 WHERE UPPER(p.item) <> UPPER(bl.aci_pn)
                   AND COALESCE(bl.bom_mpn, '') != ''
-                  AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE (
-                           p.nmpn = bl.bom_key
-                        OR (char_length(bl.bom_key) >= 6 AND p.nmpn LIKE bl.bom_key || '%%')
-                      ) END
+                  AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE p.nmpn = bl.bom_key END
                 GROUP BY p.item, p.pcn
                 ORDER BY SUM(p.onhandqty) DESC
                 LIMIT 20
