@@ -29,6 +29,7 @@
 
 | # | Date | Bug | Area | Sev | Status |
 |:-:|------|-----|------|:---:|:------:|
+| [22](#bug22) | 2026-06-30 | BOM Loader saved only 1 of N lines → "MPN not available" generating a PCN for any other line | BOM Loader / Parser | 🟧 | ✅ |
 | [21](#bug21) | 2026-06-29 | Generate-PCN MPN dropdown empty though BOM display shows the MPN (case-sensitive lookup) | BOM Loader / PCN | 🟧 | ✅ |
 | [1](#bug1) | 2026-06-23 | Shortage report showed "MFG Floor" instead of the real bin | Shortage / Location | 🟧 | ✅ |
 | [2](#bug2) | 2026-06-22 | On-hand reconcile wiped fresh restocks to 0 | Inventory / Reconcile | 🟥 | ✅ |
@@ -90,6 +91,26 @@ bug — it's structural. The two screens are **two different computations**:
 
 ---
 
+<h3 id="bug22">🟧 <span style="color:#e67e22">22 — BOM Loader saved only 1 of N lines; PCN for any other line said "MPN not available"</span> ✅</h3>
+
+> **Date:** 2026-06-30 · **Severity:** 🟧 High · **Area:** BOM Loader / client-side parser · **Reported by:** Preet ("BOM Loader not working — shows in the display but generating a PCN says MPN not available", reported 3×)
+
+- **● Issue (what was wrong):** after loading a BOM, generating a PCN for a line reported **"MPN not available"** (the MPN dropdown was empty). The line appeared in the BOM preview but most lines were never actually saved.
+- **● Example (from production logs `stockandpick_webapp`, 2026-06-30 11:52–12:53 UTC):** job **8517L-2** loaded with **`total_items=1`** — only **line 5** (`aci_pn 8517L-2-5`) hit `tblBOM`. Preet then tried to PCN **line 25**, requesting `GET /api/bom/mpns/8517L-2-25` ~40× over an hour, each correctly "No MPNs found" — line 25 was never loaded. Two other BOMs from the same days loaded fully and worked (8858L = 35 lines, 6732LF = 28 lines).
+- **● Root cause:** the shared client parser `static/js/bom_parser.js::parseSheet` dropped every data row whose detected **LINE** cell wasn't a clean integer: `if (isNaN(parseInt(row[col.line]))) continue;`. When the wrong/sparse column was auto-detected as `LINE` (only the first data row had a number there), all the other real component rows were silently discarded — so a 25-line BOM became a 1-line BOM. Same "silently dropped BOM lines" class as the May 2026 incident, new trigger.
+- **● ⚠️ PREVIOUS (WRONG) FIX — what I did first (2026-06-29, bug 21):** I hypothesized the cause was a **case-sensitive** MPN lookup (`/api/bom/mpns/<part>` used `WHERE aci_pn = %s`) and shipped `UPPER(aci_pn)=UPPER(%s)` + a regression test, committed `73d51e8`, deployed Docker+Vercel. That endpoint fix is **real and kept** (a genuine latent bug), but it was the **wrong root cause for this report** — I shipped it without reproducing Preet's exact case, and he came back "same issue, not fixed at all." Lesson logged in memory: reproduce from container logs before shipping.
+- **● FIXED NOW — what actually resolves it (2026-06-30):** in `parseSheet`, a non-empty row that carries a real part identifier (`mpn` **or** `aci_pn`) is **never dropped** for a bad LINE cell — it's kept with a fallback auto line number (its `aci_pn` from the sheet is preserved, which is what the PCN lookup and display key on). Rows with no part id (notes/totals/section headers) are still excluded. Added `rescued_rows` / `skipped_rows` counts to the parser output and a **loud UI guardrail** in `templates/jobs/jobs.html`: if any non-empty rows are skipped, the upload status turns to a ⚠️ warning telling the user to verify every line before clicking Load — so a partial parse can never be silent again.
+- **🛠️ Files & lines:** `static/js/bom_parser.js` (`parseSheet` line-number rescue + `rescued_rows`/`skipped_rows`), `templates/jobs/jobs.html` (partial-parse warning), `tests/test_bom_parser.js` (synthetic bug-22 fixtures + updated `countDataRows` mirror).
+- **● When:** 2026-06-30 · commit `12d525c` · **Deployed:** ✅ Docker + Vercel.
+- **● Did it handle it?:** **Yes** — parser suite green incl. new fixtures: the 8517L-2 pattern (line# only on row 1, MPNs on all 5) now keeps **all 5** rows incl. `8517L-2-25`; junk/notes rows stay excluded; a clean BOM is unchanged (line #s 5,10,15 preserved, 0 rescues). Real files re-parsed without error (8765 export rescued 1 previously-dropped row). NOTE: the literal `8517L-2.xlsx` was never on disk (uploaded BOMs are parsed client-side and not stored), so the fix targets the proven mechanism, not that exact file.
+- **● Guard:** `tests/test_bom_parser.js` synthetic fixtures (`bug22: all 5 component rows kept`, `junk: only the 1 real part is kept`, `clean: line numbers preserved`).
+- **● Scope/impact:** code-only; strictly additive — can only RESCUE rows that were being dropped, never removes a row that previously loaded. No data migration. Jobs already loaded partially (e.g. 8517L-2) must be **re-uploaded** to pick up the missing lines.
+
+### Recurrences / new case reports
+<!-- Same bug reported again? APPEND a dated line here. -->
+
+---
+
 <h3 id="bug21">🟧 <span style="color:#e67e22">21 — Generate-PCN MPN dropdown came up empty even though the BOM display shows the MPN (case-sensitive BOM lookup)</span> ✅</h3>
 
 > **Date:** 2026-06-29 · **Severity:** 🟧 High · **Area:** BOM Loader / Generate PCN · **Reported by:** Preet ("BOM Loader not working — line shows in the display but generating a PCN says MPN not available")
@@ -106,7 +127,7 @@ bug — it's structural. The two screens are **two different computations**:
 
 ### Recurrences / new case reports
 <!-- Same bug reported again? APPEND a dated line here. -->
-- 2026-06-30 — reported by Preet ("same issue, not fixed at all"). **The case-insensitive fix above did NOT resolve his symptom — it was the wrong root cause for THIS report.** Production logs (`stockandpick_webapp`, 2026-06-30 11:52–12:53 UTC) show the truth: he loaded BOM for job **8517L-2**, but the loader posted **`total_items=1`** and saved only **line 5** (`aci_pn 8517L-2-5`). He then tried to generate a PCN for **line 25**, hammering `GET /api/bom/mpns/8517L-2-25` ~40× — every one correctly "No MPNs found", because line 25 (and 10/15/20…) were never loaded. **Real root cause: the client-side BOM parser (`static/js/bom_parser.js::parseSheet`) dropped every data line except one for this file** — the same "silently dropped BOM lines" class as the May 2026 incident. Most likely the line-number guard `if (isNaN(parseInt(row[col.line]))) continue;` (bom_parser.js L94–96) skipping rows because the wrong column was detected as `LINE`, or non-integer line cells. **Status: OPEN — needs the actual `8517L-2.xlsx` to reproduce the parser failure without breaking the BOMs that parse correctly (8858L=35 lines, 6732LF=28 lines both verified OK).** Tracked as a new distinct bug (parser line-drop), to be entered as bug 22 once reproduced+fixed. additional fix: none yet; not deployed.
+- 2026-06-30 — reported by Preet ("same issue, not fixed at all"). **The case-insensitive fix above did NOT resolve his symptom — it was the wrong root cause for THIS report.** Production logs (`stockandpick_webapp`, 2026-06-30 11:52–12:53 UTC) show the truth: he loaded BOM for job **8517L-2**, but the loader posted **`total_items=1`** and saved only **line 5** (`aci_pn 8517L-2-5`). He then tried to generate a PCN for **line 25**, hammering `GET /api/bom/mpns/8517L-2-25` ~40× — every one correctly "No MPNs found", because line 25 (and 10/15/20…) were never loaded. **Real root cause: the client-side BOM parser (`static/js/bom_parser.js::parseSheet`) dropped every data line except one for this file** — the same "silently dropped BOM lines" class as the May 2026 incident. Most likely the line-number guard `if (isNaN(parseInt(row[col.line]))) continue;` (bom_parser.js L94–96) skipping rows because the wrong column was detected as `LINE`, or non-integer line cells. **Status: OPEN — needs the actual `8517L-2.xlsx` to reproduce the parser failure without breaking the BOMs that parse correctly (8858L=35 lines, 6732LF=28 lines both verified OK).** Tracked as a new distinct bug (parser line-drop) — now entered and fixed as **[bug 22](#bug22)** (2026-06-30, parser rescue + UI guardrail + tests). The case-insensitive endpoint fix here in bug 21 is kept as a valid latent fix.
 
 ---
 
