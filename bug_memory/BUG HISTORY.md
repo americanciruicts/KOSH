@@ -128,6 +128,7 @@ bug — it's structural. The two screens are **two different computations**:
 
 ### Recurrences / new case reports
 <!-- Same bug reported again? APPEND a dated line here. -->
+- 2026-06-30 — reported again (Preet, "the BOM will not load into the system"), file `8517L-2 PARATA 320-0121 BOM FOR ASSEMBLY.xlsx`. DIFFERENT root cause this time: **template bloat**, not line-drop. The file's "Assy BOM" tab declares range **A1:AI6588** (6,588 rows × 35 cols) but holds only ~11 real rows (64 cells); the .xlsx is **3.9 MB** and `XLSX.utils.sheet_to_json` materialized all 6,588 empty rows, freezing the in-browser parse long enough to look like a failed upload. (Server-side the load was verified fine: 200, line 5 `8517L-2-5`/`VTB8441BH` inserted — and this BOM genuinely has only that one component, on BOTH tabs.) **Fix (commit `5032bbc`, deployed Docker+Vercel):** `static/js/bom_parser.js::parseSheet` now recomputes a TIGHT range from the cells that actually exist and passes it to `sheet_to_json`, so an oversized declared range costs nothing — parse of this file dropped ~96ms→~7ms. Guard: `tests/test_bom_parser.js` bloat fixtures (`bloat: tightRange shrinks A1:AI6588…`, `bloat: still extracts the 1 real line`). Also advised Preet to clean the empty rows on the "Assy BOM" tab to shrink the file.
 
 ---
 
