@@ -106,6 +106,7 @@ bug — it's structural. The two screens are **two different computations**:
 
 ### Recurrences / new case reports
 <!-- Same bug reported again? APPEND a dated line here. -->
+- 2026-06-30 — reported by Preet ("same issue, not fixed at all"). **The case-insensitive fix above did NOT resolve his symptom — it was the wrong root cause for THIS report.** Production logs (`stockandpick_webapp`, 2026-06-30 11:52–12:53 UTC) show the truth: he loaded BOM for job **8517L-2**, but the loader posted **`total_items=1`** and saved only **line 5** (`aci_pn 8517L-2-5`). He then tried to generate a PCN for **line 25**, hammering `GET /api/bom/mpns/8517L-2-25` ~40× — every one correctly "No MPNs found", because line 25 (and 10/15/20…) were never loaded. **Real root cause: the client-side BOM parser (`static/js/bom_parser.js::parseSheet`) dropped every data line except one for this file** — the same "silently dropped BOM lines" class as the May 2026 incident. Most likely the line-number guard `if (isNaN(parseInt(row[col.line]))) continue;` (bom_parser.js L94–96) skipping rows because the wrong column was detected as `LINE`, or non-integer line cells. **Status: OPEN — needs the actual `8517L-2.xlsx` to reproduce the parser failure without breaking the BOMs that parse correctly (8858L=35 lines, 6732LF=28 lines both verified OK).** Tracked as a new distinct bug (parser line-drop), to be entered as bug 22 once reproduced+fixed. additional fix: none yet; not deployed.
 
 ---
 
