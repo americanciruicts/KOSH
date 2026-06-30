@@ -29,6 +29,7 @@
 
 | # | Date | Bug | Area | Sev | Status |
 |:-:|------|-----|------|:---:|:------:|
+| [23](#bug23) | 2026-06-30 | Shortage report same-MPN visibility over-matched (1234 also showed 12345/123456) | Shortage / MPN match | 🟧 | ✅ |
 | [22](#bug22) | 2026-06-30 | BOM Loader saved only 1 of N lines → "MPN not available" generating a PCN for any other line | BOM Loader / Parser | 🟧 | ✅ |
 | [21](#bug21) | 2026-06-29 | Generate-PCN MPN dropdown empty though BOM display shows the MPN (case-sensitive lookup) | BOM Loader / PCN | 🟧 | ✅ |
 | [1](#bug1) | 2026-06-23 | Shortage report showed "MFG Floor" instead of the real bin | Shortage / Location | 🟧 | ✅ |
@@ -88,6 +89,25 @@ bug — it's structural. The two screens are **two different computations**:
 ---
 
 # 📒 Detailed entries
+
+---
+
+<h3 id="bug23">🟧 <span style="color:#e67e22">23 — Shortage report's same-MPN visibility over-matched distinct parts (1234 also showed 12345 / 123456)</span> ✅</h3>
+
+> **Date:** 2026-06-30 · **Severity:** 🟧 High · **Area:** Shortage report / same-MPN visibility · **Reported by:** Preet ("when a shortage report is created for 1234 it shows all the MPNs 1234, 12345, 123456 … not the exact match")
+
+- **● Issue (what was wrong):** the "same-MPN stock under a different part number" rows on the shortage report listed parts whose MPN merely **started with** the BOM line's MPN, so a line showed piles of unrelated parts — "pages and pages" of 12345/123456 noise under a 1234 line.
+- **● Example (real data):** BOM MPN `1.5KE15` (15 V TVS) pulled in stock `1.5KE150CA` (150 V — a DIFFERENT part); `ERJ6ENF249` pulled in `ERJ6ENF2491V / 2492V / 2493V` (different resistor values). A scan of live data found 25+ such false numeric over-matches.
+- **● Root cause:** the same-MPN match used a NORMALIZED exact match **OR a directional prefix** `char_length(bom_key) >= 6 AND p.nmpn LIKE bom_key || '%'` (added for reel/packaging suffixes like `ADR03BUJZ`→`ADR03BUJZ-REEL7`). Because normalization strips separators (`-# ./`), the prefix branch couldn't tell a reel suffix from a value-continuation, so for numeric/short MPNs it matched longer DISTINCT parts.
+- **● Fixed (what changed):** removed the prefix branch — match **EXACT only**. Chemring = strict exact-string (unchanged); all other customers = normalized exact (`p.nmpn = bl.bom_key`, case + `-# ./` folded) so format-only variants still match but nothing longer does. Decision confirmed with Preet (chose "Exact MPN only" over a separator-aware reel-tolerant option). Two spots in `_SHORTAGE_MATCH_SQL` (other_mpn_onhand + other_mpn_locations).
+- **🛠️ Files & lines:** `app.py` — `_SHORTAGE_MATCH_SQL` (both CASE expressions). Guard: `tests/regression_tests.py::test_shortage_report_same_mpn_is_exact_not_prefix`.
+- **● When:** 2026-06-30 · commit `9a41bfe` · **Deployed:** ✅ Docker + Vercel.
+- **● Did it handle it?:** **Yes** — new test seeds exact `1.5KE15` (must count) + longer `1.5KE150CA` (must NOT) and asserts only the exact one shows; the two existing same-MPN tests still pass; full suite **30/30**; baked container verified exact-only (prefix `LIKE` gone).
+- **● Guard:** `tests/regression_tests.py::test_shortage_report_same_mpn_is_exact_not_prefix`.
+- **● Scope/impact:** code-only, read-path (report display) — no data mutated. Supersedes the non-Chemring "tolerant reel-suffix" behavior from the Chemring-strict work.
+
+### Recurrences / new case reports
+<!-- Same bug reported again? APPEND a dated line here. -->
 
 ---
 
