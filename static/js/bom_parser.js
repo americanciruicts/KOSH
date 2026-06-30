@@ -80,6 +80,8 @@
         var sheetItems = [];
         var metaFieldsLocal = { job: 'job', job_rev: 'job_rev', last_rev: 'last_rev', cust: 'customer', cust_pn: 'cust_pn', cust_rev: 'cust_rev' };
         var autoLineLocal = 0;
+        var skippedNonNumericLine = 0; // real parts rescued from a bad LINE cell
+        var skippedNoPartId = 0;       // non-empty rows skipped (no part identifier)
 
         for (var r = hr.headerRowIdx + 1; r < rows.length; r++) {
             var row = rows[r];
@@ -90,20 +92,40 @@
             }
             if (allEmpty) continue;
 
+            var mpnVal = col.mpn !== undefined ? String(row[col.mpn] || '').trim() : '';
+            var descVal = col.desc !== undefined ? String(row[col.desc] || '').trim() : '';
+            var aciVal = col.aci_pn !== undefined ? String(row[col.aci_pn] || '').trim() : '';
+            var qtyChk = col.qty !== undefined ? row[col.qty] : '';
+            // Truly empty / non-data rows are skipped (NOT counted as a drop).
+            if (!mpnVal && !descVal && (qtyChk === '' || qtyChk === null || qtyChk === undefined)) continue;
+
             var lineNum;
             if (col.line !== undefined) {
                 var p = parseInt(row[col.line]);
-                if (isNaN(p)) continue;
-                lineNum = p;
+                if (!isNaN(p)) {
+                    lineNum = p;
+                    if (p > autoLineLocal) autoLineLocal = p;
+                } else if (mpnVal || aciVal) {
+                    // Bug 22 (job 8517L-2): a real part row whose LINE cell is
+                    // blank or non-numeric (e.g. the wrong/sparse column got
+                    // detected as LINE) was silently DROPPED here — so a 25-line
+                    // BOM loaded only the single row that happened to have a
+                    // numeric line cell, and a PCN for any other line reported
+                    // "MPN not available". NEVER drop a row that carries a real
+                    // part identifier: keep it with a fallback line number.
+                    autoLineLocal += 1;
+                    lineNum = autoLineLocal;
+                    skippedNonNumericLine += 1; // surfaced so the UI can flag it
+                } else {
+                    // No line number AND no part identifier -> note/total/section
+                    // row. Still skipped, but tracked so a big skip count warns.
+                    skippedNoPartId += 1;
+                    continue;
+                }
             } else {
                 autoLineLocal += 1;
                 lineNum = autoLineLocal;
             }
-
-            var mpnVal = col.mpn !== undefined ? String(row[col.mpn] || '').trim() : '';
-            var descVal = col.desc !== undefined ? String(row[col.desc] || '').trim() : '';
-            var qtyChk = col.qty !== undefined ? row[col.qty] : '';
-            if (!mpnVal && !descVal && (qtyChk === '' || qtyChk === null || qtyChk === undefined)) continue;
 
             for (var mk in metaFieldsLocal) {
                 var metaKey = metaFieldsLocal[mk];
@@ -125,7 +147,7 @@
                 desc: descVal,
                 man: col.man !== undefined ? String(row[col.man] || '').trim() : '',
                 mpn: mpnVal,
-                aci_pn: col.aci_pn !== undefined ? String(row[col.aci_pn] || '').trim() : '',
+                aci_pn: aciVal,
                 qty: qty,
                 pou: col.pou !== undefined ? String(row[col.pou] || '').trim() : '',
                 loc: col.loc !== undefined ? String(row[col.loc] || '').trim() : '',
@@ -138,7 +160,8 @@
                 cust_rev: col.cust_rev !== undefined ? String(row[col.cust_rev] || '').trim() : ''
             });
         }
-        return { items: sheetItems, metadata: sheetMeta, headersNorm: hr.headersNorm, col: col, headerRowIdx: hr.headerRowIdx };
+        return { items: sheetItems, metadata: sheetMeta, headersNorm: hr.headersNorm, col: col, headerRowIdx: hr.headerRowIdx,
+                 rescuedRows: skippedNonNumericLine, skippedRows: skippedNoPartId };
     }
 
     function parseWorkbook(workbook, XLSX) {
@@ -167,7 +190,8 @@
                 added += 1;
             }
             Object.keys(sheetLines).forEach(function (k) { seenLines[k] = true; });
-            perSheet.push({ sheet: sn, added: added, total: parsed.items.length });
+            perSheet.push({ sheet: sn, added: added, total: parsed.items.length,
+                            rescuedRows: parsed.rescuedRows || 0, skippedRows: parsed.skippedRows || 0 });
 
             Object.keys(parsed.metadata || {}).forEach(function (k) {
                 if (!metadata[k] && parsed.metadata[k]) metadata[k] = parsed.metadata[k];
@@ -180,13 +204,25 @@
             metadata.job = metadata.job.slice(0, -2);
         }
 
+        var rescuedTotal = 0;
+        var skippedTotal = 0;
+        for (var pi = 0; pi < perSheet.length; pi++) {
+            rescuedTotal += perSheet[pi].rescuedRows || 0;
+            skippedTotal += perSheet[pi].skippedRows || 0;
+        }
+
         return {
             metadata: metadata,
             bom_items: bomItems,
             total_items: bomItems.length,
             per_sheet: perSheet,
             headers_norm: headersNorm,
-            col: col
+            col: col,
+            // Visibility so a partial parse can never be silent again:
+            // rescued_rows = real parts kept despite a bad LINE cell (bug 22);
+            // skipped_rows = non-empty rows dropped because they had no part id.
+            rescued_rows: rescuedTotal,
+            skipped_rows: skippedTotal
         };
     }
 

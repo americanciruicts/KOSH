@@ -404,7 +404,17 @@ if (window.location.hostname.indexOf('vercel.app') >= 0) {
                     uploadBtn.classList.add('btn-success');
                     uploadBtn.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>Parsed ' + bomItems.length + ' items — scroll down, click Load to Database';
                     uploadBtn.disabled = true;
-                    showStatus('SUCCESS — parsed ' + bomItems.length + ' items for Job ' + (metadata.job || '(unknown)') + '. Scroll down and click the green "Load to Database" button to save.', 'success');
+                    // Guardrail (bug 22): never let a partial parse be silent. If
+                    // any non-empty rows were dropped, warn loudly so the user
+                    // checks the sheet before loading an incomplete BOM.
+                    var skipped = result.skipped_rows || 0;
+                    if (skipped > 0) {
+                        showStatus('⚠️ Parsed ' + bomItems.length + ' items for Job ' + (metadata.job || '(unknown)') +
+                            ', but ' + skipped + ' non-empty row(s) in your sheet were NOT recognized as parts and were skipped. ' +
+                            'Review the preview below and confirm every line is present BEFORE clicking Load to Database.', 'warning');
+                    } else {
+                        showStatus('SUCCESS — parsed ' + bomItems.length + ' items for Job ' + (metadata.job || '(unknown)') + '. Scroll down and click the green "Load to Database" button to save.', 'success');
+                    }
 
                     // Pulse the green Load button so it's impossible to miss.
                     var lbn = document.getElementById('loadBtn');

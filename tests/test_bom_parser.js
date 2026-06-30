@@ -91,14 +91,17 @@ function countDataRows(workbook, sheetName) {
             if (row[c] !== '' && row[c] !== null && row[c] !== undefined) { allEmpty = false; break; }
         }
         if (allEmpty) continue;
-        if (col.line !== undefined) {
-            const p = parseInt(row[col.line]);
-            if (isNaN(p)) continue;
-        }
         const mpn = col.mpn !== undefined ? String(row[col.mpn] || '').trim() : '';
         const desc = col.desc !== undefined ? String(row[col.desc] || '').trim() : '';
+        const aci = col.aci_pn !== undefined ? String(row[col.aci_pn] || '').trim() : '';
         const qtyChk = col.qty !== undefined ? row[col.qty] : '';
         if (!mpn && !desc && (qtyChk === '' || qtyChk === null || qtyChk === undefined)) continue;
+        // Mirror parser: numeric line kept; non-numeric line kept ONLY if the
+        // row carries a real part id (mpn/aci) — bug 22 rescue; else skipped.
+        if (col.line !== undefined) {
+            const p = parseInt(row[col.line]);
+            if (isNaN(p) && !(mpn || aci)) continue;
+        }
         n += 1;
     }
     return n;
@@ -151,8 +154,79 @@ function runOne(samplePath) {
     }
 }
 
+// ── Synthetic regression for bug 22 (job 8517L-2) ──────────────────────
+// The real cause: only the first data row carried a numeric LINE cell; the
+// rest had a blank/non-numeric LINE cell, so the parser dropped them and a
+// 25-line BOM loaded just 1 line. These tests build the workbook in memory
+// (the sample .xlsx files aren't committed) so the fix is covered even
+// without customer files present.
+function sheetFromAoa(aoa) {
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'BOM to Load');
+    return wb;
+}
+
+function runSynthetic() {
+    console.log('\n[synthetic: bug 22 — blank LINE cell drops real parts]');
+
+    // Header + 5 component rows; ONLY the first row has a numeric LINE value,
+    // mirroring 8517L-2 where line 5 survived but 10/15/20/25 were dropped.
+    const header = ['Job', 'Line', 'ACI PN', 'MPN', 'Description', 'Qty'];
+    const rows = [
+        ['8517L-2', 5,  '8517L-2-5',  'VTB8441BH',        'PHOTOTRANSISTOR', 1],
+        ['',        '', '8517L-2-10', 'CL10B104KB8NNNC',  'CAP 0.1UF',       2],
+        ['',        '', '8517L-2-15', 'GRM21BR61E106KA',  'CAP 10UF',        3],
+        ['',        '', '8517L-2-20', 'SMF15VTR',         'TVS DIODE',       4],
+        ['',        '', '8517L-2-25', 'BQ24104RHLT',      'CHARGER IC',      5],
+    ];
+    const wb = sheetFromAoa([header].concat(rows));
+    const result = KoshBomParser.parseWorkbook(wb, XLSX);
+
+    check('bug22: all 5 component rows kept (none silently dropped)',
+        result.bom_items.length === 5, 'got ' + result.bom_items.length);
+    const acis = result.bom_items.map(i => i.aci_pn).sort();
+    check('bug22: line 25 (8517L-2-25) is present',
+        acis.indexOf('8517L-2-25') !== -1, JSON.stringify(acis));
+    check('bug22: every kept row preserved its MPN',
+        result.bom_items.every(i => i.mpn && i.mpn.length > 0),
+        JSON.stringify(result.bom_items.map(i => i.mpn)));
+    check('bug22: rescued_rows counter reports the 4 bad-LINE rows',
+        result.rescued_rows === 4, 'got ' + result.rescued_rows);
+
+    // Guardrail: a notes/total row (no part id, non-numeric line) must STILL be
+    // excluded — the rescue must not pull in junk rows.
+    console.log('\n[synthetic: junk/notes rows stay excluded]');
+    const wb2 = sheetFromAoa([header,
+        ['8519L', 10, '8519L-10', 'ABC123', 'RESISTOR', 1],
+        ['', '', '', '', 'TOTAL COMPONENTS: 1', ''],     // notes row, no part id
+        ['', 'SEE NOTE', '', '', 'Assembly instructions', ''],
+    ]);
+    const r2 = KoshBomParser.parseWorkbook(wb2, XLSX);
+    check('junk: only the 1 real part is kept',
+        r2.bom_items.length === 1, 'got ' + r2.bom_items.length + ' -> ' +
+        JSON.stringify(r2.bom_items.map(i => i.desc)));
+    check('junk: skipped_rows counter reports the 2 non-part rows',
+        r2.skipped_rows === 2, 'got ' + r2.skipped_rows);
+
+    // Sanity: a clean BOM (every row numeric LINE) is unchanged + no rescues.
+    console.log('\n[synthetic: clean BOM unaffected]');
+    const wb3 = sheetFromAoa([header,
+        ['8600L', 5,  '8600L-5',  'M1', 'D1', 1],
+        ['8600L', 10, '8600L-10', 'M2', 'D2', 2],
+        ['8600L', 15, '8600L-15', 'M3', 'D3', 3],
+    ]);
+    const r3 = KoshBomParser.parseWorkbook(wb3, XLSX);
+    check('clean: all 3 rows kept', r3.bom_items.length === 3, 'got ' + r3.bom_items.length);
+    check('clean: no rescues needed', r3.rescued_rows === 0, 'got ' + r3.rescued_rows);
+    check('clean: line numbers preserved (5,10,15)',
+        JSON.stringify(r3.bom_items.map(i => i.line)) === JSON.stringify([5, 10, 15]),
+        JSON.stringify(r3.bom_items.map(i => i.line)));
+}
+
 console.log('KOSH BOM parser regression suite');
 console.log('Parser: ' + PARSER_PATH);
+runSynthetic();
 
 let ran = 0;
 for (const sample of SAMPLES) {
