@@ -5353,17 +5353,23 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
     if not matched_items:
         return None
 
-    # Keep ONLY actual shortages (on_hand < req).
-    report_items = []
+    # Store the FULL BOM, not just the short lines (Preet 2026-07-07). Dropping
+    # non-short lines made the report look empty whenever a job's stock was staged
+    # on the MFG Floor (floor stock counts as on-hand per bug #9), which read as
+    # "all the BOM lines didn't come in." Now every matched line is persisted; the
+    # view/export flag the short ones (qty_on_hand < req) and shortage_lines below
+    # still reports the TRUE count of lines actually below requirement.
     for item in matched_items:
         # qty may be fractional (consumables like glue/RTV) — round the TOTAL
         # requirement up so we never under-order. Non-numeric qty parses to 0.
         req = math.ceil(float(item['qty'] or 0) * order_qty)
         item['req'] = req
         item['order_qty'] = order_qty
-        if int(item['qty_on_hand'] or 0) < req:
-            report_items.append(item)
-    shortage_count = len(report_items)
+    report_items = matched_items
+    shortage_count = sum(
+        1 for item in matched_items
+        if int(item['qty_on_hand'] or 0) < int(item['req'] or 0)
+    )
 
     # Total cost = required cost of the WHOLE BOM (req x unit_cost), counted once
     # per line (dedupe on aci_pn). Shortage cost covers only the missing qty.

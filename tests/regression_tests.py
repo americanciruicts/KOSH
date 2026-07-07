@@ -925,13 +925,22 @@ def test_shortage_report_counts_mfg_floor_stock():
             cur, job, order_qty=1, report_name='regress', notes='', username='regression@test.com')
         assert result is not None, 'shortage report should generate for seeded job'
 
-        # 120 on hand (30 bin + 90 floor) >= 100 req -> NOT short, so 0 lines kept.
-        cur.execute(
-            f'SELECT COUNT(*) AS n FROM {SCHEMA}."tblShortageReportItems" WHERE report_id = %s',
-            (result['report_id'],))
-        assert cur.fetchone()['n'] == 0, (
+        # 120 on hand (30 bin + 90 floor) >= 100 req -> NOT short. The report now
+        # stores the FULL BOM (Preet 2026-07-07), so the line IS persisted, but it
+        # must NOT be counted/flagged as a shortage: shortage_count == 0 and the
+        # stored row's on-hand (120) is >= req (this is the "floor stock counts, no
+        # false shortage" invariant — the row simply shows as in-stock, not short).
+        assert result['shortage_count'] == 0, (
             "job is fully covered once MFG-Floor stock counts (30 bin + 90 floor = "
-            "120 >= 100 req) — it must NOT appear as a shortage")
+            "120 >= 100 req) — it must NOT be flagged as a shortage")
+        cur.execute(
+            f'SELECT qty_on_hand, req FROM {SCHEMA}."tblShortageReportItems" WHERE report_id = %s',
+            (result['report_id'],))
+        rows = cur.fetchall()
+        assert len(rows) == 1, f'full BOM must persist the line, got {len(rows)} rows'
+        assert rows[0]['qty_on_hand'] == 120 and rows[0]['qty_on_hand'] >= rows[0]['req'], (
+            f"stored line must carry summed on-hand 120 >= req and read as in-stock, "
+            f"got on-hand {rows[0]['qty_on_hand']} vs req {rows[0]['req']}")
 
         # Lower the floor lot so 30 + 10 = 40 < 100 -> short, on-hand must read 40
         # (proving floor stock is summed in, not excluded and not double-counted).
@@ -946,6 +955,66 @@ def test_shortage_report_counts_mfg_floor_stock():
         assert rows[0]['qty_on_hand'] == 40, (
             f"on-hand must be bin 30 + floor 10 = 40, got {rows[0]['qty_on_hand']} "
             f"(excluded floor -> 30; double-counted -> 50)")
+
+
+def test_shortage_report_stores_full_bom_not_only_shortages():
+    """Recurring complaint (Preet 2026-07-07, job 8355M — "ALL THE BOM LINES DID
+    NOT COME IN"): the report used to persist ONLY lines where on_hand < req, so a
+    job whose stock is staged on the MFG Floor (which counts as on-hand, bug #9)
+    lost almost every line and looked empty/broken.
+
+    The report now stores the FULL BOM: every matched line is persisted so the
+    view/export can show the whole picture and flag the short ones, while
+    shortage_lines/shortage_count still reports ONLY the lines below requirement.
+
+    Seeds 3 BOM lines: two fully in stock, one short. Asserts all 3 rows persist,
+    shortage_count == 1, and the short line is the only one flagged (on_hand < req).
+    """
+    sys.path.insert(0, '/app')
+    import app as app_module
+    from psycopg2.extras import RealDictCursor
+
+    job = 'REGRESS-FULLBOM-9999'
+    pcns = ('99360', '99361', '99362')
+
+    with isolated_txn() as conn:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(f'DELETE FROM {SCHEMA}."tblBOM" WHERE job = %s', (job,))
+        cur.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn IN %s', (pcns,))
+
+        # line 10: needs 10, has 500 on the MFG Floor -> in stock (the 8355M shape)
+        # line 20: needs 5,  has 5 in a bin              -> exactly covered, in stock
+        # line 30: needs 5,  has 0                       -> SHORT
+        seed = [
+            ('10', 'RFULL-1', 'RGMPN-FULL-1', '10', 99360, 0,   '500', 'MFG Floor'),
+            ('20', 'RFULL-2', 'RGMPN-FULL-2', '5',  99361, 5,   '0',   'Count Area'),
+            ('30', 'RFULL-3', 'RGMPN-FULL-3', '5',  99362, 0,   '0',   'Count Area'),
+        ]
+        for line, pn, mpn, qty, pcn, oh, mfg, loc in seed:
+            cur.execute(
+                f'INSERT INTO {SCHEMA}."tblBOM" (line, "DESC", man, mpn, aci_pn, qty, cost, job, job_rev) '
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (line, 'Regress fullbom', 'RegressMan', mpn, pn, qty, '1.00', job, 'A'))
+            _seed_warehouse_row(cur, pcn, pn, mpn=mpn, onhandqty=oh, mfg_qty=mfg, loc_to=loc)
+
+        result = app_module._persist_shortage_report(
+            cur, job, order_qty=1, report_name='regress', notes='', username='regression@test.com')
+        assert result is not None, 'shortage report should generate for seeded job'
+
+        # Full BOM persisted: all 3 lines, only 1 flagged short.
+        assert result['shortage_count'] == 1, (
+            f"only line 30 is below requirement -> shortage_count must be 1, "
+            f"got {result['shortage_count']}")
+        cur.execute(
+            f'SELECT aci_pn, qty_on_hand, req FROM {SCHEMA}."tblShortageReportItems" '
+            f'WHERE report_id = %s ORDER BY aci_pn', (result['report_id'],))
+        rows = cur.fetchall()
+        assert len(rows) == 3, (
+            f"the FULL BOM must persist (3 lines incl. in-stock ones), got {len(rows)} "
+            f"-- dropping non-short lines is the 8355M 'lines didn't come in' bug")
+        short = [r for r in rows if int(r['qty_on_hand'] or 0) < int(r['req'] or 0)]
+        assert len(short) == 1 and short[0]['aci_pn'] == 'RFULL-3', (
+            f"exactly the zero-stock line RFULL-3 must be the flagged shortage, got {short!r}")
 
 
 def test_location_reconcile_follows_latest_placement():
@@ -1600,6 +1669,7 @@ TESTS = [
     test_shortage_report_own_stock_is_case_insensitive,
     test_shortage_report_counts_mfg_floor_stock,
     test_shortage_report_shows_bin_location_not_floor,
+    test_shortage_report_stores_full_bom_not_only_shortages,
     test_location_reconcile_follows_latest_placement,
     test_location_reconcile_honors_manual_adjt_edit,
     test_onhand_reconcile_neutralizes_relabel_adjt,

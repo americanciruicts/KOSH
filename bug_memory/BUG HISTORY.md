@@ -3,7 +3,7 @@
 <p align="center">
   <b>Permanent, human-readable record of every bug fixed in KOSH.</b><br>
   <span style="color:#7f8c8d">Window covered: <b>13 May 2026 → 23 June 2026</b> · 49 commits</span><br>
-  <span style="color:#7f8c8d">Document created: <b>2026-06-23</b> · Last updated: <b>2026-06-29</b></span>
+  <span style="color:#7f8c8d">Document created: <b>2026-06-23</b> · Last updated: <b>2026-07-07</b></span>
 </p>
 
 > 📌 **How to use:** one entry per distinct bug, newest first. When the **same** bug is
@@ -29,6 +29,8 @@
 
 | # | Date | Bug | Area | Sev | Status |
 |:-:|------|-----|------|:---:|:------:|
+| [25](#bug25) | 2026-07-07 | Shortage report dropped every non-short line → "all the BOM lines didn't come in" when a job's stock is staged on the MFG Floor (job 8355M) | Shortage | 🟧 | ✅ |
+| [24](#bug24) | 2026-07-01 | Phantom 0-qty "purge" PICK made Warehouse Inventory look out of sync with PCN History (PCN 13959) | Inventory / History `[WHSE≠HIST]` | 🟩 | ✅ |
 | [23](#bug23) | 2026-06-30 | Shortage report same-MPN visibility over-matched (1234 also showed 12345/123456) | Shortage / MPN match | 🟧 | ✅ |
 | [22](#bug22) | 2026-06-30 | BOM Loader saved only 1 of N lines → "MPN not available" generating a PCN for any other line | BOM Loader / Parser | 🟧 | ✅ |
 | [21](#bug21) | 2026-06-29 | Generate-PCN MPN dropdown empty though BOM display shows the MPN (case-sensitive lookup) | BOM Loader / PCN | 🟧 | ✅ |
@@ -89,6 +91,41 @@ bug — it's structural. The two screens are **two different computations**:
 ---
 
 # 📒 Detailed entries
+
+---
+
+<h3 id="bug25">🟧 <span style="color:#e67e22">25 — Shortage report dropped every non-short line ("all the BOM lines didn't come in")</span> ✅</h3>
+
+> **Date:** 2026-07-07 · **Severity:** 🟧 High (report looks empty/broken; recurring) · **Area:** Shortage · **Reported by:** Preet ("ALL THE BOM LINES DID NOT COME IN THE SHORTAGE REPORT … SAME BUG AGAIN AND AGAIN", job **8355M**)
+
+- **● Issue (what was wrong):** generating a shortage report for a job whose material is staged on the **MFG Floor** produced a report with almost no lines. Job **8355M** (18 BOM lines, order_qty 5) stored `total_lines=19` but only **1** line — the other 17 "didn't come in." Reads as the report being broken.
+- **● Diagnosis (reproduced from prod, container `stockandpick_webapp` + `kosh` DB):** **16 of 18** lines had their **entire** on-hand sitting on the MFG Floor (bins empty), e.g. `8355M-40` → bin 0 / floor **730**, `8355M-5` → bin 0 / floor **20**. The shortage builder computes on-hand = `onhandqty + mfg_qty` (floor counts, [bug 9](#bug9)), so those lines read as fully stocked.
+- **● Root cause:** the shared builder `_persist_shortage_report()` ([app.py](../app.py)) **persisted only lines where `on_hand < req`**. Combined with floor stock counting as on-hand, every line whose stock was on the floor was silently dropped from the stored report — even though the view/export were already written to display a full BOM and flag the short rows (comments there already said "MFG-Floor lines NO LONGER excluded"). This is the pendulum behind "same bug again and again": [bug 9](#bug9) made floor stock count (to stop re-buying), which then hid those lines here.
+- **● Fixed (what changed):** code-only. `_persist_shortage_report()` now stores the **FULL BOM** — every matched line is inserted; `shortage_lines`/`shortage_count` still reports only the lines actually below requirement. The view (`templates/reports/shortage_report_view.html`) already highlights `qty_on_hand < req` (red) vs in-stock (green); the Excel export keeps its "shortages only" filter and pull-sheet. [Bug 9](#bug9) stays intact (floor stock still counts → no false shortages / no re-buying). Decision confirmed with Preet (chose "list the full BOM, flag shortages" over "exclude MFG-Floor from on-hand").
+- **🛠️ Files & lines:** `app.py` — `_persist_shortage_report()` (report now = all matched lines; `shortage_count` = lines with `on_hand < req`). Both entry points share this builder (`/jobs/<job>/generate-shortage` and `/shortage_report/generate`), so the fix covers both. Tests: `tests/regression_tests.py` — updated `test_shortage_report_counts_mfg_floor_stock` (non-short line now persists but isn't flagged), added `test_shortage_report_stores_full_bom_not_only_shortages`.
+- **● When:** 2026-07-07 · **Deployed:** ✅ Docker `--no-cache` rebuild + push origin main (Vercel).
+- **● Did it handle it?:** **Yes** — full regression suite **31/31 green**; regenerating 8355M now lists all 18 lines with the short ones flagged.
+
+### Recurrences / new case reports
+<!-- Same bug reported again? APPEND a dated line here. -->
+
+---
+
+<h3 id="bug24">🟩 <span style="color:#27ae60">24 — Phantom 0-qty "purge" PICK made Warehouse Inventory look out of sync with PCN History</span> <code>[WHSE≠HIST]</code> ✅</h3>
+
+> **Date:** 2026-07-01 · **Severity:** 🟩 Low (single PCN, display-only; no real qty wrong) · **Area:** PCN History vs Warehouse Inventory · **Reported by:** Preet ("Warehouse Inventory is still not being updated to reflect the last entry in PCN history", w/ PCN 13959 screenshots)
+
+- **● Issue (what was wrong):** PCN **13959** (item `8095-195`, MPN `ERJ-8CWFR015V`). PCN History's newest row showed a **PICK → MFG Floor** (WO `purge`), so it *looked* like the part had moved to the floor — but Warehouse Inventory still showed **9 on hand in bin 1604009, mfg_qty 0**. Reads as "Warehouse isn't updating from History."
+- **● Diagnosis (both views actually AGREE on qty):** the offending PICK (`tblTransaction.id 178831`, user `john`, 02/27/2026) had **`tranqty = 0`** — zero units moved. So the 9 units correctly never left the bin; **Warehouse Inventory was right.** The only thing wrong was the *history row itself*, which is a legacy artifact of a `purge` attempt that couldn't complete (KOSH blocks purge while on-hand > 0, [app.py:1085](../app.py#L1085)).
+- **● Root cause of the misleading row:** the PCN-specific pick INSERT **hardcodes `loc_to = 'MFG Floor'`** ([app.py:1346](../app.py#L1346)) while the warehouse UPDATE only touches rows with `qty_to_pick > 0` ([app.py:1301-1311](../app.py#L1301-L1311)). A 0-unit pick therefore logs a phantom "→ MFG Floor" movement that never happened. **Not currently reproducible** in KOSH — all **2,968** zero-qty PICK rows are legacy/non-`@` imports; the live pick path rejects a 0-qty pick (`updated_rows=0` → error), so no KOSH-era login has ever created one.
+- **● Fixed (what changed):** **data-only, no code deploy.** Soft-reversed the phantom row: `UPDATE tblTransaction SET reversed = TRUE WHERE id = 178831` (verified exactly 1 row, run in a `BEGIN/COMMIT`). The PCN History page already filters `COALESCE(reversed,false)=false` ([app.py:6614](../app.py#L6614)), so the row is now hidden and 13959's history ends at the real `PTWY → 1604009` event — matching Warehouse Inventory. The row is **preserved** (flagged, not deleted); the on-hand header anchors to Warehouse Inventory so it stayed 9 throughout. **Warehouse table was NOT touched** (0 units moved → nothing to reconcile).
+- **🛠️ Files & lines:** no source change. DB: `pcb_inventory."tblTransaction".id = 178831` on prod `kosh` (container `aci-database`). Reversible via `SET reversed = FALSE WHERE id = 178831`.
+- **● When:** 2026-07-01 · **Deployed:** ✅ prod data updated directly (no container rebuild needed).
+- **● Did it handle it?:** **Yes** — post-fix query confirms the page now renders only `INDF` + `PTWY` (both On Hand 9, ending in bin 1604009), warehouse unchanged at 9 in 1604009.
+- **● ⚠️ Open follow-ups (NOT done — need Preet's say-so):** (1) **If those 9 units are physically gone**, the real intent was a purge → do proper pick-then-purge to zero it; I treated Warehouse as authoritative (units exist). (2) **Optional code hardening:** stop hardcoding `loc_to='MFG Floor'` on any pick that moves 0 units (defensive only — path is currently unreachable). (3) **2,967 other legacy 0-qty PICKs** may cause the same cosmetic complaint on other PCNs; not mass-touched — fix per-PCN as reported.
+
+### Recurrences / new case reports
+<!-- Same bug reported again? APPEND a dated line here. -->
 
 ---
 
