@@ -269,15 +269,24 @@ def sync_once(db, full):
                 pass
 
 
+# Do a FULL reconcile every Nth pass (~10 min) in addition to the per-pass
+# incremental sync. The incremental path only reconciles PCNs that got a NEW
+# tblTransaction row, so a DIRECT warehouse edit made without a transaction
+# (e.g. an admin SQL correction) would otherwise never be picked up. The periodic
+# full sweep makes the shadow self-healing against ANY divergence.
+_FULL_EVERY = 10
+
+
 def _loop(db):
     time.sleep(25)  # let the app settle on boot
-    first = True
+    passes = 0
     while True:
-        adjusts, _ = sync_once(db, full=first)
+        full = (passes % _FULL_EVERY == 0)  # pass 0 (boot) + every ~10 min
+        adjusts, _ = sync_once(db, full=full)
         if adjusts > 0:
-            logger.info(f'inv shadow sync: {adjusts} adjust event(s) (full={first})')
+            logger.info(f'inv shadow sync: {adjusts} adjust event(s) (full={full})')
         if adjusts >= 0:
-            first = False
+            passes += 1
         time.sleep(_INTERVAL)
 
 
