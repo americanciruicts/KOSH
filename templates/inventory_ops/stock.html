@@ -1171,8 +1171,18 @@ function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
         // Empty is allowed for optional fields; required fields still get caught by HTML5 required + server-side validation
         if (!val) return !input.required;
         if (stdLocs.includes(val.toLowerCase())) return true;
-        if (!/^\d{7,8}$/.test(val)) return false;
-        if (!locsLoaded) return true; // don't block while list is loading
+        // Any well-formed 7- or 8-digit code is accepted. New codes not yet on the
+        // Locations page are auto-registered server-side (validate_location), so the
+        // client must NOT block them — it only checks the format here.
+        return /^\d{7,8}$/.test(val);
+    }
+
+    // A code is "known" if it already exists on the Locations page. Well-formed but
+    // unknown codes are still valid (see isValid) — we just show a friendly note.
+    function isKnown(input) {
+        const val = (input.value || '').trim();
+        if (!val || stdLocs.includes(val.toLowerCase())) return true;
+        if (!locsLoaded) return true; // don't warn while the list is loading
         return validLocs.has(val);
     }
 
@@ -1183,8 +1193,16 @@ function fetchAndPopulatePCNDetailsFromData(pcnNumber, result) {
             const ok = isValid(input);
             if (!ok) {
                 input.classList.add('is-invalid');
+                fb.className = 'location-error invalid-feedback d-block';
+                fb.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Enter a 7- or 8-digit location code (e.g. 1101101) or a standard area.';
                 fb.style.display = 'block';
                 allOk = false;
+            } else if (!isKnown(input)) {
+                // Well-formed new code — allowed; it will be created on submit.
+                input.classList.remove('is-invalid');
+                fb.className = 'location-error d-block small text-muted';
+                fb.innerHTML = '<i class="bi bi-info-circle"></i> New location — it will be added to the Locations page when you submit.';
+                fb.style.display = 'block';
             } else {
                 input.classList.remove('is-invalid');
                 fb.style.display = 'none';
