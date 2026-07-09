@@ -4667,6 +4667,16 @@ def warehouse_inventory():
         # Convert to list of dicts with consistent naming (matching .mdb format)
         inventory = []
         for row in rows:
+            # Total on-hand = bin (onhandqty) + MFG floor (mfg_qty). PCN History and
+            # the Shortage report both count floor stock as on-hand; the warehouse
+            # listing historically showed ONLY the bin qty in "On Hand Qty", so a
+            # part sitting on the MFG floor read 0 here while PCN History showed N
+            # (the "Warehouse != PCN History" mismatch). Surface a combined column
+            # so all screens agree, without losing the bin/floor split. mfg_qty is
+            # free text ('NA', '', numbers) — parse defensively.
+            bin_qty = row['onhandqty'] if isinstance(row['onhandqty'], int) else 0
+            mfg_raw = (row['mfg_qty'] or '').strip()
+            floor_qty = int(mfg_raw) if re.fullmatch(r'-?\d+', mfg_raw) else 0
             inventory.append({
                 'id': row['id'],
                 'PCN': row['pcn'],
@@ -4677,6 +4687,7 @@ def warehouse_inventory():
                 'OnHandQty': row['onhandqty'],
                 'Loc_To': row['loc_to'],
                 'MFG_Qty': row['mfg_qty'],
+                'TotalOnHand': bin_qty + floor_qty,
                 'Qty_Old': row['qty_old'],
                 'MSD': row['msd'],
                 'PO': row['po'],
