@@ -966,6 +966,13 @@ class DatabaseManager:
             total_result = cursor.fetchone()
             new_qty = int(total_result[0]) if total_result and total_result[0] else 0
 
+            # Real-time shadow event (fail-safe; never affects this operation).
+            try:
+                import inv_shadow as _invs
+                _invs.realtime_sync(cursor, pcns=[str(pcn)], event_type='RECEIPT', username=username)
+            except Exception:
+                pass
+
             conn.commit()
             logger.info(f"Stock operation completed: {quantity} units of {job} (PCN: {pcn}) moved from {location_from} to {location_to}")
 
@@ -1144,6 +1151,15 @@ class DatabaseManager:
                                         TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
                                         %s, 'Purged', %s, %s)
                             """, (job, p_pcn, p_mpn, p_dc, p_msd, p_loc or 'Warehouse', work_order or '', username))
+
+                    # Real-time shadow event (fail-safe; never affects this operation).
+                    try:
+                        import inv_shadow as _invs
+                        _invs.realtime_sync(cursor, pcns=([str(pcn)] if pcn else None),
+                                            item=(None if pcn else job),
+                                            event_type='PURGE', username=username)
+                    except Exception:
+                        pass
 
                     conn.commit()
                     logger.info(f"Purge operation: Deleted {deleted_count} zero-qty records for item {job} by {username}")
@@ -1432,6 +1448,15 @@ class DatabaseManager:
                 """, (job,))
                 remaining_result = cursor.fetchone()
                 new_qty = int(remaining_result[0]) if remaining_result and remaining_result[0] else 0
+
+                # Real-time shadow event (fail-safe; never affects this operation).
+                try:
+                    import inv_shadow as _invs
+                    _invs.realtime_sync(cursor, pcns=([str(pcn)] if pcn else None),
+                                        item=(None if pcn else job),
+                                        event_type='PICK', username=username)
+                except Exception:
+                    pass
 
                 conn.commit()
                 logger.info(f"Pick operation: Updated {updated_rows} warehouse inventory records for item {job}, picked {quantity}, remaining {new_qty}, moved to MFG Floor")
@@ -1724,6 +1749,13 @@ class DatabaseManager:
                     VALUES ('RESTOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s)
                 """, (item_num, pcn_num, mpn, dc, msd, quantity, location_from, location_to, username))
 
+                # Real-time shadow event (fail-safe; never affects this operation).
+                try:
+                    import inv_shadow as _invs
+                    _invs.realtime_sync(cursor, pcns=[str(pcn_num)], event_type='RESTOCK', username=username)
+                except Exception:
+                    pass
+
                 conn.commit()
                 logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from {location_from} to {location_to}")
 
@@ -1865,6 +1897,13 @@ class DatabaseManager:
                 SET reversed_by_id = %s
                 WHERE id = %s
             """, (reverse_txn_id, transaction_id))
+
+            # Real-time shadow event (fail-safe; never affects this operation).
+            try:
+                import inv_shadow as _invs
+                _invs.realtime_sync(cursor, pcns=[str(pcn_val)], event_type='RESTOCK', username=username)
+            except Exception:
+                pass
 
             conn.commit()
 
@@ -3530,6 +3569,15 @@ def _sync_onhand_from_transactions():
         time.sleep(300)
 
 threading.Thread(target=_sync_onhand_from_transactions, daemon=True).start()
+
+# Phase 4a — shadow-sync the new event-derived on-hand (inv_onhand) to the live
+# warehouse. Isolated module + background thread; touches NO user write path and
+# only WRITES to inv_* tables. Fail-safe: never raises into the app.
+try:
+    import inv_shadow
+    inv_shadow.start_inv_shadow_sync(db_manager)
+except Exception as _inv_e:
+    logger.warning(f'inv shadow sync not started: {_inv_e}')
 
 
 def _nightly_integrity_check():
@@ -6662,14 +6710,20 @@ def pcn_history():
                 # (bug #20). Summing both keeps all three views on ONE definition.
                 # NOTE: cur is a RealDictCursor here, so fetchone() returns a
                 # dict — read the aggregate by its alias, never by index [0].
+                # READ CUTOVER (Phase 4): anchor on-hand to the canonical event-derived
+                # projection inv_onhand (append-only ledger, kept == warehouse in real time
+                # by the shadow sync + write-path events). Fall back to the warehouse sum if
+                # a PCN has no ledger row yet, so this is never worse than the old anchor.
+                # Both PCN History and Warehouse Inventory now reflect ONE on-hand definition.
                 cur.execute("""
-                    SELECT COALESCE(SUM(
-                        COALESCE(onhandqty, 0)
-                        + CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::int ELSE 0 END
-                    ), 0) AS total
-                    FROM pcb_inventory."tblWhse_Inventory"
-                    WHERE pcn::text = %s
-                """, (search_pcn,))
+                    SELECT COALESCE(
+                        (SELECT SUM(onhand_qty) FROM pcb_inventory.inv_onhand WHERE pcn = %s),
+                        (SELECT SUM(COALESCE(onhandqty, 0)
+                                    + CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::int ELSE 0 END)
+                           FROM pcb_inventory."tblWhse_Inventory" WHERE pcn::text = %s),
+                        0
+                    ) AS total
+                """, (search_pcn, search_pcn))
                 anchor_row = cur.fetchone()
                 anchor = int(anchor_row['total']) if anchor_row and anchor_row.get('total') is not None else 0
 
