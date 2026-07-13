@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Optional
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, g, make_response
 from expiration_manager import ExpirationManager, ExpirationStatus
+import ledger  # single source of truth: append-only inventory_txn + inventory_balance
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from wtforms import StringField, IntegerField, SelectField, SubmitField, HiddenField
@@ -488,14 +489,14 @@ def is_admin_user():
 # Admins always have access to everything regardless of this setting
 USER_TOOL_ACCESS = {
     'james@americancircuits.com': {'dashboard', 'generate_pcn', 'stock', 'pick', 'restock', 'pcn_history', 'warehouse_inventory', 'part_number_change'},
-    # Theresa: everything except pcb_inventory
+    # Theresa: everything except warehouse
     'parts@americancircuits.com': {
         'dashboard', 'generate_pcn', 'stock', 'pick', 'restock',
         'jobs', 'shortage_report', 'warehouse_inventory', 'print_label',
         'pcn_history', 'po_history', 'part_number_change', 'bom_loader',
         'reports', 'manage'
     },
-    # Jay: everything except pcb_inventory, manage, and part_number_change
+    # Jay: everything except warehouse, manage, and part_number_change
     # — but explicitly granted reel_change (the SMT line tool)
     'jayt@americancircuits.com': {
         'dashboard', 'generate_pcn', 'stock', 'pick', 'restock',
@@ -506,7 +507,7 @@ USER_TOOL_ACCESS = {
 
 # All available tool names for reference:
 # dashboard, generate_pcn, stock, pick, restock, jobs, shortage_report,
-# pcb_inventory, warehouse_inventory, print_label, pcn_history, po_history,
+# warehouse, warehouse_inventory, print_label, pcn_history, po_history,
 # part_number_change, bom_loader, reports, sources, manage, admin
 
 def can_access_tool(tool_name):
@@ -784,7 +785,7 @@ class DatabaseManager:
             cursor = conn.cursor()
 
             cursor.execute("""
-                SELECT COUNT(*) FROM pcb_inventory."tblLoc"
+                SELECT COUNT(*) FROM warehouse."tblLoc"
                 WHERE location::text = %s
             """, (location,))
 
@@ -800,7 +801,7 @@ class DatabaseManager:
                 shelf_val = location[1:3]
                 loc_val = location[3:]
                 cursor.execute("""
-                    INSERT INTO pcb_inventory."tblLoc" (area, shelf, loc, location)
+                    INSERT INTO warehouse."tblLoc" (area, shelf, loc, location)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT DO NOTHING
                 """, (area_val, shelf_val, loc_val, location))
@@ -885,7 +886,7 @@ class DatabaseManager:
             # treated as "unspecified" and does not trigger a conflict.
             cursor.execute("""
                 SELECT item, mpn
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE pcn::text = %s
                 LIMIT 1
             """, (str(pcn),))
@@ -914,64 +915,59 @@ class DatabaseManager:
                         )
                     }
 
-            # CRITICAL: Lock row with FOR UPDATE to prevent concurrent stock operations
-            # Check if PCN and item combination exists in warehouse
+            # Ensure the warehouse METADATA row exists (item/pcn/mpn/dc/loc). The on-hand
+            # numbers are owned by the ledger and projected below — never mutated here.
             cursor.execute("""
-                SELECT id, onhandqty, mpn, dc, msd, po, loc_to, loc_from
-                FROM pcb_inventory."tblWhse_Inventory"
+                SELECT id FROM warehouse."tblWhse_Inventory"
                 WHERE item::text ILIKE %s AND pcn::text = %s
-                FOR UPDATE  -- Lock row to prevent race conditions
+                FOR UPDATE  -- serialize concurrent stock ops on this (item, pcn)
                 LIMIT 1
             """, (job, str(pcn)))
-
             existing = cursor.fetchone()
-
             if existing:
-                # Update existing record - add to existing quantity and update location
                 cursor.execute("""
-                    UPDATE pcb_inventory."tblWhse_Inventory"
-                    SET onhandqty = COALESCE(onhandqty, 0) + %s,
-                        loc_to = %s,
-                        loc_from = %s,
-                        dc = COALESCE(%s, dc),
-                        msd = COALESCE(%s, msd),
-                        po = COALESCE(%s, po),
-                        mpn = COALESCE(%s, mpn),
+                    UPDATE warehouse."tblWhse_Inventory"
+                    SET loc_from = %s,
+                        dc = COALESCE(%s, dc), msd = COALESCE(%s, msd),
+                        po = COALESCE(%s, po), mpn = COALESCE(%s, mpn),
                         migrated_at = CURRENT_TIMESTAMP
                     WHERE item::text ILIKE %s AND pcn::text = %s
-                """, (quantity, location_to, location_from, dc, msd, work_order, mpn, job, str(pcn)))
-                logger.info(f"Updated warehouse inventory for item {job}, PCN {pcn} - added {quantity} units (moved from {location_from} to {location_to})")
+                """, (location_from, dc, msd, work_order, mpn, job, str(pcn)))
             else:
-                # PCN doesn't exist in warehouse yet - insert new record
                 cursor.execute("""
-                    INSERT INTO pcb_inventory."tblWhse_Inventory"
-                    (item, pcn, mpn, dc, onhandqty, loc_from, loc_to, msd, po, migrated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                """, (job, str(pcn), mpn or '', dc, quantity, location_from, location_to, msd, work_order))
-                logger.info(f"Inserted new warehouse inventory for item {job}, PCN {pcn} at {location_to}")
+                    INSERT INTO warehouse."tblWhse_Inventory"
+                    (item, pcn, mpn, dc, onhandqty, mfg_qty, loc_from, loc_to, msd, po, migrated_at)
+                    VALUES (%s, %s, %s, %s, 0, '0', %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                """, (job, str(pcn), mpn or '', dc, location_from, location_to, msd, work_order))
 
-            # Record the stock transaction in tblTransaction
+            # THE authoritative write: append STOCK to the one ledger + update the
+            # balance cache, atomically in this transaction (I1/I3/I6).
+            try:
+                ledger.stock(cursor, item=job, mpn=mpn, pcn=str(pcn), qty=quantity,
+                             to_bin=location_to, user=username, wo=work_order, po=work_order)
+            except ledger.LedgerError as le:
+                conn.rollback()
+                return {'success': False, 'error': str(le)}
+            # Project the ONE number back onto the legacy snapshot (same txn -> no drift).
+            ledger.project_warehouse(cursor, str(pcn))
+            logger.info(f"Stocked {quantity} of {job} PCN {pcn} into {location_to} (ledger)")
+
+            # Legacy audit mirror (history-trail detail only; on-hand is NOT computed
+            # from tblTransaction anymore — the ledger is the single source of truth).
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblTransaction"
+                INSERT INTO warehouse."tblTransaction"
                 (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, po, userid)
                 VALUES ('STOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s)
             """, (job, str(pcn) if pcn else None, mpn, dc, msd, quantity, location_from, location_to, work_order, work_order, username))
 
-            # Get the updated quantity before commit (within same transaction)
+            # New item total, read from the freshly-projected snapshot.
             cursor.execute("""
                 SELECT COALESCE(SUM(onhandqty), 0) as total_qty
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE item::text ILIKE %s
             """, (job,))
             total_result = cursor.fetchone()
             new_qty = int(total_result[0]) if total_result and total_result[0] else 0
-
-            # Real-time shadow event (fail-safe; never affects this operation).
-            try:
-                import inv_shadow as _invs
-                _invs.realtime_sync(cursor, pcns=[str(pcn)], event_type='RECEIPT', username=username)
-            except Exception:
-                pass
 
             conn.commit()
             logger.info(f"Stock operation completed: {quantity} units of {job} (PCN: {pcn}) moved from {location_from} to {location_to}")
@@ -1077,7 +1073,7 @@ class DatabaseManager:
                         # Check that the PCN exists and has zero on-hand qty
                         cursor.execute("""
                             SELECT pcn, item, onhandqty, mpn, dc, msd, loc_to
-                            FROM pcb_inventory."tblWhse_Inventory"
+                            FROM warehouse."tblWhse_Inventory"
                             WHERE pcn::text = %s AND item::text ILIKE %s
                             FOR UPDATE
                         """, (str(pcn), job))
@@ -1101,7 +1097,7 @@ class DatabaseManager:
                         # Record a PURGE transaction WITH mpn/dc/msd so history
                         # shows part info even if the warehouse row is ever removed
                         cursor.execute("""
-                            INSERT INTO pcb_inventory."tblTransaction"
+                            INSERT INTO warehouse."tblTransaction"
                             (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
                             VALUES ('PURGE', %s, %s, %s, %s, %s, 0,
                                     TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
@@ -1110,7 +1106,7 @@ class DatabaseManager:
                     else:
                         # Purge all zero-qty records for this item
                         cursor.execute("""
-                            SELECT COUNT(*) FROM pcb_inventory."tblWhse_Inventory"
+                            SELECT COUNT(*) FROM warehouse."tblWhse_Inventory"
                             WHERE item::text ILIKE %s AND onhandqty = 0
                             FOR UPDATE
                         """, (job,))
@@ -1118,7 +1114,7 @@ class DatabaseManager:
                         if zero_count == 0:
                             # Check if item exists at all
                             cursor.execute("""
-                                SELECT COUNT(*) FROM pcb_inventory."tblWhse_Inventory"
+                                SELECT COUNT(*) FROM warehouse."tblWhse_Inventory"
                                 WHERE item::text ILIKE %s
                             """, (job,))
                             total = cursor.fetchone()[0]
@@ -1137,7 +1133,7 @@ class DatabaseManager:
                                 }
                         # Get PCNs (and part info) being purged for transaction logging
                         cursor.execute("""
-                            SELECT pcn, mpn, dc, msd, loc_to FROM pcb_inventory."tblWhse_Inventory"
+                            SELECT pcn, mpn, dc, msd, loc_to FROM warehouse."tblWhse_Inventory"
                             WHERE item::text ILIKE %s AND onhandqty = 0
                         """, (job,))
                         purged_rows = [(str(r[0]), r[1], r[2], r[3], r[4]) for r in cursor.fetchall()]
@@ -1145,24 +1141,17 @@ class DatabaseManager:
                         # Record PURGE transactions WITH part info preserved
                         for p_pcn, p_mpn, p_dc, p_msd, p_loc in purged_rows:
                             cursor.execute("""
-                                INSERT INTO pcb_inventory."tblTransaction"
+                                INSERT INTO warehouse."tblTransaction"
                                 (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
                                 VALUES ('PURGE', %s, %s, %s, %s, %s, 0,
                                         TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
                                         %s, 'Purged', %s, %s)
                             """, (job, p_pcn, p_mpn, p_dc, p_msd, p_loc or 'Warehouse', work_order or '', username))
 
-                    # Real-time shadow event (fail-safe; never affects this operation).
-                    try:
-                        import inv_shadow as _invs
-                        _invs.realtime_sync(cursor, pcns=([str(pcn)] if pcn else None),
-                                            item=(None if pcn else job),
-                                            event_type='PURGE', username=username)
-                    except Exception:
-                        pass
-
+                    # Purge is metadata/audit only: a zero-qty PCN has no ledger balance
+                    # to move (I6 forbids a 0-qty movement), so no ledger row is written.
                     conn.commit()
-                    logger.info(f"Purge operation: Deleted {deleted_count} zero-qty records for item {job} by {username}")
+                    logger.info(f"Purge operation: Marked {deleted_count} zero-qty record(s) purged for item {job} by {username}")
 
                     # Clear cache after inventory change
                     cache.delete_memoized(self.get_current_inventory)
@@ -1191,7 +1180,7 @@ class DatabaseManager:
                 # (before the ADJT fix) must not permanently lock a pickable PCN.
                 if pcn:
                     cursor.execute("""
-                        SELECT trantype FROM pcb_inventory."tblTransaction"
+                        SELECT trantype FROM warehouse."tblTransaction"
                         WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK', 'PURGE')
                           AND userid LIKE '%%@%%'
                         ORDER BY id DESC LIMIT 1
@@ -1200,7 +1189,7 @@ class DatabaseManager:
                     if last_txn and last_txn[0] in ('PICK', 'PURGE'):
                         cursor.execute("""
                             SELECT COALESCE(SUM(onhandqty), 0)
-                            FROM pcb_inventory."tblWhse_Inventory"
+                            FROM warehouse."tblWhse_Inventory"
                             WHERE pcn::text = %s
                         """, (str(pcn),))
                         qty_row = cursor.fetchone()
@@ -1220,7 +1209,7 @@ class DatabaseManager:
                 if pcn:
                     cursor.execute("""
                         SELECT onhandqty as total_qty
-                        FROM pcb_inventory."tblWhse_Inventory"
+                        FROM warehouse."tblWhse_Inventory"
                         WHERE pcn::text = %s AND item::text ILIKE %s
                         AND onhandqty > 0
                         FOR UPDATE  -- Lock rows to prevent race conditions
@@ -1228,7 +1217,7 @@ class DatabaseManager:
                 else:
                     cursor.execute("""
                         SELECT SUM(onhandqty) as total_qty
-                        FROM pcb_inventory."tblWhse_Inventory"
+                        FROM warehouse."tblWhse_Inventory"
                         WHERE item::text ILIKE %s
                         AND onhandqty > 0
                         FOR UPDATE  -- Lock rows to prevent race conditions
@@ -1249,89 +1238,46 @@ class DatabaseManager:
                         'pcb_type': pcb_type
                     }
 
-                # Update warehouse inventory - pick from specific locations using FIFO
-                # This ensures we only pick the exact quantity needed from specific rows
-                # If PCN is specified, only pick from that PCN
-                # SECURE: Use conditional query execution instead of f-string interpolation
-
+                # Compute the FIFO allocation (which PCN, how much, from which bin).
+                # The projected snapshot mirrors the ledger 1:1, so FIFO order is
+                # unchanged — but the actual state change is applied to the LEDGER below,
+                # never to onhandqty/mfg_qty directly.
                 if pcn:
-                    # PCN-specific pick query
-                    query_params = [job, str(pcn), quantity, quantity, quantity, quantity, quantity]
-                    pick_query = """
-                        WITH inventory_ordered AS (
-                            SELECT
-                                pcn,
-                                item,
-                                onhandqty,
-                                migrated_at,
-                                SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) as running_total
-                            FROM pcb_inventory."tblWhse_Inventory"
-                            WHERE item::text ILIKE %s
-                            AND pcn::text = %s
-                            AND onhandqty > 0
-                        ),"""
+                    cursor.execute("""
+                        SELECT pcn::text, item, mpn,
+                               CASE WHEN dc ~ '^[0-9]+$' THEN dc ELSE NULL END,
+                               msd, COALESCE(loc_to, 'Warehouse'), onhandqty
+                        FROM warehouse."tblWhse_Inventory"
+                        WHERE item::text ILIKE %s AND pcn::text = %s AND onhandqty > 0
+                        LIMIT 1
+                    """, (job, str(pcn)))
+                    r = cursor.fetchone()
+                    allocations = [(r[0], r[1], r[2], r[3], r[4], r[5], quantity)] if r else []
                 else:
-                    # FIFO pick query (all PCNs for item)
-                    query_params = [job, quantity, quantity, quantity, quantity, quantity]
-                    pick_query = """
+                    cursor.execute("""
                         WITH inventory_ordered AS (
-                            SELECT
-                                pcn,
-                                item,
-                                onhandqty,
-                                migrated_at,
-                                SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) as running_total
-                            FROM pcb_inventory."tblWhse_Inventory"
-                            WHERE item::text ILIKE %s
-                            AND onhandqty > 0
-                        ),"""
-
-                # Complete the query (same for both cases)
-                pick_query += """
-                    pick_rows AS (
-                        SELECT
-                            pcn,
-                            item,
-                            onhandqty,
-                            running_total,
-                            LAG(running_total, 1, 0) OVER (ORDER BY migrated_at, pcn) as prev_total
-                        FROM inventory_ordered
-                        ORDER BY migrated_at, pcn
-                    ),
-                    rows_to_update AS (
-                        SELECT
-                            pcn,
-                            item,
-                            CASE
-                                -- If this row completes the pick, take only what's needed
-                                WHEN prev_total < %s AND running_total >= %s
-                                THEN %s - prev_total
-                                -- If this row is fully consumed, take all
-                                WHEN running_total <= %s
-                                THEN onhandqty
-                                ELSE 0
-                            END as qty_to_pick
+                            SELECT pcn, item, mpn, dc, msd, loc_to, onhandqty, migrated_at,
+                                   SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) AS running_total
+                            FROM warehouse."tblWhse_Inventory"
+                            WHERE item::text ILIKE %s AND onhandqty > 0
+                        ),
+                        pick_rows AS (
+                            SELECT pcn, item, mpn, dc, msd, loc_to, onhandqty, running_total,
+                                   LAG(running_total, 1, 0) OVER (ORDER BY migrated_at, pcn) AS prev_total
+                            FROM inventory_ordered ORDER BY migrated_at, pcn
+                        )
+                        SELECT pcn::text, item, mpn,
+                               CASE WHEN dc ~ '^[0-9]+$' THEN dc ELSE NULL END,
+                               msd, COALESCE(loc_to, 'Warehouse'),
+                               CASE WHEN prev_total < %s AND running_total >= %s THEN %s - prev_total
+                                    WHEN running_total <= %s THEN onhandqty ELSE 0 END AS qty_picked
                         FROM pick_rows
                         WHERE prev_total < %s
-                    )
-                    UPDATE pcb_inventory."tblWhse_Inventory" w
-                    SET onhandqty = GREATEST(0, w.onhandqty - r.qty_to_pick),
-                        mfg_qty = (CASE WHEN w.mfg_qty ~ '^\-?[0-9]+$' THEN w.mfg_qty::integer ELSE 0 END + r.qty_to_pick)::text,
-                        loc_to = CASE
-                            WHEN w.onhandqty - r.qty_to_pick <= 0 THEN 'MFG Floor'
-                            ELSE w.loc_to
-                        END
-                    FROM rows_to_update r
-                    WHERE w.pcn::text = r.pcn::text
-                    AND w.item = r.item
-                    AND r.qty_to_pick > 0
-                """
+                    """, (job, quantity, quantity, quantity, quantity, quantity))
+                    allocations = [tuple(row) for row in cursor.fetchall()
+                                   if row[6] and int(row[6]) > 0]
 
-                cursor.execute(pick_query, tuple(query_params))
-
-                updated_rows = cursor.rowcount
-
-                if updated_rows == 0:
+                if not allocations:
                     conn.rollback()
                     return {
                         'success': False,
@@ -1340,123 +1286,40 @@ class DatabaseManager:
                         'pcb_type': pcb_type
                     }
 
-                # Record the pick transaction (movement from Receiving Area to MFG Floor)
-                # If PCN specified, record transaction for that specific PCN
-                # Otherwise, record for each PCN that was picked from using the FIFO logic
-                if pcn:
-                    # Single PCN pick - insert one transaction record
-                    # Use actual loc_to from warehouse inventory as loc_from (where the part really is)
-                    cursor.execute("""
-                        INSERT INTO pcb_inventory."tblTransaction"
-                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
-                        SELECT
-                            'PICK',
-                            %s,
-                            pcn,
-                            mpn,
-                            CASE WHEN dc ~ '^[0-9]+$' THEN dc::integer ELSE NULL END as dc,
-                            msd,
-                            %s,
-                            TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
-                            COALESCE(loc_to, 'Warehouse'),
-                            'MFG Floor',
-                            %s,
-                            %s
-                        FROM pcb_inventory."tblWhse_Inventory"
-                        WHERE item::text ILIKE %s AND pcn::text = %s
-                        LIMIT 1
-                    """, (job, quantity, work_order, username, job, str(pcn)))
-                else:
-                    # Multi-PCN FIFO pick - insert transaction for each PCN picked from
-                    # Use same FIFO logic as the UPDATE query to record transactions accurately
-                    query_params = [job]  # No PCN filter for FIFO
-                    query_params.extend([quantity, quantity, quantity, quantity, quantity])
-                    query_params.extend([job, work_order, username])
+                # Apply each allocation as a ledger PICK (bin -> MFG Floor). This is the
+                # authoritative, total-conserving state change; over-pick is rejected (I1),
+                # and bin+floor can never double-count because it is one transfer (I2).
+                try:
+                    for a_pcn, a_item, a_mpn, a_dc, a_msd, a_bin, a_qty in allocations:
+                        ledger.pick(cursor, item=a_item, mpn=a_mpn, pcn=a_pcn,
+                                    qty=int(a_qty), from_bin=a_bin, user=username, wo=work_order)
+                        ledger.project_warehouse(cursor, a_pcn)
+                except ledger.LedgerError as le:
+                    conn.rollback()
+                    return {'success': False, 'error': str(le), 'job': job, 'pcb_type': pcb_type}
 
-                    cursor.execute("""
-                        WITH inventory_ordered AS (
-                            SELECT
-                                pcn,
-                                item,
-                                mpn,
-                                dc,
-                                msd,
-                                loc_to,
-                                onhandqty,
-                                migrated_at,
-                                SUM(onhandqty) OVER (ORDER BY migrated_at, pcn) as running_total
-                            FROM pcb_inventory."tblWhse_Inventory"
-                            WHERE item::text ILIKE %s
-                            AND onhandqty > 0
-                        ),
-                        pick_rows AS (
-                            SELECT
-                                pcn,
-                                item,
-                                mpn,
-                                dc,
-                                msd,
-                                loc_to,
-                                onhandqty,
-                                running_total,
-                                LAG(running_total, 1, 0) OVER (ORDER BY migrated_at, pcn) as prev_total
-                            FROM inventory_ordered
-                            ORDER BY migrated_at, pcn
-                        ),
-                        rows_to_pick AS (
-                            SELECT
-                                pcn,
-                                item,
-                                mpn,
-                                dc,
-                                msd,
-                                loc_to,
-                                CASE
-                                    WHEN prev_total < %s AND running_total >= %s
-                                    THEN %s - prev_total
-                                    WHEN running_total <= %s
-                                    THEN onhandqty
-                                    ELSE 0
-                                END as qty_picked
-                            FROM pick_rows
-                            WHERE prev_total < %s
-                        )
-                        INSERT INTO pcb_inventory."tblTransaction"
-                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
-                        SELECT
-                            'PICK',
-                            %s,
-                            pcn::text,
-                            mpn,
-                            CASE WHEN dc ~ '^[0-9]+$' THEN dc::integer ELSE NULL END as dc,
-                            msd,
-                            qty_picked,
-                            TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
-                            COALESCE(loc_to, 'Warehouse'),
-                            'MFG Floor',
-                            %s,
-                            %s
-                        FROM rows_to_pick
-                        WHERE qty_picked > 0
-                    """, tuple(query_params))
+                updated_rows = len(allocations)
 
-                # Get the new remaining quantity
+                # Legacy audit mirror: one PICK row per PCN picked (loc_from = source bin).
+                for a_pcn, a_item, a_mpn, a_dc, a_msd, a_bin, a_qty in allocations:
+                    cursor.execute("""
+                        INSERT INTO warehouse."tblTransaction"
+                        (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid)
+                        VALUES ('PICK', %s, %s, %s, %s, %s, %s,
+                                TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
+                                %s, 'MFG Floor', %s, %s)
+                    """, (a_item, a_pcn, a_mpn,
+                          (int(a_dc) if a_dc and str(a_dc).isdigit() else None),
+                          a_msd, int(a_qty), a_bin, work_order, username))
+
+                # Remaining item total, read from the freshly-projected snapshot.
                 cursor.execute("""
                     SELECT COALESCE(SUM(onhandqty), 0) as remaining_qty
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE item::text ILIKE %s
                 """, (job,))
                 remaining_result = cursor.fetchone()
                 new_qty = int(remaining_result[0]) if remaining_result and remaining_result[0] else 0
-
-                # Real-time shadow event (fail-safe; never affects this operation).
-                try:
-                    import inv_shadow as _invs
-                    _invs.realtime_sync(cursor, pcns=([str(pcn)] if pcn else None),
-                                        item=(None if pcn else job),
-                                        event_type='PICK', username=username)
-                except Exception:
-                    pass
 
                 conn.commit()
                 logger.info(f"Pick operation: Updated {updated_rows} warehouse inventory records for item {job}, picked {quantity}, remaining {new_qty}, moved to MFG Floor")
@@ -1570,7 +1433,7 @@ class DatabaseManager:
                     search_param = (str(pcn), item)
                     select_query = """
                         SELECT pcn, item, mpn, dc, mfg_qty, onhandqty, loc_to
-                        FROM pcb_inventory."tblWhse_Inventory"
+                        FROM warehouse."tblWhse_Inventory"
                         WHERE pcn::text = %s AND item::text ILIKE %s
                         FOR UPDATE
                         LIMIT 1
@@ -1579,7 +1442,7 @@ class DatabaseManager:
                     search_param = (str(pcn),)
                     select_query = """
                         SELECT pcn, item, mpn, dc, mfg_qty, onhandqty, loc_to
-                        FROM pcb_inventory."tblWhse_Inventory"
+                        FROM warehouse."tblWhse_Inventory"
                         WHERE pcn::text = %s
                         FOR UPDATE
                         LIMIT 1
@@ -1588,7 +1451,7 @@ class DatabaseManager:
                     search_param = (item,)
                     select_query = """
                         SELECT pcn, item, mpn, dc, mfg_qty, onhandqty, loc_to
-                        FROM pcb_inventory."tblWhse_Inventory"
+                        FROM warehouse."tblWhse_Inventory"
                         WHERE item = %s
                         FOR UPDATE
                         LIMIT 1
@@ -1611,7 +1474,7 @@ class DatabaseManager:
                     if pcn:
                         cursor.execute("""
                             SELECT item, mpn, dc, msd
-                            FROM pcb_inventory."tblTransaction"
+                            FROM warehouse."tblTransaction"
                             WHERE pcn::text = %s
                               AND trantype IN ('PURGE', 'STOCK', 'RESTOCK', 'PICK')
                               AND COALESCE(item, '') <> ''
@@ -1623,7 +1486,7 @@ class DatabaseManager:
                             p_item, p_mpn, p_dc, p_msd = prior
                             recreate_loc = location_to or 'Count Area'
                             cursor.execute("""
-                                INSERT INTO pcb_inventory."tblWhse_Inventory"
+                                INSERT INTO warehouse."tblWhse_Inventory"
                                 (item, pcn, mpn, dc, msd, onhandqty, mfg_qty, loc_from, loc_to, migrated_at)
                                 VALUES (%s, %s, %s, %s, %s, 0, '0', %s, %s, CURRENT_TIMESTAMP)
                                 RETURNING pcn, item, mpn, dc, mfg_qty, onhandqty, loc_to
@@ -1661,7 +1524,7 @@ class DatabaseManager:
                 # restocked" lock is released because the units it added have
                 # since been removed.
                 cursor.execute("""
-                    SELECT trantype FROM pcb_inventory."tblTransaction"
+                    SELECT trantype FROM warehouse."tblTransaction"
                     WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK', 'PURGE')
                       AND userid LIKE '%%@%%'
                     ORDER BY id DESC
@@ -1672,7 +1535,7 @@ class DatabaseManager:
                 # this PCN, restock is always valid regardless of guard state —
                 # nothing in inventory means nothing was double-restocked.
                 cursor.execute("""
-                    SELECT COALESCE(SUM(onhandqty), 0) FROM pcb_inventory."tblWhse_Inventory"
+                    SELECT COALESCE(SUM(onhandqty), 0) FROM warehouse."tblWhse_Inventory"
                     WHERE pcn::text = %s
                 """, (str(pcn_num),))
                 total_onhand = cursor.fetchone()[0] or 0
@@ -1687,74 +1550,31 @@ class DatabaseManager:
                 if mfg_qty_int < quantity:
                     logger.info(f'Restock qty ({quantity}) exceeds tracked MFG qty ({mfg_qty_int}) for PCN {pcn}. User override.')
 
-                # Update warehouse inventory - move from specified source to destination
-                # Use COALESCE to handle NULL onhandqty
-                # Cast mfg_qty to integer for arithmetic, then back to text
-                # SECURE: Use conditional query execution
-                # Restock always clears the MFG floor balance for this PCN.
-                # Any difference between picked qty and restocked qty was
-                # consumed in production and should not remain on the floor.
-                if pcn and item:
-                    update_query = """
-                        UPDATE pcb_inventory."tblWhse_Inventory"
-                        SET mfg_qty = '0',
-                            onhandqty = COALESCE(onhandqty, 0) + %s,
-                            loc_from = %s,
-                            loc_to = %s,
-                            migrated_at = CURRENT_TIMESTAMP
-                        WHERE pcn::text = %s AND item::text ILIKE %s
-                    """
-                    cursor.execute(update_query, (quantity, location_from, location_to, str(pcn), item))
-                elif pcn:
-                    update_query = """
-                        UPDATE pcb_inventory."tblWhse_Inventory"
-                        SET mfg_qty = '0',
-                            onhandqty = COALESCE(onhandqty, 0) + %s,
-                            loc_from = %s,
-                            loc_to = %s,
-                            migrated_at = CURRENT_TIMESTAMP
-                        WHERE pcn::text = %s
-                    """
-                    cursor.execute(update_query, (quantity, location_from, location_to, str(pcn)))
-                else:
-                    update_query = """
-                        UPDATE pcb_inventory."tblWhse_Inventory"
-                        SET mfg_qty = '0',
-                            onhandqty = COALESCE(onhandqty, 0) + %s,
-                            loc_from = %s,
-                            loc_to = %s,
-                            migrated_at = CURRENT_TIMESTAMP
-                        WHERE item = %s
-                    """
-                    cursor.execute(update_query, (quantity, location_from, location_to, item))
-
-                updated_rows = cursor.rowcount
-
-                if updated_rows == 0:
+                # THE authoritative write: RESTOCK = transfer MFG Floor -> destination
+                # in ONE transaction (I2). The floor balance for this PCN decrements by
+                # exactly `quantity`; any leftover STAYS on the floor (a pure transfer —
+                # consumed parts are a separate consumption event, not silently dropped).
+                # Restocking more than the floor holds is REJECTED (I1), never absorbed —
+                # that is what used to manufacture phantom stock.
+                try:
+                    ledger.restock(cursor, item=item_num, mpn=mpn, pcn=str(pcn_num),
+                                   qty=quantity, to_bin=location_to,
+                                   from_floor=location_from or 'MFG Floor', user=username)
+                except ledger.LedgerError as le:
                     conn.rollback()
-                    return {
-                        'success': False,
-                        'error': 'Failed to update warehouse inventory'
-                    }
+                    return {'success': False, 'error': str(le)}
+                ledger.project_warehouse(cursor, str(pcn_num))
+                updated_rows = 1
 
-                # Record the restock transaction
-                # Get MSD from warehouse inventory
-                cursor.execute("SELECT msd FROM pcb_inventory.\"tblWhse_Inventory\" WHERE pcn::text = %s LIMIT 1", (str(pcn_num),))
+                # Legacy audit mirror (history-trail detail only).
+                cursor.execute("SELECT msd FROM warehouse.\"tblWhse_Inventory\" WHERE pcn::text = %s LIMIT 1", (str(pcn_num),))
                 msd_result = cursor.fetchone()
                 msd = msd_result[0] if msd_result else None
-
                 cursor.execute("""
-                    INSERT INTO pcb_inventory."tblTransaction"
+                    INSERT INTO warehouse."tblTransaction"
                     (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, userid)
                     VALUES ('RESTOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s)
                 """, (item_num, pcn_num, mpn, dc, msd, quantity, location_from, location_to, username))
-
-                # Real-time shadow event (fail-safe; never affects this operation).
-                try:
-                    import inv_shadow as _invs
-                    _invs.realtime_sync(cursor, pcns=[str(pcn_num)], event_type='RESTOCK', username=username)
-                except Exception:
-                    pass
 
                 conn.commit()
                 logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from {location_from} to {location_to}")
@@ -1826,7 +1646,7 @@ class DatabaseManager:
             # 1. Get the original PICK transaction
             cursor.execute("""
                 SELECT id, trantype, item, pcn, mpn, dc, msd, tranqty, loc_from, loc_to, wo, userid, reversed
-                FROM pcb_inventory."tblTransaction"
+                FROM warehouse."tblTransaction"
                 WHERE id = %s
             """, (transaction_id,))
             txn = cursor.fetchone()
@@ -1848,23 +1668,24 @@ class DatabaseManager:
             pcn_val = txn['pcn']
             item_val = txn['item']
 
-            # 2. Restore inventory: onhandqty += pick_qty, mfg_qty -= pick_qty, loc_to = original location
-            cursor.execute("""
-                UPDATE pcb_inventory."tblWhse_Inventory"
-                SET onhandqty = COALESCE(onhandqty, 0) + %s,
-                    mfg_qty = GREATEST(0, CASE WHEN mfg_qty ~ '^\-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END - %s)::text,
-                    loc_to = %s
-                WHERE item::text ILIKE %s AND pcn::text = %s
-            """, (pick_qty, pick_qty, original_location, item_val, pcn_val))
-
-            updated_rows = cursor.rowcount
-            if updated_rows == 0:
+            # 2. Restore inventory via the ledger: a reversed PICK is a transfer of
+            # pick_qty from MFG Floor back to the original bin (the inverse of the pick),
+            # in one transaction (I2). If the floor no longer holds pick_qty (already
+            # restocked/consumed) the reversal is rejected (I1) rather than clamped —
+            # clamping is exactly what used to leave phantom stock.
+            lcur = conn.cursor()  # tuple cursor for the ledger service (same txn)
+            try:
+                ledger.restock(lcur, item=item_val, mpn=txn['mpn'], pcn=str(pcn_val),
+                               qty=pick_qty, to_bin=original_location,
+                               from_floor='MFG Floor', user=username)
+            except ledger.LedgerError as le:
                 conn.rollback()
-                return {'success': False, 'error': f'Inventory record not found for item {item_val}, PCN {pcn_val}. It may have been purged.'}
+                return {'success': False, 'error': f'Cannot reverse pick: {le}'}
+            ledger.project_warehouse(lcur, str(pcn_val))
 
             # 3. Mark original transaction as reversed
             cursor.execute("""
-                UPDATE pcb_inventory."tblTransaction"
+                UPDATE warehouse."tblTransaction"
                 SET reversed = TRUE
                 WHERE id = %s
             """, (transaction_id,))
@@ -1876,7 +1697,7 @@ class DatabaseManager:
             tran_time = now_est.strftime('%m/%d/%y %H:%M:%S')
 
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblTransaction"
+                INSERT INTO warehouse."tblTransaction"
                 (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, userid, ref_transaction_id)
                 VALUES ('REVERSE_PICK', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
@@ -1893,17 +1714,10 @@ class DatabaseManager:
 
             # Update the original with reverse reference
             cursor.execute("""
-                UPDATE pcb_inventory."tblTransaction"
+                UPDATE warehouse."tblTransaction"
                 SET reversed_by_id = %s
                 WHERE id = %s
             """, (reverse_txn_id, transaction_id))
-
-            # Real-time shadow event (fail-safe; never affects this operation).
-            try:
-                import inv_shadow as _invs
-                _invs.realtime_sync(cursor, pcns=[str(pcn_val)], event_type='RESTOCK', username=username)
-            except Exception:
-                pass
 
             conn.commit()
 
@@ -1947,7 +1761,7 @@ class DatabaseManager:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute("""
                     SELECT id, item, pcn, mpn, tranqty, tran_time, loc_from, loc_to, wo, userid, reversed
-                    FROM pcb_inventory."tblTransaction"
+                    FROM warehouse."tblTransaction"
                     WHERE trantype = 'PICK'
                     ORDER BY id DESC
                     LIMIT %s
@@ -1991,7 +1805,7 @@ class DatabaseManager:
                         t.last_trantype as last_trantype,
                         t.last_tranqty  as last_tranqty,
                         t.last_userid   as last_userid
-                    FROM pcb_inventory."tblWhse_Inventory" w
+                    FROM warehouse."tblWhse_Inventory" w
                     LEFT JOIN LATERAL (
                         SELECT
                             CASE
@@ -2004,7 +1818,7 @@ class DatabaseManager:
                             tx.trantype        AS last_trantype,
                             tx.tranqty         AS last_tranqty,
                             tx.userid          AS last_userid
-                        FROM pcb_inventory."tblTransaction" tx
+                        FROM warehouse."tblTransaction" tx
                         WHERE tx.pcn::text = w.pcn::text
                           AND COALESCE(LOWER(TRIM(tx.mpn)),'') =
                               COALESCE(LOWER(TRIM(w.mpn)),'')
@@ -2045,8 +1859,8 @@ class DatabaseManager:
                         SUM(w.onhandqty) as total_qty,
                         AVG(w.onhandqty) as avg_qty,
                         MAX(p."DESC") as description
-                    FROM pcb_inventory."tblWhse_Inventory" w
-                    LEFT JOIN pcb_inventory."tblPN_List" p ON w.item = p.item
+                    FROM warehouse."tblWhse_Inventory" w
+                    LEFT JOIN warehouse."tblPN_List" p ON w.item = p.item
                     WHERE w.onhandqty > 0
                     GROUP BY w.mpn, w.loc_to
                     ORDER BY total_qty DESC, w.mpn, w.loc_to
@@ -2079,7 +1893,7 @@ class DatabaseManager:
                         SUM(onhandqty) as total_quantity,
                         COUNT(*) as total_items,
                         COUNT(DISTINCT mpn) as unique_mpns
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE onhandqty > 0
                 ''')
                 result = dict(cur.fetchone())
@@ -2111,7 +1925,7 @@ class DatabaseManager:
                         onhandqty as qty,
                         loc_to as location,
                         migrated_at as updated_at
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE onhandqty > 0 AND onhandqty < %s
                     ORDER BY onhandqty ASC
                     LIMIT %s
@@ -2150,9 +1964,9 @@ class DatabaseManager:
                         t.loc_from,
                         t.loc_to,
                         t.userid as user_id
-                    FROM pcb_inventory."tblTransaction" t
+                    FROM warehouse."tblTransaction" t
                     LEFT JOIN LATERAL (
-                        SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" w
+                        SELECT onhandqty FROM warehouse."tblWhse_Inventory" w
                         WHERE w.pcn::text = t.pcn::text LIMIT 1
                     ) w ON true
                     WHERE t.trantype IN ('GEN', 'STOCK', 'PICK', 'UPDATE')
@@ -2186,7 +2000,7 @@ class DatabaseManager:
                     SUM(onhandqty) as total_quantity,
                     COUNT(*) as total_items,
                     COUNT(DISTINCT mpn) as unique_mpns
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE onhandqty > 0
             ''')
             stats = dict(cur.fetchone())
@@ -2200,8 +2014,8 @@ class DatabaseManager:
                     SUM(w.onhandqty) as total_qty,
                     AVG(w.onhandqty) as avg_qty,
                     MAX(p."DESC") as description
-                FROM pcb_inventory."tblWhse_Inventory" w
-                LEFT JOIN pcb_inventory."tblPN_List" p ON w.item = p.item
+                FROM warehouse."tblWhse_Inventory" w
+                LEFT JOIN warehouse."tblPN_List" p ON w.item = p.item
                 WHERE w.onhandqty > 0
                 GROUP BY w.mpn, w.loc_to
                 ORDER BY total_qty DESC, w.mpn, w.loc_to
@@ -2214,7 +2028,7 @@ class DatabaseManager:
                 SELECT
                     item as job, pcn, mpn as pcb_type,
                     onhandqty as qty, loc_to as location, migrated_at as updated_at
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE onhandqty > 0 AND onhandqty < %s
                 ORDER BY onhandqty ASC
                 LIMIT %s
@@ -2233,9 +2047,9 @@ class DatabaseManager:
                     t.tran_time as timestamp,
                     t.loc_from, t.loc_to,
                     t.userid as user_id
-                FROM pcb_inventory."tblTransaction" t
+                FROM warehouse."tblTransaction" t
                 LEFT JOIN LATERAL (
-                    SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" w
+                    SELECT onhandqty FROM warehouse."tblWhse_Inventory" w
                     WHERE w.pcn::text = t.pcn::text LIMIT 1
                 ) w ON true
                 WHERE t.trantype IN ('GEN', 'STOCK', 'PICK', 'UPDATE')
@@ -2283,7 +2097,7 @@ class DatabaseManager:
                             msd as msd_level,
                             mpn as part_number,
                             pcn
-                        FROM pcb_inventory."tblWhse_Inventory"
+                        FROM warehouse."tblWhse_Inventory"
                         WHERE pcn::text = %s
                     """
                     params.append(pcn)
@@ -2307,7 +2121,7 @@ class DatabaseManager:
                             MAX(msd) as msd_level,
                             MAX(mpn) as part_number,
                             COUNT(DISTINCT pcn) as pcn_count
-                        FROM pcb_inventory."tblWhse_Inventory"
+                        FROM warehouse."tblWhse_Inventory"
                         WHERE onhandqty >= 0
                     """
 
@@ -2333,7 +2147,7 @@ class DatabaseManager:
                             msd as msd_level,
                             mpn as part_number,
                             pcn
-                        FROM pcb_inventory."tblWhse_Inventory"
+                        FROM warehouse."tblWhse_Inventory"
                         WHERE pcn::text = %s
                         ORDER BY migrated_at, pcn
                     """, (job.strip(),))
@@ -2365,7 +2179,7 @@ class DatabaseManager:
                         SUM(qty) as total_quantity,
                         COUNT(DISTINCT pcb_type) as pcb_types,
                         MAX(updated_at) as last_updated
-                    FROM pcb_inventory.tblpcb_inventory
+                    FROM warehouse.tblwarehouse
                 """)
                 stats = dict(cur.fetchone())
 
@@ -2398,7 +2212,7 @@ class DatabaseManager:
                         pcb_type as name,
                         SUM(qty) as postgres_count,
                         SUM(qty) as source_count  -- Assuming same for now
-                    FROM pcb_inventory.tblpcb_inventory
+                    FROM warehouse.tblwarehouse
                     GROUP BY pcb_type
                     ORDER BY pcb_type
                 """)
@@ -2421,8 +2235,8 @@ class DatabaseManager:
                         location as range,
                         COUNT(*) as item_count,
                         SUM(qty) as total_qty,
-                        ROUND((COUNT(*) * 100.0 / (SELECT COUNT(*) FROM pcb_inventory.tblpcb_inventory)), 1) as usage_percent
-                    FROM pcb_inventory.tblpcb_inventory
+                        ROUND((COUNT(*) * 100.0 / (SELECT COUNT(*) FROM warehouse.tblwarehouse)), 1) as usage_percent
+                    FROM warehouse.tblwarehouse
                     GROUP BY location
                     ORDER BY location
                 """)
@@ -2442,7 +2256,7 @@ class DatabaseManager:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Call the assign_pcn database function
                 cur.execute(
-                    "SELECT pcb_inventory.assign_pcn(%s, %s, %s) as result",
+                    "SELECT warehouse.assign_pcn(%s, %s, %s) as result",
                     (job, pcb_type, username)
                 )
                 result = cur.fetchone()
@@ -2487,8 +2301,8 @@ class DatabaseManager:
                         t.wo,
                         COALESCE(w.po, t.po) as po,
                         t.userid as user_id
-                    FROM pcb_inventory."tblTransaction" t
-                    LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                    FROM warehouse."tblTransaction" t
+                    LEFT JOIN warehouse."tblWhse_Inventory" w
                         ON t.pcn = w.pcn
                     WHERE t.pcn IS NOT NULL
                 """
@@ -2542,8 +2356,8 @@ class DatabaseManager:
                             t.wo,
                             COALESCE(w.po, t.po) as po,
                             t.userid as user_id
-                        FROM pcb_inventory."tblTransaction" t
-                        LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                        FROM warehouse."tblTransaction" t
+                        LEFT JOIN warehouse."tblWhse_Inventory" w
                             ON t.pcn = w.pcn
                         WHERE t.pcn IS NOT NULL
                 """
@@ -2583,7 +2397,7 @@ class DatabaseManager:
                            END as quantity,
                            trantype as transaction_type, tran_time as transaction_date,
                            loc_from as location_from, loc_to as location_to, userid as user_id
-                    FROM pcb_inventory."tblTransaction"
+                    FROM warehouse."tblTransaction"
                     WHERE po IS NOT NULL AND po <> ''
                 """
                 params = []
@@ -2633,7 +2447,7 @@ class DatabaseManager:
             conn = self.get_connection()
             with conn.cursor() as cur:
                 query = """
-                    SELECT COUNT(*) FROM pcb_inventory."tblTransaction"
+                    SELECT COUNT(*) FROM warehouse."tblTransaction"
                     WHERE po IS NOT NULL AND po <> ''
                 """
                 params = []
@@ -2675,7 +2489,7 @@ class DatabaseManager:
                            END as quantity,
                            trantype as transaction_type, tran_time as transaction_date,
                            loc_from as location_from, loc_to as location_to, userid as user_id
-                    FROM pcb_inventory."tblTransaction"
+                    FROM warehouse."tblTransaction"
                     WHERE po IS NOT NULL AND po <> ''
                 """
                 params = []
@@ -2724,7 +2538,7 @@ class UserManager:
             conn = self.db_manager.get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    "SELECT * FROM pcb_inventory.users WHERE username = %s AND active = TRUE",
+                    "SELECT * FROM warehouse.users WHERE username = %s AND active = TRUE",
                     (username,)
                 )
                 user = cur.fetchone()
@@ -2743,7 +2557,7 @@ class UserManager:
             conn = self.db_manager.get_connection()
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    "SELECT username, role, itar_authorized FROM pcb_inventory.users WHERE active = TRUE ORDER BY username"
+                    "SELECT username, role, itar_authorized FROM warehouse.users WHERE active = TRUE ORDER BY username"
                 )
                 return [dict(row) for row in cur.fetchall()]
         except Exception as e:
@@ -2772,7 +2586,7 @@ class UserManager:
             conn = self.db_manager.get_connection()
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE pcb_inventory.users SET session_token = %s, token_expires_at = %s, last_login = %s WHERE username = %s",
+                    "UPDATE warehouse.users SET session_token = %s, token_expires_at = %s, last_login = %s WHERE username = %s",
                     (session_token, datetime.now().replace(hour=23, minute=59, second=59), datetime.now(), username)
                 )
                 conn.commit()
@@ -2861,14 +2675,14 @@ def _ensure_activity_log_table():
         # Quick check if table already exists — avoids expensive CREATE IF NOT EXISTS on every cold start
         cur.execute("""
             SELECT 1 FROM information_schema.tables
-            WHERE table_schema = 'pcb_inventory' AND table_name = 'tblActivityLog'
+            WHERE table_schema = 'warehouse' AND table_name = 'tblActivityLog'
         """)
         if cur.fetchone():
             db_manager.return_connection(conn)
             return  # Table exists, skip all migration work
 
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS pcb_inventory."tblActivityLog" (
+            CREATE TABLE IF NOT EXISTS warehouse."tblActivityLog" (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER,
                 username VARCHAR(100),
@@ -2881,8 +2695,8 @@ def _ensure_activity_log_table():
                 seen_at TIMESTAMP
             )
         ''')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_created ON pcb_inventory."tblActivityLog" (created_at DESC)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_seen ON pcb_inventory."tblActivityLog" (seen)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_created ON warehouse."tblActivityLog" (created_at DESC)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_activity_log_seen ON warehouse."tblActivityLog" (seen)')
         conn.commit()
         logger.info("tblActivityLog table created")
     except Exception as e:
@@ -2906,14 +2720,14 @@ def _ensure_aci_partnumbers_table():
         cur = conn.cursor()
         cur.execute("""
             SELECT 1 FROM information_schema.tables
-            WHERE table_schema = 'pcb_inventory' AND table_name = 'tblACI_PartNumbers'
+            WHERE table_schema = 'warehouse' AND table_name = 'tblACI_PartNumbers'
         """)
         if cur.fetchone():
             db_manager.return_connection(conn)
             return
 
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS pcb_inventory."tblACI_PartNumbers" (
+            CREATE TABLE IF NOT EXISTS warehouse."tblACI_PartNumbers" (
                 id SERIAL PRIMARY KEY,
                 aci_pn VARCHAR(20) NOT NULL UNIQUE,
                 manufacturer VARCHAR(255),
@@ -2924,7 +2738,7 @@ def _ensure_aci_partnumbers_table():
                 created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')
             )
         ''')
-        cur.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_aci_pn_unique ON pcb_inventory."tblACI_PartNumbers" (aci_pn)')
+        cur.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_aci_pn_unique ON warehouse."tblACI_PartNumbers" (aci_pn)')
         conn.commit()
         logger.info("tblACI_PartNumbers table created")
     except Exception as e:
@@ -2946,7 +2760,7 @@ def _ensure_reel_change_log_table():
         conn = db_manager.get_connection()
         cur = conn.cursor()
         cur.execute('''
-            CREATE TABLE IF NOT EXISTS pcb_inventory."tblReelChangeLog" (
+            CREATE TABLE IF NOT EXISTS warehouse."tblReelChangeLog" (
                 id SERIAL PRIMARY KEY,
                 job VARCHAR(100),
                 old_pcn VARCHAR(50),
@@ -2964,10 +2778,10 @@ def _ensure_reel_change_log_table():
             )
         ''')
         # Idempotent column adds for installs created before old_job/new_job existed
-        cur.execute('ALTER TABLE pcb_inventory."tblReelChangeLog" ADD COLUMN IF NOT EXISTS old_job VARCHAR(100)')
-        cur.execute('ALTER TABLE pcb_inventory."tblReelChangeLog" ADD COLUMN IF NOT EXISTS new_job VARCHAR(100)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_reel_change_log_created ON pcb_inventory."tblReelChangeLog" (created_at DESC)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_reel_change_log_job ON pcb_inventory."tblReelChangeLog" (job)')
+        cur.execute('ALTER TABLE warehouse."tblReelChangeLog" ADD COLUMN IF NOT EXISTS old_job VARCHAR(100)')
+        cur.execute('ALTER TABLE warehouse."tblReelChangeLog" ADD COLUMN IF NOT EXISTS new_job VARCHAR(100)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_reel_change_log_created ON warehouse."tblReelChangeLog" (created_at DESC)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_reel_change_log_job ON warehouse."tblReelChangeLog" (job)')
         conn.commit()
         logger.info("tblReelChangeLog table ready")
     except Exception as e:
@@ -3002,7 +2816,7 @@ def _sync_adjt_to_inventory():
             cur.execute("""
                 WITH latest_adjt AS (
                     SELECT DISTINCT ON (pcn, mpn) pcn, mpn, item as new_item, id as adjt_id
-                    FROM pcb_inventory."tblTransaction"
+                    FROM warehouse."tblTransaction"
                     WHERE trantype = 'ADJT'
                       AND item = loc_to
                       AND item != loc_from
@@ -3011,14 +2825,14 @@ def _sync_adjt_to_inventory():
                 has_later_pn_change AS (
                     SELECT DISTINCT a.pcn, a.mpn
                     FROM latest_adjt a
-                    JOIN pcb_inventory."tblTransaction" t
+                    JOIN warehouse."tblTransaction" t
                       ON t.pcn::text = a.pcn::text
                      AND COALESCE(LOWER(TRIM(t.mpn)),'') = COALESCE(LOWER(TRIM(a.mpn)),'')
                     WHERE t.trantype = 'PN_CHANGE' AND t.id > a.adjt_id
                 ),
                 to_update AS (
                     SELECT w.id as whse_id, a.new_item
-                    FROM pcb_inventory."tblWhse_Inventory" w
+                    FROM warehouse."tblWhse_Inventory" w
                     JOIN latest_adjt a
                       ON w.pcn::text = a.pcn::text
                      AND COALESCE(LOWER(TRIM(w.mpn)),'') = COALESCE(LOWER(TRIM(a.mpn)),'')
@@ -3029,7 +2843,7 @@ def _sync_adjt_to_inventory():
                             AND COALESCE(LOWER(TRIM(h.mpn)),'') = COALESCE(LOWER(TRIM(a.mpn)),'')
                       )
                 )
-                UPDATE pcb_inventory."tblWhse_Inventory" w
+                UPDATE warehouse."tblWhse_Inventory" w
                 SET item = u.new_item
                 FROM to_update u
                 WHERE w.id = u.whse_id
@@ -3053,7 +2867,9 @@ def _sync_adjt_to_inventory():
                     pass
         time.sleep(300)  # Run every 5 minutes
 
-threading.Thread(target=_sync_adjt_to_inventory, daemon=True).start()
+# DELETED: _sync_adjt_to_inventory reconciler thread. Relabels are quantity-neutral
+# metadata (I8) applied on the write path, not replayed from ADJT rows by a 5-min job.
+# threading.Thread(target=_sync_adjt_to_inventory, daemon=True).start()
 
 
 # --- LOCATION reconcile SQL (shared by the background thread and the
@@ -3074,10 +2890,10 @@ _LOCATION_RECONCILE_SQL = """
                     -- is how we accept ANY-length text location (e.g. 'back room')
                     -- without hard-coding a list, while still rejecting an item
                     -- number that a relabel ADJT parks in loc_to.
-                    SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM pcb_inventory."tblTransaction"
+                    SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM warehouse."tblTransaction"
                         WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
                     UNION
-                    SELECT DISTINCT LOWER(TRIM(loc_from)) FROM pcb_inventory."tblTransaction"
+                    SELECT DISTINCT LOWER(TRIM(loc_from)) FROM warehouse."tblTransaction"
                         WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
                     UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('stock room'),('n/a'),('na'),('')
                 ),
@@ -3088,7 +2904,7 @@ _LOCATION_RECONCILE_SQL = """
                           WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN to_timestamp(tran_time, 'MM/DD/YY HH24:MI:SS')
                           ELSE NULL
                         END AS st
-                    FROM pcb_inventory."tblTransaction"
+                    FROM warehouse."tblTransaction"
                     WHERE COALESCE(reversed, false) = false
                       -- ADJT is included so a MANUAL location change made in the
                       -- KOSH Warehouse Inventory editor (logged as an ADJT whose
@@ -3112,7 +2928,7 @@ _LOCATION_RECONCILE_SQL = """
                     FROM placements
                     ORDER BY pcn, st DESC NULLS LAST, id DESC
                 )
-                UPDATE pcb_inventory."tblWhse_Inventory" w
+                UPDATE warehouse."tblWhse_Inventory" w
                 SET loc_to = p.place_loc
                 FROM latest_place p
                 WHERE w.pcn = p.pcn
@@ -3145,10 +2961,10 @@ _ONHAND_RECONCILE_SQL = """
                     -- from a renumber mistakenly logged as ADJT (loc fields are ITEM
                     -- numbers). Learning locations from data survives the 10-char
                     -- truncation of loc_to (matching item spelling would not).
-                    SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM pcb_inventory."tblTransaction"
+                    SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM warehouse."tblTransaction"
                         WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
                     UNION
-                    SELECT DISTINCT LOWER(TRIM(loc_from)) FROM pcb_inventory."tblTransaction"
+                    SELECT DISTINCT LOWER(TRIM(loc_from)) FROM warehouse."tblTransaction"
                         WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
                     UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('n/a'),('na'),('')
                 ),
@@ -3185,7 +3001,7 @@ _ONHAND_RECONCILE_SQL = """
                            AND NOT (LOWER(TRIM(COALESCE(loc_to,'')))  IN (SELECT v FROM locvocab) OR COALESCE(loc_to,'')  ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_to,'')) = '')
                            AND NOT (LOWER(TRIM(COALESCE(loc_from,''))) IN (SELECT v FROM locvocab) OR COALESCE(loc_from,'') ~ '^[0-9]{6,}$' OR TRIM(COALESCE(loc_from,'')) = '')
                         ) AS is_relabel
-                    FROM pcb_inventory."tblTransaction"
+                    FROM warehouse."tblTransaction"
                 ),
                 last_rndt AS (
                     SELECT DISTINCT ON (pcn, mpn_key)
@@ -3298,7 +3114,7 @@ _ONHAND_RECONCILE_SQL = """
                 , to_update AS (
                     SELECT w.id, w.pcn::text AS pcn, w.item, w.mpn,
                            w.onhandqty AS prior_qty, n.qty AS new_qty
-                    FROM pcb_inventory."tblWhse_Inventory" w
+                    FROM warehouse."tblWhse_Inventory" w
                     JOIN net n
                       ON w.pcn::text = n.pcn
                      AND LOWER(TRANSLATE(COALESCE(w.mpn,''), '-# ./', '')) = n.mpn_key
@@ -3326,13 +3142,13 @@ _ONHAND_RECONCILE_SQL = """
                       AND n.qty < w.onhandqty
                 ),
                 log_update AS (
-                    INSERT INTO pcb_inventory."tblReconcileAudit"
+                    INSERT INTO warehouse."tblReconcileAudit"
                         (pcn, item, mpn, prior_qty, new_qty, source)
                     SELECT pcn, item, mpn, prior_qty, new_qty, 'auto_reconcile'
                     FROM to_update
                     RETURNING 1
                 )
-                UPDATE pcb_inventory."tblWhse_Inventory" w
+                UPDATE warehouse."tblWhse_Inventory" w
                 SET onhandqty = u.new_qty
                 FROM to_update u
                 WHERE w.id = u.id"""
@@ -3358,18 +3174,18 @@ def reconcile_onhand_from_ledger(cur):
 _FLOOR_ONHAND_DEDUPE_SQL = """
     WITH dbl AS (
         SELECT id, pcn, item, mpn, onhandqty AS prior_qty
-        FROM pcb_inventory."tblWhse_Inventory"
+        FROM warehouse."tblWhse_Inventory"
         WHERE LOWER(TRIM(COALESCE(loc_to, ''))) = 'mfg floor'
           AND onhandqty > 0
           AND mfg_qty ~ '^[1-9][0-9]*$'
     ),
     logged AS (
-        INSERT INTO pcb_inventory."tblReconcileAudit"
+        INSERT INTO warehouse."tblReconcileAudit"
             (pcn, item, mpn, prior_qty, new_qty, source)
         SELECT pcn, item, mpn, prior_qty, 0, 'floor_onhand_dedupe' FROM dbl
         RETURNING 1
     )
-    UPDATE pcb_inventory."tblWhse_Inventory" w
+    UPDATE warehouse."tblWhse_Inventory" w
     SET onhandqty = 0
     FROM dbl WHERE w.id = dbl.id"""
 
@@ -3441,7 +3257,7 @@ def _sync_onhand_from_transactions():
             # every boot; this is the single source that guarantees the
             # safeguards stay installed regardless of who touches the DB.
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS pcb_inventory."tblReconcileAudit" (
+                CREATE TABLE IF NOT EXISTS warehouse."tblReconcileAudit" (
                     id SERIAL PRIMARY KEY,
                     pcn text,
                     item text,
@@ -3452,13 +3268,13 @@ def _sync_onhand_from_transactions():
                     reconciled_at timestamptz DEFAULT NOW()
                 );
                 CREATE INDEX IF NOT EXISTS idx_tbltrans_pcn_id
-                    ON pcb_inventory."tblTransaction" (pcn, id DESC);
+                    ON warehouse."tblTransaction" (pcn, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_tbltrans_trantype_id
-                    ON pcb_inventory."tblTransaction" (trantype, id DESC);
+                    ON warehouse."tblTransaction" (trantype, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_tblwhse_pcn
-                    ON pcb_inventory."tblWhse_Inventory" (pcn);
+                    ON warehouse."tblWhse_Inventory" (pcn);
                 CREATE INDEX IF NOT EXISTS idx_reconcile_audit_pcn_time
-                    ON pcb_inventory."tblReconcileAudit" (pcn, reconciled_at DESC);
+                    ON warehouse."tblReconcileAudit" (pcn, reconciled_at DESC);
             """)
             # Generated columns for reliable math/sort without having to parse
             # tranqty text in every query. Idempotent via IF NOT EXISTS.
@@ -3468,11 +3284,11 @@ def _sync_onhand_from_transactions():
                 BEGIN
                     IF NOT EXISTS (
                         SELECT 1 FROM information_schema.columns
-                        WHERE table_schema='pcb_inventory'
+                        WHERE table_schema='warehouse'
                           AND table_name='tblTransaction'
                           AND column_name='tranqty_int'
                     ) THEN
-                        ALTER TABLE pcb_inventory."tblTransaction"
+                        ALTER TABLE warehouse."tblTransaction"
                         ADD COLUMN tranqty_int integer GENERATED ALWAYS AS (
                             CASE WHEN tranqty ~ '^-?[0-9]+$'
                                  THEN tranqty::integer END
@@ -3499,7 +3315,7 @@ def _sync_onhand_from_transactions():
                         SELECT 1 FROM pg_constraint
                         WHERE conname = 'chk_whse_onhand_nonneg'
                     ) THEN
-                        ALTER TABLE pcb_inventory."tblWhse_Inventory"
+                        ALTER TABLE warehouse."tblWhse_Inventory"
                         ADD CONSTRAINT chk_whse_onhand_nonneg
                         CHECK (onhandqty IS NULL OR onhandqty >= 0) NOT VALID;
                     END IF;
@@ -3511,13 +3327,13 @@ def _sync_onhand_from_transactions():
             # as reconcile audit rows with source='negative_alert' so they're
             # visible and investigable without blocking writes.
             cur.execute("""
-                INSERT INTO pcb_inventory."tblReconcileAudit"
+                INSERT INTO warehouse."tblReconcileAudit"
                     (pcn, item, mpn, prior_qty, new_qty, source)
                 SELECT pcn::text, item, mpn, onhandqty, 0, 'negative_alert'
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE onhandqty < 0
                   AND NOT EXISTS (
-                    SELECT 1 FROM pcb_inventory."tblReconcileAudit" a
+                    SELECT 1 FROM warehouse."tblReconcileAudit" a
                     WHERE a.pcn = "tblWhse_Inventory".pcn::text
                       AND a.source = 'negative_alert'
                       AND a.reconciled_at > NOW() - INTERVAL '1 hour'
@@ -3568,16 +3384,14 @@ def _sync_onhand_from_transactions():
                     pass
         time.sleep(300)
 
-threading.Thread(target=_sync_onhand_from_transactions, daemon=True).start()
-
-# Phase 4a — shadow-sync the new event-derived on-hand (inv_onhand) to the live
-# warehouse. Isolated module + background thread; touches NO user write path and
-# only WRITES to inv_* tables. Fail-safe: never raises into the app.
-try:
-    import inv_shadow
-    inv_shadow.start_inv_shadow_sync(db_manager)
-except Exception as _inv_e:
-    logger.warning(f'inv shadow sync not started: {_inv_e}')
+# RECONCILERS DELETED (single-source-of-truth rebuild).
+# The ledger (inventory_txn + inventory_balance) is now the ONE source of truth and the
+# legacy tblWhse_Inventory snapshot is a same-transaction projection of it. There is
+# nothing to reconcile, so the drift-repair threads are gone:
+#   - _sync_onhand_from_transactions (replay-and-lower on-hand reconciler) — removed
+#   - inv_shadow.start_inv_shadow_sync (snapshot->ledger shadow) — removed
+# Keeping two computations of on-hand + a reconciler to paper over their drift WAS the
+# bug (the recurring "Warehouse != PCN History"). Do not reintroduce a reconciler.
 
 
 def _nightly_integrity_check():
@@ -3593,28 +3407,28 @@ def _nightly_integrity_check():
             conn = db_manager.get_connection()
             cur = conn.cursor()
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS pcb_inventory."tblIntegrityCheckLog" (
+                CREATE TABLE IF NOT EXISTS warehouse."tblIntegrityCheckLog" (
                     id SERIAL PRIMARY KEY,
                     checked_at timestamptz DEFAULT NOW(),
                     double_count integer, negative_onhand integer,
                     pcn_collision integer, stored_above_ledger integer
                 )
             """)
-            cur.execute("""SELECT count(*) FROM pcb_inventory."tblWhse_Inventory"
+            cur.execute("""SELECT count(*) FROM warehouse."tblWhse_Inventory"
                            WHERE onhandqty>0 AND mfg_qty ~ '^-?[0-9]+$' AND mfg_qty::int>0""")
             double_count = cur.fetchone()[0]
-            cur.execute("""SELECT count(*) FROM pcb_inventory."tblWhse_Inventory" WHERE onhandqty<0""")
+            cur.execute("""SELECT count(*) FROM warehouse."tblWhse_Inventory" WHERE onhandqty<0""")
             negative_onhand = cur.fetchone()[0]
             cur.execute("""SELECT count(*) FROM (
-                    SELECT pcn FROM pcb_inventory."tblWhse_Inventory"
+                    SELECT pcn FROM warehouse."tblWhse_Inventory"
                     WHERE pcn ~ '^[0-9]+$' AND onhandqty>0
                     GROUP BY pcn HAVING count(DISTINCT lower(item))>1) t""")
             pcn_collision = cur.fetchone()[0]
             # Phantom regression: stored on-hand ABOVE the renumber-aware ledger.
             cur.execute("""
                 WITH lv AS (
-                  SELECT DISTINCT lower(trim(loc_to)) v FROM pcb_inventory."tblTransaction" WHERE trantype<>'ADJT' AND loc_to IS NOT NULL AND trim(loc_to)<>''
-                  UNION SELECT DISTINCT lower(trim(loc_from)) FROM pcb_inventory."tblTransaction" WHERE trantype<>'ADJT' AND loc_from IS NOT NULL AND trim(loc_from)<>''
+                  SELECT DISTINCT lower(trim(loc_to)) v FROM warehouse."tblTransaction" WHERE trantype<>'ADJT' AND loc_to IS NOT NULL AND trim(loc_to)<>''
+                  UNION SELECT DISTINCT lower(trim(loc_from)) FROM warehouse."tblTransaction" WHERE trantype<>'ADJT' AND loc_from IS NOT NULL AND trim(loc_from)<>''
                   UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('n/a'),('na'),('')
                 ),
                 parsed AS (
@@ -3624,7 +3438,7 @@ def _nightly_integrity_check():
                     (trantype='ADJT' AND lower(trim(coalesce(loc_from,'')))<>lower(trim(coalesce(loc_to,'')))
                        AND NOT (lower(trim(coalesce(loc_to,'')))  IN (SELECT v FROM lv) OR coalesce(loc_to,'')  ~ '^[0-9]{6,}$' OR trim(coalesce(loc_to,''))='')
                        AND NOT (lower(trim(coalesce(loc_from,''))) IN (SELECT v FROM lv) OR coalesce(loc_from,'') ~ '^[0-9]{6,}$' OR trim(coalesce(loc_from,''))='')) is_relabel
-                  FROM pcb_inventory."tblTransaction" WHERE tranqty ~ '^-?[0-9]+$'
+                  FROM warehouse."tblTransaction" WHERE tranqty ~ '^-?[0-9]+$'
                 ),
                 last_rndt AS (SELECT DISTINCT ON (pcn,mpn_key) pcn,mpn_key,id rndt_id,ts rndt_ts,tranqty::int rndt_qty
                   FROM parsed WHERE trantype='RNDT' AND reversed=false ORDER BY pcn,mpn_key,ts DESC NULLS LAST,id DESC),
@@ -3643,12 +3457,12 @@ def _nightly_integrity_check():
                      -- bury later receipts, so this monitor stops false-flagging them.
                      (MAX(base)+COALESCE(SUM(delta),0)) - LEAST(0, MAX(base)+MIN(run_delta)) qty
                   FROM net_run GROUP BY pcn,mpn_key)
-                SELECT count(*) FROM pcb_inventory."tblWhse_Inventory" w JOIN net n
+                SELECT count(*) FROM warehouse."tblWhse_Inventory" w JOIN net n
                   ON w.pcn::text=n.pcn AND lower(translate(coalesce(w.mpn,''),'-# ./',''))=n.mpn_key
                 WHERE w.onhandqty > n.qty
             """)
             stored_above_ledger = cur.fetchone()[0]
-            cur.execute("""INSERT INTO pcb_inventory."tblIntegrityCheckLog"
+            cur.execute("""INSERT INTO warehouse."tblIntegrityCheckLog"
                            (double_count,negative_onhand,pcn_collision,stored_above_ledger)
                            VALUES (%s,%s,%s,%s)""",
                         (double_count, negative_onhand, pcn_collision, stored_above_ledger))
@@ -3685,7 +3499,7 @@ def _do_log_activity(user_id, username, full_name, action_type, description, det
         conn = db_manager.get_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO pcb_inventory."tblActivityLog"
+            INSERT INTO warehouse."tblActivityLog"
             (user_id, username, full_name, action_type, description, details, seen)
             VALUES (%s, %s, %s, %s, %s, %s, FALSE)
         """, (user_id, username, full_name, action_type, description, details))
@@ -3766,10 +3580,10 @@ def database_health_check():
         cursor = conn.cursor()
 
         # Test query execution
-        cursor.execute("SELECT COUNT(*) FROM pcb_inventory.\"tblWhse_Inventory\"")
+        cursor.execute("SELECT COUNT(*) FROM warehouse.\"tblWhse_Inventory\"")
         inventory_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM pcb_inventory.\"tblTransaction\"")
+        cursor.execute("SELECT COUNT(*) FROM warehouse.\"tblTransaction\"")
         transaction_count = cursor.fetchone()[0]
 
         cursor.close()
@@ -3833,7 +3647,7 @@ def login():
 
             cursor.execute("""
                 SELECT id, userid, username, userlogin, password, usersecurity
-                FROM pcb_inventory."tblUser"
+                FROM warehouse."tblUser"
                 WHERE userlogin = %s
             """, (username,))
 
@@ -3880,7 +3694,7 @@ def login():
                 if user['userlogin'].lower() != 'kanav':
                     try:
                         cursor.execute("""
-                            INSERT INTO pcb_inventory."tblLoginNotifications"
+                            INSERT INTO warehouse."tblLoginNotifications"
                             (user_id, username, full_name, login_time, seen)
                             VALUES (%s, %s, %s, CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', FALSE)
                         """, (user['id'], user['userlogin'], user['username']))
@@ -4385,7 +4199,7 @@ def part_number_change():
             # Check if PCN exists
             cursor.execute('''
                 SELECT pcn, item, mpn, onhandqty, loc_to
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE pcn::text = %s
             ''', (pcn,))
 
@@ -4404,7 +4218,7 @@ def part_number_change():
 
             # Update part number in inventory
             cursor.execute('''
-                UPDATE pcb_inventory."tblWhse_Inventory"
+                UPDATE warehouse."tblWhse_Inventory"
                 SET item = %s
                 WHERE pcn::text = %s
             ''', (new_part_number, pcn))
@@ -4418,7 +4232,7 @@ def part_number_change():
 
             # Log the change in transaction table
             cursor.execute('''
-                INSERT INTO pcb_inventory."tblTransaction"
+                INSERT INTO warehouse."tblTransaction"
                 (trantype, item, pcn, mpn, tranqty, tran_time, loc_to, userid, created_at)
                 VALUES (%s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, CURRENT_TIMESTAMP)
             ''', ('PN_CHANGE', new_part_number, pcn, item['mpn'], 0, item['loc_to'], username))
@@ -4432,7 +4246,7 @@ def part_number_change():
             # Fetch updated item
             cursor.execute('''
                 SELECT pcn, item, mpn, onhandqty, loc_to
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE pcn::text = %s
             ''', (pcn,))
             updated_item = cursor.fetchone()
@@ -4485,8 +4299,8 @@ def api_search_inventory():
                     WHEN LOWER(w.mpn) = LOWER(%s) THEN 1
                     ELSE 2
                 END as match_priority
-            FROM pcb_inventory."tblWhse_Inventory" w
-            LEFT JOIN pcb_inventory."tblPN_List" p ON w.item = p.item
+            FROM warehouse."tblWhse_Inventory" w
+            LEFT JOIN warehouse."tblPN_List" p ON w.item = p.item
             WHERE w.onhandqty > 0
         '''
         params = [mpn if mpn else '']
@@ -4566,7 +4380,7 @@ def get_part_details():
                 loc_to,
                 msd,
                 po
-            FROM pcb_inventory."tblWhse_Inventory"
+            FROM warehouse."tblWhse_Inventory"
             WHERE {where_clause}
             ORDER BY id DESC
             LIMIT 1
@@ -4610,7 +4424,7 @@ def get_part_details():
 
 @app.route('/pcb-inventory')
 @require_auth
-def pcb_inventory():
+def warehouse():
     """REMOVED (May 2026): the PCB Inventory page was retired and its nav tab
     removed — Warehouse Inventory is now the single inventory view. Kept as a
     permanent redirect so old bookmarks/links don't 404."""
@@ -4649,10 +4463,10 @@ def warehouse_inventory():
             SELECT w.id, w.item, w.pcn, w.mpn, w.dc, w.onhandqty, w.loc_from, w.loc_to,
                    w.mfg_qty, w.qty_old, w.msd, w.po, w.cost, w.vendor, w.migrated_at,
                    p.description
-            FROM pcb_inventory."tblWhse_Inventory" w
+            FROM warehouse."tblWhse_Inventory" w
             LEFT JOIN (
                 SELECT item, MAX("DESC") AS description
-                FROM pcb_inventory."tblPN_List"
+                FROM warehouse."tblPN_List"
                 GROUP BY item
             ) p ON w.item = p.item
             WHERE 1=1
@@ -4672,7 +4486,7 @@ def warehouse_inventory():
             query += """ AND (
                 LOWER(TRIM(w.item::text)) = %s
                 OR (NOT EXISTS (
-                        SELECT 1 FROM pcb_inventory."tblWhse_Inventory" we
+                        SELECT 1 FROM warehouse."tblWhse_Inventory" we
                         WHERE LOWER(TRIM(we.item::text)) = %s)
                     AND LOWER(TRIM(w.item::text)) LIKE %s ESCAPE '\\')
             )"""
@@ -4810,14 +4624,14 @@ def get_warehouse_item():
                 cursor.execute("""
                     SELECT id, item, pcn, mpn, dc, onhandqty, loc_from, loc_to,
                            mfg_qty, qty_old, msd, po, cost
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE id = %s
                 """, (row_id,))
             elif item_id and pcn:
                 cursor.execute("""
                     SELECT id, item, pcn, mpn, dc, onhandqty, loc_from, loc_to,
                            mfg_qty, qty_old, msd, po, cost
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE item::text = %s AND pcn::text = %s
                     LIMIT 1
                 """, (item_id, pcn))
@@ -4881,7 +4695,7 @@ def get_recent_warehouse_inventory():
             cursor.execute("""
                 SELECT id, item, pcn, mpn, dc, onhandqty, loc_to as location,
                        msd, po, migrated_at as updated_at
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE onhandqty > 0
                 ORDER BY id DESC
                 LIMIT %s
@@ -4936,7 +4750,7 @@ def get_locations():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT location, area, shelf, loc
-            FROM pcb_inventory."tblLoc"
+            FROM warehouse."tblLoc"
             ORDER BY location
         """)
         rows = cursor.fetchall()
@@ -5042,7 +4856,7 @@ def update_warehouse_item():
             # fact that the units were actually picked.
             cursor.execute("""
                 SELECT item, pcn, mpn, dc, msd, onhandqty, loc_to, po
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE id = %s
                 FOR UPDATE
             """, (row_id,))
@@ -5053,26 +4867,24 @@ def update_warehouse_item():
                 return jsonify({'success': False, 'message': 'Item not found'}), 404
             prior_item, prior_pcn, prior_mpn, prior_dc, prior_msd, prior_onhand, prior_loc, prior_po = prior
 
-            # Update warehouse inventory record by unique id. Use the
-            # server-sanitized loc values (not raw data.get) so legacy
-            # placeholders that slipped through are written as NULL.
+            # Update only the METADATA columns directly. The on-hand numbers
+            # (onhandqty/mfg_qty) are OWNED by the ledger — a manual edit is applied
+            # as ADJUST rows at ONE available location + the floor (I7), then the
+            # snapshot is re-projected from the ledger below. This is why a manual
+            # edit can no longer desync two places or drift from PCN History.
             cursor.execute("""
-                UPDATE pcb_inventory."tblWhse_Inventory"
+                UPDATE warehouse."tblWhse_Inventory"
                 SET dc = %s,
-                    onhandqty = %s,
                     loc_from = %s,
                     loc_to = %s,
-                    mfg_qty = %s,
                     msd = %s,
                     po = %s,
                     cost = %s
                 WHERE id = %s
             """, (
                 data.get('dc') or None,
-                onhand_qty,
                 loc_from_val or None,
                 loc_to_val or None,
-                mfg_qty,
                 data.get('msd') or None,
                 data.get('po') or None,
                 to_float_or_none(data.get('cost')),
@@ -5083,20 +4895,31 @@ def update_warehouse_item():
                 conn.rollback()
                 return jsonify({'success': False, 'message': 'Item not found'}), 404
 
-            # Verify the save actually landed: read the row back in the same
-            # transaction. If the stored onhandqty doesn't match what we sent,
-            # abort and surface the divergence — never lie about success.
-            cursor.execute("""
-                SELECT onhandqty FROM pcb_inventory."tblWhse_Inventory" WHERE id = %s
-            """, (row_id,))
-            verify = cursor.fetchone()
-            stored_qty = verify[0] if verify else None
-            if onhand_qty is not None and stored_qty != onhand_qty:
+            # Apply the on-hand edit through the ledger (single source of truth), then
+            # project the snapshot back so onhandqty/mfg_qty reflect the ledger exactly.
+            username = session.get('username', 'system')
+            edit_bin = loc_to_val or prior_loc or ''
+            try:
+                ledger.set_pcn_snapshot(cursor, prior_item, prior_mpn, str(prior_pcn),
+                                        edit_bin, onhand_qty, mfg_qty, user=username)
+            except ledger.LedgerError as le:
                 conn.rollback()
-                return jsonify({
-                    'success': False,
-                    'message': f'Save verification failed: expected {onhand_qty}, got {stored_qty}'
-                }), 500
+                return jsonify({'success': False, 'message': f'Edit rejected: {le}'}), 400
+            ledger.project_warehouse(cursor, str(prior_pcn))
+
+            # Verify the ledger landed the edit: available (non-floor) balance must match.
+            if onhand_qty is not None:
+                cursor.execute("""
+                    SELECT onhandqty FROM warehouse."tblWhse_Inventory" WHERE id = %s
+                """, (row_id,))
+                verify = cursor.fetchone()
+                stored_qty = verify[0] if verify else None
+                if stored_qty != onhand_qty:
+                    conn.rollback()
+                    return jsonify({
+                        'success': False,
+                        'message': f'Save verification failed: expected {onhand_qty}, got {stored_qty}'
+                    }), 500
 
             # Record an ADJT transaction for EVERY manual warehouse edit, not
             # just qty changes. Location, DC, MSD, PO edits used to be silent
@@ -5110,7 +4933,7 @@ def update_warehouse_item():
                 username = session.get('username', 'system')
                 new_loc = loc_to_val or prior_loc or ''
                 cursor.execute("""
-                    INSERT INTO pcb_inventory."tblTransaction"
+                    INSERT INTO warehouse."tblTransaction"
                     (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, po, userid)
                     VALUES ('ADJT', %s, %s, %s, %s, %s, %s,
                             TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'),
@@ -5183,7 +5006,7 @@ def reports():
                     COUNT(*) as record_count,
                     COALESCE(SUM(onhandqty), 0) as total_quantity,
                     COALESCE(AVG(onhandqty), 0) as average_quantity
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE onhandqty > 0
                 GROUP BY loc_to
                 ORDER BY total_quantity DESC
@@ -5200,7 +5023,7 @@ def reports():
                 SELECT trantype as operation, item as job, pcn,
                        tranqty as quantity_change, loc_from, loc_to,
                        tran_time as timestamp, userid
-                FROM pcb_inventory."tblTransaction"
+                FROM warehouse."tblTransaction"
                 WHERE trantype IN ('STOCK', 'PICK', 'RESTOCK', 'PN_CHANGE', 'PCN Generation', 'WAREHOUSE_EDIT')
                 ORDER BY id DESC
                 LIMIT 100
@@ -5238,7 +5061,7 @@ def shortage_report():
         cursor.execute("""
             SELECT id, job, report_name, total_lines, shortage_lines,
                    total_cost, shortage_cost, created_by, created_at, notes, order_qty
-            FROM pcb_inventory."tblShortageReport"
+            FROM warehouse."tblShortageReport"
             ORDER BY created_at DESC
             LIMIT 50
         """)
@@ -5246,7 +5069,7 @@ def shortage_report():
 
         # Get list of jobs that have BOMs loaded
         cursor.execute("""
-            SELECT DISTINCT job FROM pcb_inventory."tblBOM"
+            SELECT DISTINCT job FROM warehouse."tblBOM"
             WHERE job IS NOT NULL AND job != ''
             ORDER BY job
         """)
@@ -5284,10 +5107,10 @@ _SHORTAGE_MATCH_SQL = """
         SELECT DISTINCT ON (b.aci_pn)
             b.line, b.aci_pn, b.mpn as bom_mpn, b.man, b."DESC", b.qty, b.cost,
             lower(translate(b.mpn, '-# ./', '')) as bom_key
-        FROM pcb_inventory."tblBOM" b
+        FROM warehouse."tblBOM" b
         WHERE b.job = %s
-            AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                 OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+            AND (b.job_rev = (SELECT job_rev FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                 OR NOT EXISTS (SELECT 1 FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
         ORDER BY b.aci_pn, CASE WHEN b.qty ~ '^[0-9]+([.][0-9]+)?$' THEN b.qty::numeric ELSE 0 END DESC, b.line
     ),
     inv AS (
@@ -5304,7 +5127,7 @@ _SHORTAGE_MATCH_SQL = """
             (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
             (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
         FROM bom_lines bl
-        LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+        LEFT JOIN warehouse."tblWhse_Inventory" w
             -- Case-insensitive: inventory stores the SAME part number in mixed
             -- case (e.g. BOM '6779ML-97' vs stock '6779ml-97'). A case-sensitive
             -- join missed that stock and falsely reported the part as short.
@@ -5317,7 +5140,7 @@ _SHORTAGE_MATCH_SQL = """
     mpn_pool AS MATERIALIZED (
         SELECT item, pcn, onhandqty, mpn, loc_to,
                lower(translate(mpn, '-# ./', '')) as nmpn
-        FROM pcb_inventory."tblWhse_Inventory"
+        FROM warehouse."tblWhse_Inventory"
         WHERE COALESCE(loc_to, '') != 'MFG Floor' AND onhandqty > 0
     )
     SELECT
@@ -5386,13 +5209,13 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
     """Build and save a shortage report for `job`, keeping ONLY lines where
     on_hand < req. Returns a dict (report_id, shortage_count, total_bom_lines)
     or None if the job has no BOM. Caller is responsible for committing."""
-    cursor.execute('SELECT COUNT(*) as count FROM pcb_inventory."tblBOM" WHERE job = %s', (job,))
+    cursor.execute('SELECT COUNT(*) as count FROM warehouse."tblBOM" WHERE job = %s', (job,))
     total_bom_lines = cursor.fetchone()['count']
     if total_bom_lines == 0:
         return None
 
     cursor.execute("""
-        SELECT job_rev FROM pcb_inventory."tblBOM"
+        SELECT job_rev FROM warehouse."tblBOM"
         WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
         ORDER BY created_at DESC LIMIT 1
     """, (job,))
@@ -5402,7 +5225,7 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
     # Chemring jobs keep STRICT exact-MPN matching for the same-MPN visibility
     # column (defense traceability); all other customers get tolerant matching.
     cursor.execute(
-        'SELECT bool_or(cust ILIKE %s) AS is_chem FROM pcb_inventory."tblBOM" WHERE job = %s',
+        'SELECT bool_or(cust ILIKE %s) AS is_chem FROM warehouse."tblBOM" WHERE job = %s',
         ('%chemring%', job))
     chem_row = cursor.fetchone()
     strict_mpn = bool(chem_row and chem_row['is_chem'])
@@ -5446,7 +5269,7 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
     )
 
     cursor.execute("""
-        INSERT INTO pcb_inventory."tblShortageReport"
+        INSERT INTO warehouse."tblShortageReport"
         (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
@@ -5455,7 +5278,7 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
 
     for item in report_items:
         cursor.execute("""
-            INSERT INTO pcb_inventory."tblShortageReportItems"
+            INSERT INTO warehouse."tblShortageReportItems"
             (report_id, line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
              item, location, unit_cost, line_cost, manufacturer, description, req,
              other_mpn_onhand, other_mpn_locations)
@@ -5542,7 +5365,7 @@ def view_shortage_report(report_id):
         cursor.execute("""
             SELECT id, job, report_name, total_lines, shortage_lines,
                    total_cost, shortage_cost, created_by, created_at, notes, order_qty, job_rev
-            FROM pcb_inventory."tblShortageReport"
+            FROM warehouse."tblShortageReport"
             WHERE id = %s
         """, (report_id,))
         report = cursor.fetchone()
@@ -5558,7 +5381,7 @@ def view_shortage_report(report_id):
             SELECT line_no, aci_pn, pcn, mpn, qty_required, qty_on_hand, order_qty,
                    item, location, unit_cost, line_cost, manufacturer, description, req,
                    other_mpn_onhand, other_mpn_locations
-            FROM pcb_inventory."tblShortageReportItems"
+            FROM warehouse."tblShortageReportItems"
             WHERE report_id = %s
             ORDER BY
                 CASE WHEN line_no ~ '^[0-9]+$' THEN CAST(line_no AS INTEGER) ELSE 999999 END,
@@ -5614,7 +5437,7 @@ def export_shortage_report(report_id):
         cursor.execute("""
             SELECT job, report_name, total_lines, shortage_lines,
                    total_cost, shortage_cost, created_by, created_at, order_qty, job_rev
-            FROM pcb_inventory."tblShortageReport"
+            FROM warehouse."tblShortageReport"
             WHERE id = %s
         """, (report_id,))
         report = cursor.fetchone()
@@ -5629,7 +5452,7 @@ def export_shortage_report(report_id):
                    req, item, qty_on_hand, location,
                    other_mpn_onhand, other_mpn_locations,
                    unit_cost, line_cost, manufacturer, description
-            FROM pcb_inventory."tblShortageReportItems"
+            FROM warehouse."tblShortageReportItems"
             WHERE report_id = %s
             ORDER BY
                 CASE WHEN line_no ~ '^[0-9]+$' THEN CAST(line_no AS INTEGER) ELSE 999999 END,
@@ -5781,7 +5604,7 @@ def delete_shortage_report(report_id):
         cursor = conn.cursor()
 
         # Delete report (cascade will delete items)
-        cursor.execute('DELETE FROM pcb_inventory."tblShortageReport" WHERE id = %s', (report_id,))
+        cursor.execute('DELETE FROM warehouse."tblShortageReport" WHERE id = %s', (report_id,))
         conn.commit()
 
         flash('Report deleted successfully.', 'success')
@@ -5807,7 +5630,7 @@ def get_bom_jobs():
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         cursor.execute("""
-            SELECT DISTINCT job FROM pcb_inventory."tblBOM"
+            SELECT DISTINCT job FROM warehouse."tblBOM"
             WHERE job IS NOT NULL AND job != ''
             ORDER BY job
         """)
@@ -5843,12 +5666,12 @@ def sources():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Get all tables in the pcb_inventory schema
+        # Get all tables in the warehouse schema
         cursor.execute("""
             SELECT table_name, 
-                   (SELECT COUNT(*) FROM pcb_inventory."" || table_name || "") as record_count
+                   (SELECT COUNT(*) FROM warehouse."" || table_name || "") as record_count
             FROM information_schema.tables 
-            WHERE table_schema = 'pcb_inventory' 
+            WHERE table_schema = 'warehouse' 
             AND table_type = 'BASE TABLE'
             AND table_name NOT IN ('inventory_audit')
             ORDER BY table_name
@@ -5858,7 +5681,7 @@ def sources():
         cursor.execute("""
             SELECT schemaname, tablename 
             FROM pg_tables 
-            WHERE schemaname = 'pcb_inventory'
+            WHERE schemaname = 'warehouse'
             AND tablename NOT IN ('inventory_audit')
             ORDER BY tablename
         """)
@@ -5869,9 +5692,9 @@ def sources():
             try:
                 # Get record count for each table
                 if '"' in table_name:
-                    count_sql = f'SELECT COUNT(*) as count FROM pcb_inventory.{table_name}'
+                    count_sql = f'SELECT COUNT(*) as count FROM warehouse.{table_name}'
                 else:
-                    count_sql = f'SELECT COUNT(*) as count FROM pcb_inventory."{table_name}"'
+                    count_sql = f'SELECT COUNT(*) as count FROM warehouse."{table_name}"'
                 
                 cursor.execute(count_sql)
                 count_result = cursor.fetchone()
@@ -5881,7 +5704,7 @@ def sources():
                 cursor.execute(f"""
                     SELECT column_name, data_type 
                     FROM information_schema.columns 
-                    WHERE table_schema = 'pcb_inventory' 
+                    WHERE table_schema = 'warehouse' 
                     AND table_name = '{table_name}'
                     AND column_name NOT IN ('id', 'created_at')
                     ORDER BY ordinal_position
@@ -5935,13 +5758,13 @@ def view_source_table(table_name):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         # Get total count
-        count_sql = f'SELECT COUNT(*) as count FROM pcb_inventory."{table_name}"'
+        count_sql = f'SELECT COUNT(*) as count FROM warehouse."{table_name}"'
         cursor.execute(count_sql)
         total_records = cursor.fetchone()['count']
         
         # Get paginated data
         offset = (page - 1) * per_page
-        data_sql = f'SELECT * FROM pcb_inventory."{table_name}" ORDER BY id LIMIT {per_page} OFFSET {offset}'
+        data_sql = f'SELECT * FROM warehouse."{table_name}" ORDER BY id LIMIT {per_page} OFFSET {offset}'
         cursor.execute(data_sql)
         records = cursor.fetchall()
         
@@ -6099,7 +5922,7 @@ def sso_callback():
         # Try exact match on userlogin
         cursor.execute("""
             SELECT id, userid, username, userlogin, usersecurity
-            FROM pcb_inventory."tblUser"
+            FROM warehouse."tblUser"
             WHERE userlogin = %s
         """, (username,))
         user = cursor.fetchone()
@@ -6108,7 +5931,7 @@ def sso_callback():
         if not user:
             cursor.execute("""
                 SELECT id, userid, username, userlogin, usersecurity
-                FROM pcb_inventory."tblUser"
+                FROM warehouse."tblUser"
                 WHERE LOWER(userlogin) = LOWER(%s)
             """, (username,))
             user = cursor.fetchone()
@@ -6118,7 +5941,7 @@ def sso_callback():
             email_prefix = username.split('@')[0].lower()
             cursor.execute("""
                 SELECT id, userid, username, userlogin, usersecurity
-                FROM pcb_inventory."tblUser"
+                FROM warehouse."tblUser"
                 WHERE LOWER(userlogin) LIKE %s
                 ORDER BY id LIMIT 1
             """, (email_prefix + '%',))
@@ -6129,7 +5952,7 @@ def sso_callback():
             display_name = username.split('@')[0].capitalize() if '@' in username else username
             default_password = bcrypt.hashpw('Welcome1!'.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblUser" (username, userlogin, password, usersecurity)
+                INSERT INTO warehouse."tblUser" (username, userlogin, password, usersecurity)
                 VALUES (%s, %s, %s, %s)
                 RETURNING id, username, userlogin, usersecurity
             """, (display_name, username, default_password, 'user'))
@@ -6321,7 +6144,7 @@ def api_get_mpns_for_part(part_number):
         # the MPN fine. This now mirrors the rest of the app's UPPER() matching.
         cur.execute("""
             SELECT DISTINCT mpn
-            FROM pcb_inventory."tblBOM"
+            FROM warehouse."tblBOM"
             WHERE UPPER(aci_pn) = UPPER(%s) AND mpn IS NOT NULL AND mpn != ''
             ORDER BY mpn
         """, (part_number,))
@@ -6534,7 +6357,7 @@ def po_history():
                        trantype as transaction_type, tran_time as transaction_date,
                        loc_from as location_from, loc_to as location_to, userid as user_id,
                        vendor as vendor_name
-                FROM pcb_inventory."tblTransaction"
+                FROM warehouse."tblTransaction"
                 WHERE po IS NOT NULL AND po <> ''
             """
             params = []
@@ -6643,10 +6466,10 @@ def pcn_history():
                         -- renumber mistakenly logged as ADJT (loc fields are ITEM numbers,
                         -- not bins) can be told apart from a genuine location adjustment.
                         -- Same vocabulary the reconcile uses (app.py:3123).
-                        SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM pcb_inventory."tblTransaction"
+                        SELECT DISTINCT LOWER(TRIM(loc_to)) AS v FROM warehouse."tblTransaction"
                             WHERE trantype <> 'ADJT' AND loc_to IS NOT NULL AND TRIM(loc_to) <> ''
                         UNION
-                        SELECT DISTINCT LOWER(TRIM(loc_from)) FROM pcb_inventory."tblTransaction"
+                        SELECT DISTINCT LOWER(TRIM(loc_from)) FROM warehouse."tblTransaction"
                             WHERE trantype <> 'ADJT' AND loc_from IS NOT NULL AND TRIM(loc_from) <> ''
                         UNION VALUES ('mfg floor'),('rec area'),('receiving area'),('count area'),('n/a'),('na'),('')
                     )
@@ -6674,7 +6497,7 @@ def pcn_history():
                                WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s+[0-9]{2}:[0-9]{2}' THEN TO_TIMESTAMP(tran_time, 'MM/DD/YY HH24:MI:SS')
                                ELSE NULL
                            END as sort_time
-                    FROM pcb_inventory."tblTransaction"
+                    FROM warehouse."tblTransaction"
                     WHERE pcn::text = %s
                       AND COALESCE(reversed, false) = false
                     ORDER BY sort_time DESC NULLS LAST, id DESC
@@ -6686,7 +6509,7 @@ def pcn_history():
                 # Get PCN info from warehouse inventory (header detail).
                 cur.execute("""
                     SELECT item, mpn, dc, onhandqty, mfg_qty, loc_to, msd, po
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE pcn::text = %s
                     LIMIT 1
                 """, (search_pcn,))
@@ -6710,17 +6533,17 @@ def pcn_history():
                 # (bug #20). Summing both keeps all three views on ONE definition.
                 # NOTE: cur is a RealDictCursor here, so fetchone() returns a
                 # dict — read the aggregate by its alias, never by index [0].
-                # READ CUTOVER (Phase 4): anchor on-hand to the canonical event-derived
-                # projection inv_onhand (append-only ledger, kept == warehouse in real time
-                # by the shadow sync + write-path events). Fall back to the warehouse sum if
-                # a PCN has no ledger row yet, so this is never worse than the old anchor.
-                # Both PCN History and Warehouse Inventory now reflect ONE on-hand definition.
+                # READ CUTOVER: anchor on-hand to the ONE ledger — SUM(qty) over
+                # inventory_balance for this PCN (the single source of truth). Fall back
+                # to the warehouse projection only if a PCN predates the ledger, so this
+                # is never worse than the old anchor. Warehouse and PCN History now read
+                # the same number by construction (I3), so they can't disagree.
                 cur.execute("""
                     SELECT COALESCE(
-                        (SELECT SUM(onhand_qty) FROM pcb_inventory.inv_onhand WHERE pcn = %s),
+                        (SELECT SUM(qty) FROM warehouse.inventory_balance WHERE pcn_id = %s),
                         (SELECT SUM(COALESCE(onhandqty, 0)
                                     + CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::int ELSE 0 END)
-                           FROM pcb_inventory."tblWhse_Inventory" WHERE pcn::text = %s),
+                           FROM warehouse."tblWhse_Inventory" WHERE pcn::text = %s),
                         0
                     ) AS total
                 """, (search_pcn, search_pcn))
@@ -6774,7 +6597,7 @@ def stock_alerts():
         # Get low stock items with pagination
         query = """
             SELECT pcn, item, mpn, dc, onhandqty, loc_to, msd, po
-            FROM pcb_inventory."tblWhse_Inventory"
+            FROM warehouse."tblWhse_Inventory"
             WHERE onhandqty < %s AND onhandqty >= 0
             ORDER BY onhandqty ASC, item ASC
         """
@@ -6782,7 +6605,7 @@ def stock_alerts():
         # Get total count
         count_query = """
             SELECT COUNT(*) as total
-            FROM pcb_inventory."tblWhse_Inventory"
+            FROM warehouse."tblWhse_Inventory"
             WHERE onhandqty < %s AND onhandqty >= 0
         """
         cursor.execute(count_query, (LOW_STOCK_THRESHOLD,))
@@ -6889,10 +6712,10 @@ def api_generate_pcn():
             cursor.execute("SELECT pg_advisory_xact_lock(73746)")
             cursor.execute("""
                 SELECT COALESCE(MAX(v), 0) + 1 as next_pcn FROM (
-                    SELECT MAX(pcn::integer) AS v FROM pcb_inventory."tblTransaction"
+                    SELECT MAX(pcn::integer) AS v FROM warehouse."tblTransaction"
                         WHERE pcn ~ '^[0-9]+$'
                     UNION ALL
-                    SELECT MAX(pcn::integer) AS v FROM pcb_inventory."tblWhse_Inventory"
+                    SELECT MAX(pcn::integer) AS v FROM warehouse."tblWhse_Inventory"
                         WHERE pcn ~ '^[0-9]+$'
                 ) m
             """)
@@ -6903,7 +6726,7 @@ def api_generate_pcn():
 
             # Insert into tblTransaction
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblTransaction"
+                INSERT INTO warehouse."tblTransaction"
                 (record_no, trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, wo, po, userid, vendor)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s, %s, %s, %s)
                 RETURNING id, pcn, item, mpn, dc, msd, tranqty, created_at
@@ -6927,24 +6750,36 @@ def api_generate_pcn():
             transaction_record = cursor.fetchone()
             logger.info(f"Created PCN {pcn_number} in tblTransaction (ID: {transaction_record['id']})")
 
-            # Also insert into warehouse inventory
+            # Insert the warehouse METADATA row (onhand owned by the ledger, set to 0
+            # here and projected from the ledger opening STOCK below).
+            gen_location = data.get('location', 'Receiving Area')
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblWhse_Inventory"
-                (item, pcn, mpn, dc, onhandqty, loc_from, loc_to, msd, po, vendor)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO warehouse."tblWhse_Inventory"
+                (item, pcn, mpn, dc, onhandqty, mfg_qty, loc_from, loc_to, msd, po, vendor)
+                VALUES (%s, %s, %s, %s, 0, '0', %s, %s, %s, %s, %s)
             """, (
                 data.get('item'),
                 pcn_number,
                 data.get('mpn') or '',
                 data.get('date_code'),
-                data.get('quantity', 0),  # Set initial quantity from user input
                 data.get('location_from', '-'),
-                data.get('location', 'Receiving Area'),
+                gen_location,
                 data.get('msd'),
                 data.get('po_number'),
                 data.get('vendor_name')
             ))
-            logger.info(f"Added PCN {pcn_number} to warehouse inventory")
+            # Opening balance goes to the ONE ledger, then project the snapshot.
+            lcur = conn.cursor()  # tuple cursor for the ledger service (same txn)
+            try:
+                ledger.stock(lcur, item=data.get('item'), mpn=data.get('mpn'),
+                             pcn=pcn_number, qty=quantity, to_bin=gen_location,
+                             user=session.get('username', 'system'),
+                             po=data.get('po_number'))
+            except ledger.LedgerError as le:
+                conn.rollback()
+                return jsonify({'error': f'PCN generation rejected: {le}'}), 400
+            ledger.project_warehouse(lcur, pcn_number)
+            logger.info(f"Added PCN {pcn_number} to warehouse inventory (ledger opening {quantity})")
 
             conn.commit()
 
@@ -7006,14 +6841,14 @@ def api_get_pcn_details(pcn_number):
             if item_filter:
                 cursor.execute("""
                     SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po, mfg_qty
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE pcn::text = %s AND item::text = %s
                     LIMIT 1
                 """, (pcn_number, item_filter))
             else:
                 cursor.execute("""
                     SELECT pcn, item, mpn, onhandqty, dc, msd, loc_from, loc_to, po, mfg_qty
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE pcn::text = %s
                     ORDER BY id DESC
                 """, (pcn_number,))
@@ -7029,7 +6864,7 @@ def api_get_pcn_details(pcn_number):
                 # Access system does not stay permanently "already picked".
                 # PURGE is treated as a pick for this guard.
                 cursor.execute("""
-                    SELECT trantype FROM pcb_inventory."tblTransaction"
+                    SELECT trantype FROM warehouse."tblTransaction"
                     WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK', 'PURGE')
                       AND userid LIKE '%%@%%'
                     ORDER BY id DESC LIMIT 1
@@ -7113,7 +6948,7 @@ def api_get_pcn_details(pcn_number):
             # If not in tblWhse_Inventory, try tblTransaction
             cursor.execute("""
                 SELECT pcn, item, mpn, tranqty, dc, msd, loc_from, loc_to, wo, po, userid, created_at
-                FROM pcb_inventory."tblTransaction"
+                FROM warehouse."tblTransaction"
                 WHERE pcn::text = %s
                 ORDER BY created_at DESC
                 LIMIT 1
@@ -7175,7 +7010,7 @@ def api_list_pcn():
                 SELECT id as pcn_id, pcn as pcn_number, item, po as po_number,
                        item as part_number, mpn, onhandqty as quantity,
                        dc as date_code, msd, created_at, NULL as created_by
-                FROM pcb_inventory."tblWhse_Inventory"
+                FROM warehouse."tblWhse_Inventory"
                 WHERE pcn IS NOT NULL AND pcn <> ''
                 ORDER BY created_at DESC
                 LIMIT 100
@@ -7234,7 +7069,7 @@ def api_delete_pcn(pcn_number):
             # Check if PCN exists in tblTransaction
             cursor.execute("""
                 SELECT pcn, item
-                FROM pcb_inventory."tblTransaction"
+                FROM warehouse."tblTransaction"
                 WHERE pcn::text = %s
                 LIMIT 1
             """, (pcn_number,))
@@ -7246,18 +7081,27 @@ def api_delete_pcn(pcn_number):
 
             item_name = transaction_record['item']
 
-            # Delete from tblWhse_Inventory (warehouse inventory)
+            # First drive the PCN's on-hand to 0 in the LEDGER by appending ADJUST-out
+            # rows (I5: ledger history is never deleted). This keeps Warehouse == PCN
+            # History at 0 rather than orphaning ledger balance behind a hard delete.
+            lcur = conn.cursor()  # tuple cursor for the ledger service (same txn)
+            zeroed = ledger.zero_out(lcur, pcn_number, user=session.get('username', 'system'))
+            lcur.execute("DELETE FROM warehouse.inventory_balance WHERE pcn_id=%s", (pcn_number,))
+            logger.info(f"Zeroed ledger for PCN {pcn_number} ({zeroed} location(s)) before removing legacy rows")
+
+            # Remove the legacy metadata/audit rows (the canonical, non-destructible
+            # history remains in inventory_txn).
             cursor.execute("""
-                DELETE FROM pcb_inventory."tblWhse_Inventory"
+                DELETE FROM warehouse."tblWhse_Inventory"
                 WHERE pcn::text = %s
             """, (pcn_number,))
 
             deleted_warehouse = cursor.rowcount
             logger.info(f"Deleted {deleted_warehouse} records from tblWhse_Inventory for PCN {pcn_number}")
 
-            # Delete from tblTransaction
+            # Delete from tblTransaction (legacy audit mirror only)
             cursor.execute("""
-                DELETE FROM pcb_inventory."tblTransaction"
+                DELETE FROM warehouse."tblTransaction"
                 WHERE pcn::text = %s
             """, (pcn_number,))
 
@@ -7485,7 +7329,7 @@ def print_label(pcn_number):
                 WITH rows AS (
                     SELECT pcn, item, po, mpn, onhandqty, dc, msd, loc_to,
                            COALESCE(migrated_at, created_at) AS sort_ts
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE pcn::text = %s
                 ),
                 latest AS (
@@ -7546,7 +7390,7 @@ def generate_zpl_label(pcn_number):
                 WITH rows AS (
                     SELECT pcn, item, po, mpn, onhandqty, dc, msd,
                            COALESCE(migrated_at, created_at) AS sort_ts
-                    FROM pcb_inventory."tblWhse_Inventory"
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE pcn::text = %s
                 ),
                 latest AS (
@@ -7656,10 +7500,10 @@ def api_get_valuation_by_date(snapshot_date):
                 SUM(COALESCE(inv.qty, 0)) as total_quantity,
                 SUM(COALESCE(inv.qty, 0) * COALESCE(bom.cost, 0)) as total_value,
                 COUNT(CASE WHEN bom.cost IS NOT NULL AND bom.cost > 0 THEN 1 END) as items_with_cost
-            FROM pcb_inventory."tblPCB_Inventory" inv
+            FROM warehouse."tblPCB_Inventory" inv
             LEFT JOIN LATERAL (
                 SELECT AVG(cost) as cost
-                FROM pcb_inventory."tblBOM"
+                FROM warehouse."tblBOM"
                 WHERE job::text = inv.job
                   AND cost IS NOT NULL
                   AND cost > 0
@@ -7713,7 +7557,7 @@ def api_inventory_history():
         changed_by = request.args.get('changed_by')
 
         # Build query
-        query = "SELECT * FROM pcb_inventory.v_inventory_full_history WHERE 1=1"
+        query = "SELECT * FROM warehouse.v_inventory_full_history WHERE 1=1"
         params = []
 
         if inventory_id:
@@ -7755,7 +7599,7 @@ def api_inventory_history():
         # Degrade gracefully (empty history) instead of crashing the endpoint.
         if conn:
             conn.rollback()
-        logger.warning("api_inventory_history: view pcb_inventory.v_inventory_full_history is absent; returning empty history")
+        logger.warning("api_inventory_history: view warehouse.v_inventory_full_history is absent; returning empty history")
         return jsonify({'success': True, 'data': [], 'total': 0, 'note': 'history view unavailable'})
     except Exception as e:
         logger.error(f"Error fetching inventory history: {e}")
@@ -7774,7 +7618,7 @@ def api_job_history(job_number):
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         cur.execute(
-            "SELECT * FROM pcb_inventory.get_job_history(%s)",
+            "SELECT * FROM warehouse.get_job_history(%s)",
             (job_number,)
         )
         history = cur.fetchall()
@@ -7812,7 +7656,7 @@ def api_pcn_assignment_history():
                 trantype as assignment_type,
                 created_at as assigned_at,
                 userid as assigned_by
-            FROM pcb_inventory."tblTransaction"
+            FROM warehouse."tblTransaction"
             WHERE trantype = 'PCN Generation'
             ORDER BY created_at DESC
         """)
@@ -8074,7 +7918,7 @@ def api_bom_load():
 
         try:
             # Delete existing BOM records for this job
-            cur.execute('DELETE FROM pcb_inventory."tblBOM" WHERE job::text = %s', (job,))
+            cur.execute('DELETE FROM warehouse."tblBOM" WHERE job::text = %s', (job,))
             deleted_count = cur.rowcount
             logger.info(f"Deleted {deleted_count} existing BOM records for job {job}")
 
@@ -8099,7 +7943,7 @@ def api_bom_load():
                     cost = 0.0
                 try:
                     cur.execute("""
-                        INSERT INTO pcb_inventory."tblBOM"
+                        INSERT INTO warehouse."tblBOM"
                         (job, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
                          job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
@@ -8141,7 +7985,7 @@ def api_bom_load():
             # default), and DO NOT overwrite it on re-upload — a user who has
             # already set order_qty keeps it when a corrected BOM is loaded.
             cur.execute("""
-                INSERT INTO pcb_inventory."tblJob"
+                INSERT INTO warehouse."tblJob"
                 (job_number, customer, cust_pn, build_qty, job_rev, cust_rev, last_rev,
                  wo_number, notes, status, created_by, order_qty)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'New', %s, 1)
@@ -8255,7 +8099,7 @@ def admin_notifications():
             WITH log AS (
                 SELECT id, user_id, username, full_name, action_type,
                        description, details, created_at, seen, seen_at
-                FROM pcb_inventory."tblActivityLog"
+                FROM warehouse."tblActivityLog"
                 {base_where}
                 ORDER BY created_at DESC
                 LIMIT 200
@@ -8277,7 +8121,7 @@ def admin_notifications():
                                THEN TO_TIMESTAMP(tx.tran_time, 'MM/DD/YY HH24:MI:SS')
                            ELSE NULL
                        END AS ts
-                FROM pcb_inventory."tblTransaction" tx, log_window lw
+                FROM warehouse."tblTransaction" tx, log_window lw
                 WHERE tx.userid IS NOT NULL
                   AND tx.tran_time IS NOT NULL
                   -- Cheap text prefilter: tblTransaction.tran_time is text;
@@ -8333,12 +8177,12 @@ def admin_notifications():
 
         if theresa_scope:
             cursor.execute("""
-                SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog"
+                SELECT COUNT(*) as count FROM warehouse."tblActivityLog"
                 WHERE seen = FALSE AND username = 'james@americancircuits.com'
             """)
         else:
             cursor.execute("""
-                SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
+                SELECT COUNT(*) as count FROM warehouse."tblActivityLog" WHERE seen = FALSE
             """)
         unseen_count = cursor.fetchone()['count']
 
@@ -8371,7 +8215,7 @@ def mark_notifications_seen():
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE pcb_inventory."tblActivityLog"
+            UPDATE warehouse."tblActivityLog"
             SET seen = TRUE, seen_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
             WHERE seen = FALSE
         """)
@@ -8408,7 +8252,7 @@ def clear_notifications():
         cursor = conn.cursor()
 
         cursor.execute("""
-            DELETE FROM pcb_inventory."tblActivityLog"
+            DELETE FROM warehouse."tblActivityLog"
             WHERE created_at < NOW() - INTERVAL '7 days'
         """)
         deleted_count = cursor.rowcount
@@ -8458,12 +8302,12 @@ def get_notification_count():
 
         if theresa_scope:
             cursor.execute("""
-                SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog"
+                SELECT COUNT(*) as count FROM warehouse."tblActivityLog"
                 WHERE seen = FALSE AND username = 'james@americancircuits.com'
             """)
         else:
             cursor.execute("""
-                SELECT COUNT(*) as count FROM pcb_inventory."tblActivityLog" WHERE seen = FALSE
+                SELECT COUNT(*) as count FROM warehouse."tblActivityLog" WHERE seen = FALSE
             """)
         result = cursor.fetchone()
         count = result['count']
@@ -8497,7 +8341,7 @@ def jobs_list():
             cursor.execute("""
                 SELECT id, job_number, description, customer, cust_pn, build_qty,
                        job_rev, status, created_by, created_at
-                FROM pcb_inventory."tblJob"
+                FROM warehouse."tblJob"
                 WHERE job_number ILIKE %s OR customer ILIKE %s OR description ILIKE %s
                 ORDER BY created_at DESC
             """, (f'%{search_query}%', f'%{search_query}%', f'%{search_query}%'))
@@ -8505,7 +8349,7 @@ def jobs_list():
             cursor.execute("""
                 SELECT id, job_number, description, customer, cust_pn, build_qty,
                        job_rev, status, created_by, created_at
-                FROM pcb_inventory."tblJob"
+                FROM warehouse."tblJob"
                 ORDER BY created_at DESC
             """)
         jobs = cursor.fetchall()
@@ -8535,7 +8379,7 @@ def job_detail(job_number):
 
         # Get job record
         cursor.execute("""
-            SELECT * FROM pcb_inventory."tblJob"
+            SELECT * FROM warehouse."tblJob"
             WHERE job_number = %s
         """, (job_number,))
         job = cursor.fetchone()
@@ -8549,7 +8393,7 @@ def job_detail(job_number):
 
         # Get latest revision for this job
         cursor.execute("""
-            SELECT job_rev FROM pcb_inventory."tblBOM"
+            SELECT job_rev FROM warehouse."tblBOM"
             WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
             ORDER BY created_at DESC LIMIT 1
         """, (job_number,))
@@ -8574,10 +8418,10 @@ def job_detail(job_number):
                     b.cust,
                     b.cust_pn,
                     b.cust_rev
-                FROM pcb_inventory."tblBOM" b
+                FROM warehouse."tblBOM" b
                 WHERE b.job = %s
-                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                    AND (b.job_rev = (SELECT job_rev FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
                 -- Collapse alternate parts (same aci_pn) to the row carrying the
                 -- line's real qty. Alternates ("ZSUB FOR ABOVE") have a blank/0 qty,
                 -- so order by qty DESC to deterministically pick the primary row;
@@ -8598,7 +8442,7 @@ def job_detail(job_number):
                     (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
                     (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
-                LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                LEFT JOIN warehouse."tblWhse_Inventory" w
                     ON w.item = bl.aci_pn
                 GROUP BY bl.aci_pn
             )
@@ -8677,7 +8521,7 @@ def job_detail(job_number):
         # Update status if changed
         if computed_status != job['status']:
             cursor.execute("""
-                UPDATE pcb_inventory."tblJob"
+                UPDATE warehouse."tblJob"
                 SET status = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
                 WHERE job_number = %s
             """, (computed_status, job_number))
@@ -8688,7 +8532,7 @@ def job_detail(job_number):
         cursor.execute("""
             SELECT id, report_name, order_qty, total_lines, shortage_lines,
                    created_by, created_at
-            FROM pcb_inventory."tblShortageReport"
+            FROM warehouse."tblShortageReport"
             WHERE job = %s
             ORDER BY created_at DESC
         """, (job_number,))
@@ -8729,7 +8573,7 @@ def job_update_build_qty(job_number):
         conn = db_manager.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            UPDATE pcb_inventory."tblJob"
+            UPDATE warehouse."tblJob"
             SET build_qty = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
             WHERE job_number = %s
         """, (build_qty, job_number))
@@ -8761,7 +8605,7 @@ def job_update_order_qty(job_number):
         conn = db_manager.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            UPDATE pcb_inventory."tblJob"
+            UPDATE warehouse."tblJob"
             SET order_qty = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
             WHERE job_number = %s
         """, (order_qty, job_number))
@@ -8787,7 +8631,7 @@ def job_generate_shortage(job_number):
 
         # Get job record
         cursor.execute("""
-            SELECT * FROM pcb_inventory."tblJob" WHERE job_number = %s
+            SELECT * FROM warehouse."tblJob" WHERE job_number = %s
         """, (job_number,))
         job = cursor.fetchone()
 
@@ -8847,7 +8691,7 @@ def job_export(job_number):
 
         # Get job record
         cursor.execute("""
-            SELECT * FROM pcb_inventory."tblJob" WHERE job_number = %s
+            SELECT * FROM warehouse."tblJob" WHERE job_number = %s
         """, (job_number,))
         job = cursor.fetchone()
 
@@ -8859,7 +8703,7 @@ def job_export(job_number):
 
         # Get latest revision
         cursor.execute("""
-            SELECT job_rev FROM pcb_inventory."tblBOM"
+            SELECT job_rev FROM warehouse."tblBOM"
             WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
             ORDER BY created_at DESC LIMIT 1
         """, (job_number,))
@@ -8877,10 +8721,10 @@ def job_export(job_number):
                     b."DESC",
                     b.qty,
                     b.cost
-                FROM pcb_inventory."tblBOM" b
+                FROM warehouse."tblBOM" b
                 WHERE b.job = %s
-                    AND (b.job_rev = (SELECT job_rev FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                         OR NOT EXISTS (SELECT 1 FROM pcb_inventory."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+                    AND (b.job_rev = (SELECT job_rev FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+                         OR NOT EXISTS (SELECT 1 FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
                 -- Collapse alternate parts (same aci_pn) to the row carrying the
                 -- line's real qty. Alternates ("ZSUB FOR ABOVE") have a blank/0 qty,
                 -- so order by qty DESC to deterministically pick the primary row;
@@ -8900,7 +8744,7 @@ def job_export(job_number):
                     (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
                     (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
-                LEFT JOIN pcb_inventory."tblWhse_Inventory" w
+                LEFT JOIN warehouse."tblWhse_Inventory" w
                     ON w.item = bl.aci_pn
                 GROUP BY bl.aci_pn
             )
@@ -9041,7 +8885,7 @@ def job_delete(job_number):
         conn = db_manager.get_connection()
         cursor = conn.cursor()
 
-        cursor.execute('DELETE FROM pcb_inventory."tblJob" WHERE job_number = %s', (job_number,))
+        cursor.execute('DELETE FROM warehouse."tblJob" WHERE job_number = %s', (job_number,))
         if cursor.rowcount == 0:
             flash(f'Job {job_number} not found.', 'danger')
         else:
@@ -9078,7 +8922,7 @@ def job_create_revision(job_number):
 
         # Get the current revision
         cursor.execute("""
-            SELECT job_rev FROM pcb_inventory."tblBOM"
+            SELECT job_rev FROM warehouse."tblBOM"
             WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''
             ORDER BY created_at DESC LIMIT 1
         """, (job_number,))
@@ -9087,7 +8931,7 @@ def job_create_revision(job_number):
 
         # Check if new rev already exists in archive (prevent reuse of archived rev names)
         cursor.execute("""
-            SELECT COUNT(*) as count FROM pcb_inventory."tblBOM_Archive"
+            SELECT COUNT(*) as count FROM warehouse."tblBOM_Archive"
             WHERE job = %s AND job_rev = %s
         """, (job_number, new_rev))
         if cursor.fetchone()['count'] > 0:
@@ -9098,14 +8942,14 @@ def job_create_revision(job_number):
             cursor.execute("""
                 SELECT id, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
                        job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at
-                FROM pcb_inventory."tblBOM"
+                FROM warehouse."tblBOM"
                 WHERE job = %s AND job_rev = %s
             """, (job_number, current_rev))
         else:
             cursor.execute("""
                 SELECT id, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
                        job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at
-                FROM pcb_inventory."tblBOM"
+                FROM warehouse."tblBOM"
                 WHERE job = %s
             """, (job_number,))
 
@@ -9116,7 +8960,7 @@ def job_create_revision(job_number):
         # Step 1: Archive the old BOM lines
         for line in source_lines:
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblBOM_Archive"
+                INSERT INTO warehouse."tblBOM_Archive"
                 (original_id, job, line, "DESC", man, mpn, aci_pn, qty, pou, loc, cost,
                  job_rev, last_rev, cust, cust_pn, cust_rev, date_loaded, created_at, archived_by)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -9130,14 +8974,14 @@ def job_create_revision(job_number):
         # Step 2: Update existing BOM lines in place with new revision (no duplication)
         if current_rev:
             cursor.execute("""
-                UPDATE pcb_inventory."tblBOM"
+                UPDATE warehouse."tblBOM"
                 SET job_rev = %s, last_rev = %s,
                     date_loaded = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YYYY HH24:MI:SS')
                 WHERE job = %s AND job_rev = %s
             """, (new_rev, current_rev, job_number, current_rev))
         else:
             cursor.execute("""
-                UPDATE pcb_inventory."tblBOM"
+                UPDATE warehouse."tblBOM"
                 SET job_rev = %s, last_rev = %s,
                     date_loaded = TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YYYY HH24:MI:SS')
                 WHERE job = %s
@@ -9145,7 +8989,7 @@ def job_create_revision(job_number):
 
         # Step 3: Update tblJob with new revision info
         cursor.execute("""
-            UPDATE pcb_inventory."tblJob"
+            UPDATE warehouse."tblJob"
             SET job_rev = %s, last_rev = %s, updated_at = CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'
             WHERE job_number = %s
         """, (new_rev, current_rev or '', job_number))
@@ -9174,7 +9018,7 @@ def api_job_check(job_number):
 
         cursor.execute("""
             SELECT id, job_number, status, build_qty, customer, job_rev
-            FROM pcb_inventory."tblJob" WHERE job_number = %s
+            FROM warehouse."tblJob" WHERE job_number = %s
         """, (job_number,))
         job = cursor.fetchone()
 
@@ -9206,7 +9050,7 @@ def admin_users():
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("""
                 SELECT id, userid, username, userlogin, usersecurity
-                FROM pcb_inventory."tblUser"
+                FROM warehouse."tblUser"
                 ORDER BY id
             """)
             users = cursor.fetchall()
@@ -9251,7 +9095,7 @@ def admin_create_user():
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             # Check for duplicate userlogin
             cursor.execute("""
-                SELECT id FROM pcb_inventory."tblUser" WHERE userlogin = %s
+                SELECT id FROM warehouse."tblUser" WHERE userlogin = %s
             """, (userlogin,))
             if cursor.fetchone():
                 flash(f'Username "{userlogin}" already exists.', 'danger')
@@ -9261,7 +9105,7 @@ def admin_create_user():
             password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblUser" (username, userlogin, password, usersecurity)
+                INSERT INTO warehouse."tblUser" (username, userlogin, password, usersecurity)
                 VALUES (%s, %s, %s, %s)
             """, (username, userlogin, password_hash, usersecurity))
             conn.commit()
@@ -9313,13 +9157,13 @@ def admin_edit_user(user_id):
                     return redirect(url_for('admin_users'))
                 password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                 cursor.execute("""
-                    UPDATE pcb_inventory."tblUser"
+                    UPDATE warehouse."tblUser"
                     SET username = %s, usersecurity = %s, password = %s
                     WHERE id = %s
                 """, (username, usersecurity, password_hash, user_id))
             else:
                 cursor.execute("""
-                    UPDATE pcb_inventory."tblUser"
+                    UPDATE warehouse."tblUser"
                     SET username = %s, usersecurity = %s
                     WHERE id = %s
                 """, (username, usersecurity, user_id))
@@ -9358,7 +9202,7 @@ def admin_delete_user(user_id):
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             # Get username for logging
             cursor.execute("""
-                SELECT userlogin FROM pcb_inventory."tblUser" WHERE id = %s
+                SELECT userlogin FROM warehouse."tblUser" WHERE id = %s
             """, (user_id,))
             user = cursor.fetchone()
 
@@ -9367,7 +9211,7 @@ def admin_delete_user(user_id):
                 return redirect(url_for('admin_users'))
 
             cursor.execute("""
-                DELETE FROM pcb_inventory."tblUser" WHERE id = %s
+                DELETE FROM warehouse."tblUser" WHERE id = %s
             """, (user_id,))
             conn.commit()
 
@@ -9424,14 +9268,14 @@ def admin_locations():
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute("""
                 SELECT id, area, shelf, loc, location
-                FROM pcb_inventory."tblLoc"
+                FROM warehouse."tblLoc"
                 ORDER BY location
             """)
             locations = cursor.fetchall()
 
             # Get unique areas for filter dropdown
             cursor.execute("""
-                SELECT DISTINCT area FROM pcb_inventory."tblLoc"
+                SELECT DISTINCT area FROM warehouse."tblLoc"
                 WHERE area IS NOT NULL ORDER BY area
             """)
             areas = [r['area'] for r in cursor.fetchall()]
@@ -9469,13 +9313,13 @@ def admin_create_location():
         conn = db_manager.get_connection()
         with conn.cursor() as cursor:
             # Check for duplicate
-            cursor.execute('SELECT COUNT(*) FROM pcb_inventory."tblLoc" WHERE location = %s', (location,))
+            cursor.execute('SELECT COUNT(*) FROM warehouse."tblLoc" WHERE location = %s', (location,))
             if cursor.fetchone()[0] > 0:
                 flash(f'Location {location} already exists.', 'danger')
                 return redirect(url_for('admin_locations'))
 
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblLoc" (area, shelf, loc, location)
+                INSERT INTO warehouse."tblLoc" (area, shelf, loc, location)
                 VALUES (%s, %s, %s, %s)
             """, (
                 int(area) if area else None,
@@ -9514,14 +9358,14 @@ def admin_delete_location(location_id):
     try:
         conn = db_manager.get_connection()
         with conn.cursor() as cursor:
-            cursor.execute('SELECT location FROM pcb_inventory."tblLoc" WHERE id = %s', (location_id,))
+            cursor.execute('SELECT location FROM warehouse."tblLoc" WHERE id = %s', (location_id,))
             row = cursor.fetchone()
             if not row:
                 flash('Location not found.', 'danger')
                 return redirect(url_for('admin_locations'))
 
             loc_name = row[0]
-            cursor.execute('DELETE FROM pcb_inventory."tblLoc" WHERE id = %s', (location_id,))
+            cursor.execute('DELETE FROM warehouse."tblLoc" WHERE id = %s', (location_id,))
             conn.commit()
             try:
                 cache.delete('locations_payload_v1')
@@ -9568,7 +9412,7 @@ def _lookup_pcn_full(cursor, pcn):
         return {'found': False, 'pcn': '', 'mpn': '', 'item': '', 'job': ''}
     cursor.execute("""
         SELECT mpn, item
-        FROM pcb_inventory."tblWhse_Inventory"
+        FROM warehouse."tblWhse_Inventory"
         WHERE pcn::text = %s
         LIMIT 1
     """, (pcn_clean,))
@@ -9584,7 +9428,7 @@ def _lookup_pcn_full(cursor, pcn):
         # match, prefer the one with the latest tblBOM.date_loaded.
         cursor.execute("""
             SELECT job::text
-            FROM pcb_inventory."tblBOM"
+            FROM warehouse."tblBOM"
             WHERE aci_pn = %s
             ORDER BY date_loaded DESC NULLS LAST, id DESC
             LIMIT 1
@@ -9652,7 +9496,7 @@ def api_reel_change_check():
             swap_job = job or old['job'] or new['job']
 
             cursor.execute("""
-                INSERT INTO pcb_inventory."tblReelChangeLog"
+                INSERT INTO warehouse."tblReelChangeLog"
                     (job, old_pcn, old_mpn, old_item, old_job,
                           new_pcn, new_mpn, new_item, new_job,
                      result, user_id, username)
@@ -9748,8 +9592,8 @@ def api_reel_change_demo():
                     SELECT a.pcn::text AS old_pcn, b.pcn::text AS new_pcn,
                            a.mpn AS old_mpn, b.mpn AS new_mpn,
                            a.item AS old_item, b.item AS new_item
-                    FROM pcb_inventory."tblWhse_Inventory" a
-                    JOIN pcb_inventory."tblWhse_Inventory" b
+                    FROM warehouse."tblWhse_Inventory" a
+                    JOIN warehouse."tblWhse_Inventory" b
                       ON LOWER(TRIM(a.mpn)) = LOWER(TRIM(b.mpn))
                      AND a.pcn::text < b.pcn::text
                     WHERE a.mpn IS NOT NULL AND TRIM(a.mpn) <> ''
@@ -9761,8 +9605,8 @@ def api_reel_change_demo():
                     SELECT a.pcn::text AS old_pcn, b.pcn::text AS new_pcn,
                            a.mpn AS old_mpn, b.mpn AS new_mpn,
                            a.item AS old_item, b.item AS new_item
-                    FROM pcb_inventory."tblWhse_Inventory" a
-                    JOIN pcb_inventory."tblWhse_Inventory" b
+                    FROM warehouse."tblWhse_Inventory" a
+                    JOIN warehouse."tblWhse_Inventory" b
                       ON LOWER(TRIM(a.item)) = LOWER(TRIM(b.item))
                      AND LOWER(TRIM(COALESCE(a.mpn,''))) <> LOWER(TRIM(COALESCE(b.mpn,'')))
                      AND a.pcn::text < b.pcn::text
@@ -9774,8 +9618,8 @@ def api_reel_change_demo():
                     SELECT a.pcn::text AS old_pcn, b.pcn::text AS new_pcn,
                            a.mpn AS old_mpn, b.mpn AS new_mpn,
                            a.item AS old_item, b.item AS new_item
-                    FROM pcb_inventory."tblWhse_Inventory" a
-                    JOIN pcb_inventory."tblWhse_Inventory" b
+                    FROM warehouse."tblWhse_Inventory" a
+                    JOIN warehouse."tblWhse_Inventory" b
                       ON LOWER(TRIM(COALESCE(a.item,''))) <> LOWER(TRIM(COALESCE(b.item,'')))
                      AND LOWER(TRIM(COALESCE(a.mpn,''))) <> LOWER(TRIM(COALESCE(b.mpn,'')))
                      AND a.pcn::text < b.pcn::text
@@ -9828,7 +9672,7 @@ def api_reel_change_recent():
                        old_pcn, old_mpn, old_item,
                        new_pcn, new_mpn, new_item,
                        result, username, created_at
-                FROM pcb_inventory."tblReelChangeLog"
+                FROM warehouse."tblReelChangeLog"
                 ORDER BY id DESC
                 LIMIT %s
             """, (limit,))
@@ -9856,7 +9700,7 @@ def api_reel_change_delete(entry_id):
         conn = db_manager.get_connection()
         with conn.cursor() as cursor:
             cursor.execute(
-                'DELETE FROM pcb_inventory."tblReelChangeLog" WHERE id = %s',
+                'DELETE FROM warehouse."tblReelChangeLog" WHERE id = %s',
                 (entry_id,)
             )
             deleted = cursor.rowcount
@@ -9906,11 +9750,11 @@ def api_aci_next_number():
             cursor.execute("""
                 WITH used AS (
                     SELECT CAST(SUBSTRING(item FROM 5) AS INTEGER) as num
-                    FROM pcb_inventory."tblPN_List"
+                    FROM warehouse."tblPN_List"
                     WHERE item ~ '^ACI-[0-9]{5}$'
                     UNION
                     SELECT CAST(SUBSTRING(aci_pn FROM 5) AS INTEGER) as num
-                    FROM pcb_inventory."tblACI_PartNumbers"
+                    FROM warehouse."tblACI_PartNumbers"
                     WHERE aci_pn ~ '^ACI-[0-9]{5}$'
                 )
                 SELECT MIN(n) FROM generate_series(
@@ -9955,16 +9799,16 @@ def api_aci_create():
 
         with conn.cursor() as cursor:
             # Lock to prevent race conditions on concurrent creates
-            cursor.execute("LOCK TABLE pcb_inventory.\"tblACI_PartNumbers\" IN EXCLUSIVE MODE")
+            cursor.execute("LOCK TABLE warehouse.\"tblACI_PartNumbers\" IN EXCLUSIVE MODE")
 
             # Build set of all currently used ACI numbers
             cursor.execute("""
                 SELECT CAST(SUBSTRING(item FROM 5) AS INTEGER) as num
-                FROM pcb_inventory."tblPN_List"
+                FROM warehouse."tblPN_List"
                 WHERE item ~ '^ACI-[0-9]{5}$'
                 UNION
                 SELECT CAST(SUBSTRING(aci_pn FROM 5) AS INTEGER) as num
-                FROM pcb_inventory."tblACI_PartNumbers"
+                FROM warehouse."tblACI_PartNumbers"
                 WHERE aci_pn ~ '^ACI-[0-9]{5}$'
             """)
             used_numbers = set(r[0] for r in cursor.fetchall())
@@ -9994,14 +9838,14 @@ def api_aci_create():
 
                 # Insert into tblACI_PartNumbers
                 cursor.execute("""
-                    INSERT INTO pcb_inventory."tblACI_PartNumbers"
+                    INSERT INTO warehouse."tblACI_PartNumbers"
                     (aci_pn, manufacturer, mpn, description, comment, created_by)
                     VALUES (%s, %s, %s, %s, %s, %s)
                 """, (aci_pn, manufacturer, mpn, description, comment, username))
 
                 # Also insert into tblPN_List so it shows up in inventory lookups
                 cursor.execute("""
-                    INSERT INTO pcb_inventory."tblPN_List" (item, "DESC")
+                    INSERT INTO warehouse."tblPN_List" (item, "DESC")
                     VALUES (%s, %s)
                     ON CONFLICT DO NOTHING
                 """, (aci_pn, description))
@@ -10057,7 +9901,7 @@ def api_aci_history():
             cursor.execute("""
                 SELECT aci_pn, manufacturer, mpn, description, comment, created_by,
                        TO_CHAR(created_at, 'MM/DD/YYYY HH12:MI AM') as created_at_fmt
-                FROM pcb_inventory."tblACI_PartNumbers"
+                FROM warehouse."tblACI_PartNumbers"
                 ORDER BY id DESC
                 LIMIT 100
             """)
@@ -10086,7 +9930,7 @@ def api_aci_delete():
         conn = db_manager.get_connection()
         with conn.cursor() as cursor:
             cursor.execute(
-                'DELETE FROM pcb_inventory."tblACI_PartNumbers" WHERE aci_pn = %s',
+                'DELETE FROM warehouse."tblACI_PartNumbers" WHERE aci_pn = %s',
                 (aci_pn,)
             )
             deleted = cursor.rowcount
@@ -10119,7 +9963,7 @@ def api_aci_lookup(aci_pn):
         try:
             cursor.execute("""
                 SELECT aci_pn, manufacturer, mpn, description, comment
-                FROM pcb_inventory."tblACI_PartNumbers"
+                FROM warehouse."tblACI_PartNumbers"
                 WHERE aci_pn = %s
                 LIMIT 1
             """, (aci_pn,))
@@ -10163,7 +10007,7 @@ def api_aci_update():
         conn = db_manager.get_connection()
         with conn.cursor() as cursor:
             cursor.execute("""
-                UPDATE pcb_inventory."tblACI_PartNumbers"
+                UPDATE warehouse."tblACI_PartNumbers"
                 SET manufacturer = %s, mpn = %s, description = %s, comment = %s
                 WHERE aci_pn = %s
             """, (manufacturer, mpn, description, comment, aci_pn))
