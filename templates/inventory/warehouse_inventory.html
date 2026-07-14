@@ -142,7 +142,6 @@
                         <th style="border: none; font-weight: 600; padding: 14px;">Loc From</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">Loc To</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MFG Qty</th>
-                        <th style="border: none; font-weight: 700; padding: 14px;" title="Bin On Hand + MFG Floor — matches PCN History">Total On Hand</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">MSD</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">PO</th>
                         <th style="border: none; font-weight: 600; padding: 14px;">Vendor</th>
@@ -162,7 +161,6 @@
                         <td>{{ row.Loc_From if row.Loc_From else '-' }}</td>
                         <td>{{ row.Loc_To.replace('Receiving Area', 'Rec Area') if row.Loc_To else '-' }}</td>
                         <td>{{ row.MFG_Qty if row.MFG_Qty else '-' }}</td>
-                        <td style="font-weight: 700;">{{ row.TotalOnHand if row.TotalOnHand is not none else '0' }}</td>
                         <td>{{ row.MSD.replace('Level', 'Lvl') if row.MSD else '-' }}</td>
                         <td>{{ row.PO if row.PO else '-' }}</td>
                         <td>{{ row.Vendor if row.Vendor else '-' }}</td>
