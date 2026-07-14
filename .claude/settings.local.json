@@ -21,7 +21,11 @@
       "Bash(python verify-bug-11-fix.py)",
       "Bash(python verify-bug-12-fix.py)",
       "Bash(python verify-bug-13-fix.py)",
-      "Bash(python verify-bug-14-fix.py)"
+      "Bash(python verify-bug-14-fix.py)",
+      "Bash(docker cp:*)",
+      "Bash(docker kill --signal=HUP stockandpick_webapp)",
+      "Bash(docker exec -i -e PGPASSWORD aci-database psql:*)"
+      "Bash(./scripts/prod_cutover.sh)"
     ],
     "deny": [],
     "ask": [],
