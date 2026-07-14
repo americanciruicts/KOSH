@@ -209,6 +209,23 @@ def ship(cur, item, mpn, pcn, qty, from_location, *, txn_type='SHIP', user='syst
                    created_by=user, wo=wo, note=note)
 
 
+def consume(cur, item, mpn, pcn, qty, *, from_location=FLOOR_CODE, user='system',
+            wo=None, note=None):
+    """Record production CONSUMPTION of `qty` off the floor (floor -> out of system).
+
+    This is the event KOSH never had (see app._floor_janitor): parts picked bin->floor
+    for a job are eaten when the job runs, but nothing decremented the floor, so floor
+    counts froze forever (the 'stale MFG-Floor phantom'). CONSUME closes that gap: it is
+    a transfer OUT (like ship) that lowers the floor and conserves nothing (the parts
+    leave the system). Over-consume is rejected (I1); history is preserved (I5)."""
+    qty = _qty(qty)
+    part_id = resolve_part(cur, item, mpn)
+    from_loc = resolve_location(cur, from_location)
+    _subtract(cur, part_id, pcn, from_loc, qty, where=str(from_location))
+    return _record(cur, 'CONSUME', part_id, pcn, qty, from_loc, None,
+                   created_by=user, wo=wo, note=note)
+
+
 def adjust(cur, item, mpn, pcn, delta, location, *, user='system', note=None):
     """Manual signed correction at ONE location (I7).  delta>0 raises, delta<0 lowers.
     A single edit can never fill two places."""

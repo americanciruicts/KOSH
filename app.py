@@ -3492,6 +3492,107 @@ def _nightly_integrity_check():
 threading.Thread(target=_nightly_integrity_check, daemon=True).start()
 
 
+def _floor_janitor():
+    """Daily self-healing sweep that CONSUMES stale MFG-Floor phantom stock.
+
+    Root cause it fixes: KOSH records STOCK/PICK/RESTOCK but has no 'consumed by
+    production' event, so parts picked bin->floor for a job stay frozen on the floor
+    forever once the job eats them (floor only ever drops on RESTOCK). Without this,
+    floor counts creep up again exactly like the ~3.7M-unit backlog cleared 2026-07-14.
+
+    Rule: a PCN whose MOST-RECENT pick (in EITHER the ledger or the legacy
+    tblTransaction) is older than FLOOR_JANITOR_MONTHS and still has floor stock = the
+    job is long done = the residual is consumed -> append a CONSUME ledger row (floor ->
+    out), zero the floor, re-project tblWhse_Inventory. A live/recent pick keeps
+    last_pick recent, so active staged jobs are never touched. Every action is written
+    to warehouse.floor_janitor_audit for reversal (I5). Bin qty is never touched.
+    Env: FLOOR_JANITOR_ENABLED (default '1'), FLOOR_JANITOR_MONTHS (default '6'),
+    FLOOR_JANITOR_MAX rows/run (default '5000')."""
+    import time
+    time.sleep(240)  # let the app settle on boot (after the integrity check)
+    while True:
+        if os.getenv('FLOOR_JANITOR_ENABLED', '1') != '1':
+            time.sleep(86400)
+            continue
+        months = int(os.getenv('FLOOR_JANITOR_MONTHS', '6'))
+        cap = int(os.getenv('FLOOR_JANITOR_MAX', '5000'))
+        conn = None
+        try:
+            conn = db_manager.get_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                WITH floor_bal AS (
+                  SELECT b.pcn_id, b.part_id, b.location_id, b.qty AS floor_qty
+                  FROM warehouse.inventory_balance b
+                  JOIN warehouse.inv_location l USING(location_id)
+                  WHERE l.kind='FLOOR' AND b.qty>0),
+                ledger_pick AS (
+                  SELECT pcn_id, MAX(occurred_at) lp FROM warehouse.inventory_txn
+                  WHERE txn_type='PICK' AND reversed=false GROUP BY pcn_id),
+                legacy_pick AS (
+                  SELECT pcn::text pcn, MAX(CASE
+                      WHEN tran_time ~ '^[0-9]{4}-' THEN tran_time::timestamptz
+                      WHEN tran_time ~ '^[0-9]{2}/[0-9]{2}/[0-9]{2}\\s'
+                        THEN TO_TIMESTAMP(tran_time,'MM/DD/YY HH24:MI:SS') END) lp
+                  FROM warehouse."tblTransaction"
+                  WHERE trantype='PICK' AND COALESCE(reversed,false)=false GROUP BY pcn)
+                SELECT f.pcn_id, f.part_id, p.item_raw, p.mpn_raw, f.floor_qty,
+                       GREATEST(COALESCE(lp.lp,'-infinity'),COALESCE(lg.lp,'-infinity')) AS last_pick
+                FROM floor_bal f
+                JOIN warehouse.inv_part p USING(part_id)
+                LEFT JOIN ledger_pick lp ON lp.pcn_id=f.pcn_id
+                LEFT JOIN legacy_pick lg ON lg.pcn=f.pcn_id
+                WHERE GREATEST(COALESCE(lp.lp,'-infinity'),COALESCE(lg.lp,'-infinity')) > '-infinity'
+                  AND GREATEST(COALESCE(lp.lp,'-infinity'),COALESCE(lg.lp,'-infinity'))
+                      < now() - make_interval(months => %s)
+                ORDER BY last_pick ASC
+                LIMIT %s
+            """, (months, cap))
+            rows = cur.fetchall()
+            consumed_pcns = 0
+            consumed_units = 0
+            for pcn_id, part_id, item_raw, mpn_raw, floor_qty, last_pick in rows:
+                age_days = (datetime.now(last_pick.tzinfo) - last_pick).days if last_pick else None
+                txn_id = ledger.consume(
+                    cur, item_raw, mpn_raw, pcn_id, floor_qty, user='floor_janitor',
+                    note=f'stale floor auto-consumed (last pick {last_pick:%Y-%m-%d}, '
+                         f'{age_days}d, >{months}mo)')
+                ledger.project_warehouse(cur, pcn_id)
+                cur.execute("""
+                    INSERT INTO warehouse.floor_janitor_audit
+                      (pcn_id, part_id, item_raw, mpn_raw, location_id, consumed_qty,
+                       last_pick, age_days, txn_id)
+                    SELECT %s,%s,%s,%s,location_id,%s,%s,%s,%s
+                    FROM warehouse.inv_location WHERE kind='FLOOR' LIMIT 1
+                """, (pcn_id, part_id, item_raw, mpn_raw, floor_qty, last_pick, age_days, txn_id))
+                consumed_pcns += 1
+                consumed_units += floor_qty
+            conn.commit()
+            if consumed_pcns:
+                logger.warning("Floor janitor: auto-consumed %s stale phantoms across "
+                               "%s PCNs (>%smo)%s", consumed_units, consumed_pcns, months,
+                               "  [HIT CAP — more remain, will continue tomorrow]"
+                               if consumed_pcns >= cap else "")
+            else:
+                logger.info("Floor janitor: no stale floor phantoms (>%smo) — clean", months)
+        except Exception as e:
+            logger.error(f"Floor janitor error: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        finally:
+            if conn:
+                try:
+                    db_manager.return_connection(conn)
+                except Exception:
+                    pass
+        time.sleep(86400)  # once per day
+
+threading.Thread(target=_floor_janitor, daemon=True).start()
+
+
 def _do_log_activity(user_id, username, full_name, action_type, description, details):
     """Background worker that inserts a row into tblActivityLog."""
     conn = None
