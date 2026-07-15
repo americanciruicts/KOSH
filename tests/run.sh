@@ -12,10 +12,20 @@
 set -e
 cd "$(dirname "$0")/.."
 
-CONTAINER=stockandpick_webapp
+# Every Postgres suite below COMMITS (db_manager.restock_pcb commits internally, so
+# SAVEPOINT/rollback cannot contain it) — so they ALL run against the kosh_test
+# container, never production. This used to point at stockandpick_webapp/`kosh`, which
+# broke Preet's standing rule ("no generate-and-delete PCN tests on prod") and on
+# 2026-07-15 leaked 70 phantom units into the prod ledger across PCNs 99001/99002/99005
+# (the legacy cleanup didn't know about inventory_txn/inventory_balance).
+CONTAINER=kosh_test_webapp
 if ! docker ps --filter "name=${CONTAINER}" --format '{{.Names}}' | grep -q "${CONTAINER}"; then
-    echo "Container ${CONTAINER} is not running. Start it first:"
-    echo "  docker compose up -d"
+    echo "FAIL: test container ${CONTAINER} is not running — the DB suites cannot run."
+    echo "      Refusing to pass: a green run with no DB coverage is how the gate"
+    echo "      silently rotted in the first place. Start it (kosh_test DB), e.g.:"
+    echo "        docker run -d --name ${CONTAINER} --network db-consolidation_aci-network \\"
+    echo "          -p 5056:5000 -e POSTGRES_DB=kosh_test -e POSTGRES_HOST=aci-database \\"
+    echo "          -e POSTGRES_USER=aci -e POSTGRES_PASSWORD=... kosh-web_app"
     exit 99
 fi
 
@@ -51,31 +61,23 @@ else
     echo "WARN: node not on PATH — skipping BOM parser regression test."
 fi
 
-# --- Postgres data-shape regressions (run inside the container) ---
-# These isolate with SAVEPOINT/ROLLBACK + test PCNs >=99000, so they are safe against
-# the live DB. Everything ledger-related is below, on the test DB, because it commits.
+# --- Postgres data-shape regressions (kosh_test only — this suite COMMITS) ---
+echo "[regressions] running against ${CONTAINER} (kosh_test)…"
+docker exec "${CONTAINER}" mkdir -p /app/tests
 docker cp tests/regression_tests.py "${CONTAINER}:/app/tests/regression_tests.py"
 docker exec "${CONTAINER}" python /app/tests/regression_tests.py
 
-# --- Ledger acceptance suites (test DB only — they COMMIT real movements) ---
+# --- Ledger acceptance suites (also kosh_test — they COMMIT real movements) ---
 # 2026-07-15: these had been pinned to a `kosh_rebuild` scratch DB that was later
 # dropped, so all four silently stopped running (same rot that had regression_tests.py
 # pointing at the renamed `pcb_inventory` schema). They now target kosh_test and
 # REFUSE to run against production (tests/testdb.py).
-TEST_CONTAINER=kosh_test_webapp
-if docker ps --filter "name=${TEST_CONTAINER}" --format '{{.Names}}' | grep -q "${TEST_CONTAINER}"; then
-    echo "[ledger-acceptance] running against ${TEST_CONTAINER} (kosh_test)…"
-    docker exec "${TEST_CONTAINER}" mkdir -p /app/tests
-    for f in testdb.py acceptance_found.py acceptance_b.py acceptance_extra.py acceptance_app.py; do
-        docker cp "tests/${f}" "${TEST_CONTAINER}:/app/tests/${f}"
-    done
-    for s in acceptance_found acceptance_b acceptance_extra acceptance_app; do
-        echo "  --- ${s}"
-        docker exec "${TEST_CONTAINER}" python "/app/tests/${s}.py"
-    done
-    echo "[ledger-acceptance] OK — all ledger suites green."
-else
-    echo "WARN: ${TEST_CONTAINER} not running — SKIPPING the ledger acceptance suites."
-    echo "      The ledger (restock/pick/FOUND, Warehouse==History) is NOT covered by"
-    echo "      this run. Start it to get full coverage before shipping ledger changes."
-fi
+echo "[ledger-acceptance] running against ${CONTAINER} (kosh_test)…"
+for f in testdb.py acceptance_found.py acceptance_b.py acceptance_extra.py acceptance_app.py; do
+    docker cp "tests/${f}" "${CONTAINER}:/app/tests/${f}"
+done
+for s in acceptance_found acceptance_b acceptance_extra acceptance_app; do
+    echo "  --- ${s}"
+    docker exec "${CONTAINER}" python "/app/tests/${s}.py"
+done
+echo "[ledger-acceptance] OK — all ledger suites green."

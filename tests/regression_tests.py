@@ -56,6 +56,45 @@ def _seed_warehouse_row(cursor, pcn, item, mpn='TEST-MPN', onhandqty=0,
     )
 
 
+def _cleanup_ledger_pcn(pcn):
+    """Undo the LEDGER writes a test PCN made, so the suite leaves no phantom stock.
+
+    WHY THIS IS NOT OPTIONAL: `db_manager.restock_pcb` COMMITS internally, so
+    isolated_txn()/SAVEPOINT cannot roll it back — the tests rely on explicit cleanup.
+    That cleanup predates the ledger and only deleted the two LEGACY tables, so once
+    restock_pcb started writing inventory_txn/inventory_balance, every run of this
+    suite against the live DB leaked real balances for fake PCNs. It did exactly that
+    on 2026-07-15 (70 phantom units across PCNs 99001/99002/99005) before this existed.
+
+    inventory_txn is append-only (I5, enforced by the inventory_txn_no_mutate trigger),
+    so the rows are REVERSED, never deleted — the same path the app uses. Reversal
+    zeroes the balance and the flagged rows are excluded from every read.
+    """
+    sys.path.insert(0, '/app')
+    import ledger
+
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = False
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            'SELECT txn_id FROM warehouse.inventory_txn '
+            'WHERE pcn_id = %s AND reversed = false ORDER BY txn_id DESC',
+            (str(pcn),),
+        )
+        for (txn_id,) in cur.fetchall():
+            ledger.reverse(cur, txn_id, user='regression-cleanup')
+        ledger.project_warehouse(cur, str(pcn))
+        # Balances must be flat once every txn is reversed; drop the empty shells.
+        cur.execute(
+            'DELETE FROM warehouse.inventory_balance WHERE pcn_id = %s AND qty = 0',
+            (str(pcn),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _seed_txn(cursor, trantype, item, pcn, qty, userid='regression@test.com',
              loc_to='Count Area'):
     cursor.execute(
@@ -117,6 +156,7 @@ def test_restock_allowed_after_purge_following_restock():
                 (str(test_pcn),),
             )
             cleanup.close()
+            _cleanup_ledger_pcn(test_pcn)
 
 
 def test_restock_allowed_when_zero_onhand_even_if_last_restock():
@@ -151,6 +191,7 @@ def test_restock_allowed_when_zero_onhand_even_if_last_restock():
         finally:
             cur0.execute(f'DELETE FROM {SCHEMA}."tblTransaction" WHERE pcn::text = %s', (str(test_pcn),))
             cur0.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn::text = %s', (str(test_pcn),))
+            _cleanup_ledger_pcn(test_pcn)
     cleanup.close()
 
 
@@ -189,6 +230,7 @@ def test_restock_blocked_when_already_restocked_with_stock_present():
         finally:
             cur0.execute(f'DELETE FROM {SCHEMA}."tblTransaction" WHERE pcn::text = %s', (str(test_pcn),))
             cur0.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn::text = %s', (str(test_pcn),))
+            _cleanup_ledger_pcn(test_pcn)
     cleanup.close()
 
 
@@ -297,6 +339,7 @@ def test_purged_pcn_can_be_restocked_with_same_pcn():
     finally:
         cur0.execute(f'DELETE FROM {SCHEMA}."tblTransaction" WHERE pcn::text = %s', (str(test_pcn),))
         cur0.execute(f'DELETE FROM {SCHEMA}."tblWhse_Inventory" WHERE pcn::text = %s', (str(test_pcn),))
+        _cleanup_ledger_pcn(test_pcn)
     cleanup.close()
 
 
