@@ -104,6 +104,21 @@ def _add(cur, part_id, pcn, location_id, amount):
     )
 
 
+def _locked_balance(cur, part_id, pcn, location_id):
+    """Current qty at one (part,pcn,location), row locked FOR UPDATE so a caller can
+    branch on it and then write without the value changing underneath (I1)."""
+    cur.execute(
+        """
+        SELECT qty FROM warehouse.inventory_balance
+        WHERE part_id=%s AND pcn_id=%s AND location_id=%s
+        FOR UPDATE
+        """,
+        (part_id, str(pcn), location_id),
+    )
+    row = cur.fetchone()
+    return row[0] if row else 0
+
+
 def _subtract(cur, part_id, pcn, location_id, amount, where='source'):
     """Decrement a balance by `amount`, locking the row first and verifying it holds
     enough (I1).  Rejects an over-pick instead of driving the balance negative."""
@@ -193,6 +208,76 @@ def restock(cur, item, mpn, pcn, qty, to_bin, *, from_floor=FLOOR_CODE, user='sy
     _add(cur, part_id, pcn, to_loc, qty)
     return _record(cur, 'RESTOCK', part_id, pcn, qty, from_loc, to_loc,
                    created_by=user, note=note)
+
+
+def found(cur, item, mpn, pcn, qty, to_bin, *, user='system', note=None):
+    """FOUND = `qty` units physically exist and are entering `to_bin`, but the ledger
+    did NOT believe they were on the floor (external -> bin).
+
+    This is the counterpart to consume(): CONSUME is stock the ledger thinks exists
+    but doesn't, FOUND is stock that exists but the ledger doesn't know about.  Both
+    exist because the floor balance is an INFERENCE (no consumption event for years,
+    plus the >6mo stale-floor sweep), and an inference is wrong in both directions.
+
+    It is a DISTINCT type rather than a silent top-up inside restock() on purpose:
+    units that appear from nowhere stay LABELLED as appearing from nowhere, so the
+    phantom-stock guard is preserved and each row is a measurable place where the
+    floor inference was wrong.  Over-restock can no longer be REJECTED (the parts are
+    in the operator's hand), so instead it is RECORDED."""
+    qty = _qty(qty)
+    part_id = resolve_part(cur, item, mpn)
+    to_loc = resolve_location(cur, to_bin)
+    _add(cur, part_id, pcn, to_loc, qty)
+    return _record(cur, 'FOUND', part_id, pcn, qty, None, to_loc,
+                   created_by=user, note=note)
+
+
+def restock_physical(cur, item, mpn, pcn, qty, to_bin, *, from_floor=FLOOR_CODE,
+                     user='system', note=None):
+    """Restock `qty` units the operator is physically holding into `to_bin`.
+
+    The operator's hands are the authority here, not the floor balance, so this NEVER
+    rejects for a short floor (that rejection is what blocked Theresa on PCN 38159).
+    It splits the movement by what the ledger can actually account for:
+
+        transfer = min(floor_balance, qty)  -> RESTOCK (floor -> bin), conserving
+        shortfall = qty - transfer          -> FOUND    (external -> bin), labelled
+
+    So the honest case (floor holds the parts) is byte-for-byte the old behaviour, and
+    only the units the ledger genuinely can't account for get the FOUND label.  Both
+    rows land in the caller's ONE transaction (I2).
+
+    Use this for the operator-facing restock path ONLY.  Automated reversals must keep
+    using the strict restock() — a reversal that mints stock is a bug, not a find.
+
+    Returns {'transferred': int, 'found': int, 'txn_ids': [int, ...]}.
+    """
+    qty = _qty(qty)
+    part_id = resolve_part(cur, item, mpn)
+    from_loc = resolve_location(cur, from_floor)
+    to_loc = resolve_location(cur, to_bin)
+    if from_loc == to_loc:
+        raise LedgerError('restock source and destination are the same location')
+
+    on_floor = _locked_balance(cur, part_id, pcn, from_loc)
+    transfer = min(on_floor, qty) if on_floor > 0 else 0
+    shortfall = qty - transfer
+    txn_ids = []
+
+    if transfer:
+        _subtract(cur, part_id, pcn, from_loc, transfer, where='MFG Floor')
+        _add(cur, part_id, pcn, to_loc, transfer)
+        txn_ids.append(_record(cur, 'RESTOCK', part_id, pcn, transfer, from_loc, to_loc,
+                               created_by=user, note=note))
+    if shortfall:
+        found_note = (
+            f'restock of {qty} exceeded MFG Floor balance {on_floor}; '
+            f'{shortfall} booked as physically found'
+        )
+        txn_ids.append(found(cur, item, mpn, pcn, shortfall, to_bin, user=user,
+                             note=f'{note}; {found_note}' if note else found_note))
+
+    return {'transferred': transfer, 'found': shortfall, 'txn_ids': txn_ids}
 
 
 def ship(cur, item, mpn, pcn, qty, from_location, *, txn_type='SHIP', user='system',

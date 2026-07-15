@@ -11,8 +11,10 @@ import os
 import sys
 import psycopg2
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, '/app')  # ledger.py is copied next to app.py in the container
 import ledger
+import testdb
 
 PCN = 'ACCEPT_B_TESTPCN'
 ITEM = 'ACCEPT-B-ITEM'
@@ -65,12 +67,7 @@ def check(cur, label, exp_bin, exp_floor):
 
 
 def main():
-    conn = psycopg2.connect(
-        host=os.environ.get('POSTGRES_HOST', 'aci-database'),
-        dbname='kosh_rebuild',
-        user=os.environ.get('POSTGRES_USER', 'aci'),
-        password=os.environ.get('POSTGRES_PASSWORD'),
-    )
+    conn = testdb.connect()
     conn.autocommit = False
     cur = conn.cursor()
     try:

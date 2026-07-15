@@ -27,7 +27,7 @@ DB_URL = os.environ.get(
     'DATABASE_URL',
     'postgresql://stockpick_user:stockpick_pass@aci-database:5432/kosh',
 )
-SCHEMA = 'pcb_inventory'
+SCHEMA = 'warehouse'
 
 
 @contextmanager
@@ -97,7 +97,7 @@ def test_restock_allowed_after_purge_following_restock():
         try:
             result = db_manager.restock_pcb(
                 pcn=test_pcn, item=test_item, quantity=10,
-                location_from='Count Area', location_to='Count Area',
+                location_from='MFG Floor', location_to='Count Area',
                 username='regression@test.com',
             )
             assert result.get('success') is True, (
@@ -142,7 +142,7 @@ def test_restock_allowed_when_zero_onhand_even_if_last_restock():
         try:
             result = db_manager.restock_pcb(
                 pcn=test_pcn, item=test_item, quantity=10,
-                location_from='Count Area', location_to='Count Area',
+                location_from='MFG Floor', location_to='Count Area',
                 username='regression@test.com',
             )
             assert result.get('success') is True, (
@@ -179,7 +179,7 @@ def test_restock_blocked_when_already_restocked_with_stock_present():
         try:
             result = db_manager.restock_pcb(
                 pcn=test_pcn, item=test_item, quantity=10,
-                location_from='Count Area', location_to='Count Area',
+                location_from='MFG Floor', location_to='Count Area',
                 username='regression@test.com',
             )
             assert result.get('success') is False, (
@@ -288,7 +288,7 @@ def test_purged_pcn_can_be_restocked_with_same_pcn():
     try:
         result = db_manager.restock_pcb(
             pcn=test_pcn, item=None, quantity=15,
-            location_from='Count Area', location_to='Count Area',
+            location_from='MFG Floor', location_to='Count Area',
             username='regression@test.com',
         )
         assert result.get('success') is True, (

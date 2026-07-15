@@ -29,7 +29,8 @@ CREATE TABLE inventory_txn (
     txn_id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     txn_type          text    NOT NULL
                         CHECK (txn_type IN ('STOCK','PICK','RESTOCK','TRANSFER',
-                                            'SHIP','PURGE','SCRAP','ADJUST')),
+                                            'SHIP','PURGE','SCRAP','ADJUST',
+                                            'CONSUME','FOUND')),
     part_id           bigint  NOT NULL REFERENCES inv_part(part_id),
     pcn_id            text    NOT NULL,                       -- the physical lot/barcode
     qty               integer NOT NULL CHECK (qty > 0),       -- I6: typed, >0, no string parse

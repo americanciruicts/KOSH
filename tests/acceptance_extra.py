@@ -1,8 +1,9 @@
 """Exercise the ledger helpers behind reverse_pick / update_warehouse_item / delete_pcn.
 Rolls back at the end (copy DB stays pristine)."""
 import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, '/app')
-import psycopg2, ledger
+import psycopg2, ledger, testdb
 
 PCN, ITEM, MPN, BIN = 'ACCEPT_X_PCN', 'ACCEPT-X-ITEM', 'ACCEPT-X-MPN', '9000002'
 fails = []
@@ -22,8 +23,7 @@ def chk(cur, tag, exp):
     print(f'[{"PASS" if ok else "FAIL"}] {tag}: on_hand={t} history={h} (expected {exp})')
     if not ok: fails.append(tag)
 
-conn = psycopg2.connect(host='aci-database', dbname='kosh_rebuild', user='aci',
-                        password=os.environ['POSTGRES_PASSWORD'])
+conn = testdb.connect()
 conn.autocommit = False
 cur = conn.cursor()
 try:

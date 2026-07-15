@@ -2,11 +2,19 @@
 
 Drives the real stock_pcb / pick_pcb / restock_pcb methods (which now write the ledger
 + project the snapshot) and asserts Warehouse == PCN History at every step.
-Run inside the webapp container with POSTGRES_DB=kosh_rebuild.
+
+This suite COMMITS, so it must never run against production — testdb.target_db()
+refuses `kosh` outright.  Default target: kosh_test.  Override with KOSH_TEST_DB.
+Run inside a webapp container:  python /app/tests/acceptance_app.py
 """
 import os
-os.environ['POSTGRES_DB'] = 'kosh_rebuild'
 import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testdb
+
+# Must be set BEFORE `import app` — app.py reads POSTGRES_DB at import time to build
+# its connection pool.
+os.environ['POSTGRES_DB'] = testdb.target_db()
 sys.path.insert(0, '/app')
 
 import app as A

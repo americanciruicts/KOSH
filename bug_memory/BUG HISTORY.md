@@ -3,7 +3,7 @@
 <p align="center">
   <b>Permanent, human-readable record of every bug fixed in KOSH.</b><br>
   <span style="color:#7f8c8d">Window covered: <b>13 May 2026 → 23 June 2026</b> · 49 commits</span><br>
-  <span style="color:#7f8c8d">Document created: <b>2026-06-23</b> · Last updated: <b>2026-07-07</b></span>
+  <span style="color:#7f8c8d">Document created: <b>2026-06-23</b> · Last updated: <b>2026-07-15</b></span>
 </p>
 
 > 📌 **How to use:** one entry per distinct bug, newest first. When the **same** bug is
@@ -29,6 +29,7 @@
 
 | # | Date | Bug | Area | Sev | Status |
 |:-:|------|-----|------|:---:|:------:|
+| [26](#bug26) | 2026-07-15 | Restock rejected with "insufficient stock at MFG Floor: have 0, need 62" — parts physically in hand could not be received (PCN 38159) | Restock / Ledger | 🟥 | ✅ |
 | [25](#bug25) | 2026-07-07 | Shortage report dropped every non-short line → "all the BOM lines didn't come in" when a job's stock is staged on the MFG Floor (job 8355M) | Shortage | 🟧 | ✅ |
 | [24](#bug24) | 2026-07-01 | Phantom 0-qty "purge" PICK made Warehouse Inventory look out of sync with PCN History (PCN 13959) | Inventory / History `[WHSE≠HIST]` | 🟩 | ✅ |
 | [23](#bug23) | 2026-06-30 | Shortage report same-MPN visibility over-matched (1234 also showed 12345/123456) | Shortage / MPN match | 🟧 | ✅ |
@@ -91,6 +92,33 @@ bug — it's structural. The two screens are **two different computations**:
 ---
 
 # 📒 Detailed entries
+
+---
+
+<h3 id="bug26">🟥 <span style="color:#c0392b">26 — Restock refused parts the operator was physically holding ("cannot receive, MFG qty is zero")</span> ✅</h3>
+
+> **Date:** 2026-07-15 · **Severity:** 🟥 Critical (blocks receiving; ~9,859 PCNs exposed) · **Area:** Restock / Ledger · **Reported by:** Theresa (via Preet) — *"I am receiving an error … I can not receive parts due to the MFG quantity being at zero. When KOSH was first implemented, I stated that I will need to be able to restock parts no matter what the MFG qty states … The part I am attempting to restock was picked at 62 and not at zero, according to the PCN history."*
+
+- **● Issue (what was wrong):** restocking failed with `insufficient stock at MFG Floor: have 0, need 62`. Theresa was holding the parts; KOSH refused to receive them. She was right on both counts: PCN History **did** show a PICK of 62, and the floor **did** read 0.
+- **● Example:** **PCN 38159** (`7396-440` / `3386X-1-504LF`). Legacy `tblTransaction` shows `PICK 62` on **11/20/25** by `john`. Ledger trail: `STOCK 62 → MFG Floor` (`phase3_seed`), then `ADJUST −62 off MFG Floor` by **`stale_floor_fix_20260714`** ("stale MFG-Floor phantom cleared, last pick 2025-11-20") → floor balance **0**. Reproduced from the prod error in `docker logs stockandpick_webapp`.
+- **● Root cause:** two layers.
+  1. **Restock is modelled as a pure floor→bin TRANSFER** (`ledger.restock`, invariant I1), so it *requires* the floor to already hold the qty. But the floor balance is an **inference**, not a physical fact — KOSH had no consumption event for years, and the [2026-07-14 stale-floor sweep](../scripts/fix_stale_floor_ledger.sql) zeroed **9,859 PCNs / 3,693,334 units** on the rule "last pick >6 months ago ⇒ consumed". When that inference is wrong (parts never consumed, picked at zero, not found, purged), the parts still come back — and restock vetoed them.
+  2. **Theresa's day-one requirement was silently dropped by the ledger rewrite.** `app.py` still logged *"Restock qty exceeds tracked MFG qty … User override"* — the override it describes no longer existed; the ledger rejected instead.
+  The 07-14 sweep did not create this; it exposed it across 9,859 PCNs at once. Theresa was simply the first to hit it.
+- **● Fixed (what changed):** added the **`FOUND`** event — the counterpart to `CONSUME`. CONSUME is stock the ledger thinks exists but doesn't; FOUND is stock that exists but the ledger doesn't know about. The operator-facing restock now splits: `transfer = min(floor_balance, qty)` → `RESTOCK` (conserving), `shortfall = qty − transfer` → `FOUND` (external→bin, **labelled**). Restock can no longer be rejected for a short floor — the shortfall is **recorded rather than refused or silently absorbed**, so the phantom-stock guard is preserved and every FOUND row measures exactly where the floor inference was wrong. The honest case (floor covers it) is byte-for-byte the old behaviour. The strict `ledger.restock()` is **kept** for `reverse_pick` — a reversal that mints stock is a bug, not a find. The double-restock guard is **untouched** and still blocks.
+- **🛠️ Files & lines:** `ledger.py` — new `found()`, `restock_physical()`, `_locked_balance()`; `restock()` left strict. `app.py` — `restock_pcb()` calls `restock_physical`, reports the **projected** on-hand (the old `mfg_qty_int - quantity` went negative and lied) and returns `found_qty`; `/restock` route flashes a warning naming the found units. `scripts/add_found_event.sql` (adds `FOUND` to the `txn_type` CHECK), `scripts/ledger_schema.sql`. Tests: `tests/acceptance_found.py` (new).
+- **● When:** 2026-07-15 · **Deployed:** ⏳ verified in `kosh_test`, awaiting Preet's go-ahead for prod.
+- **● Did it handle it?:** **Yes** — verified against a fresh clone of prod into `kosh_test` reproducing PCN 38159 at floor 0. Theresa's exact call now returns `success: True, found_qty: 62`; warehouse row → `onhand 62 / Count Area`; real HTTP `POST /restock` (PCN 42722, 200 units) succeeds and shows the found note. `tests/acceptance_found.py` all-pass, incl. floor-covers-it ⇒ **zero** found, split 22/28, strict `restock()` still rejects, FOUND reverses cleanly, projection == ledger.
+- **🛡️ Guard:** `tests/acceptance_found.py`; plus `test_restock_allowed_after_purge_following_restock`, `test_restock_allowed_when_zero_onhand_even_if_last_restock`, `test_purged_pcn_can_be_restocked_with_same_pcn` (see the 🔴 finding below), and `test_restock_blocked_when_already_restocked_with_stock_present` proves the double-restock guard survives. Suite: **31 passed, 0 failed** (baseline prod code: 28/3).
+- **● Scope/impact:** code-only; **no data backfill**. The 9,859 swept PCNs are left as-is *by design* — the >6mo rule is right for most of them, and blanket-restoring would put 3.69M phantom units back. Each one now self-heals the moment someone physically restocks it. The 07-14 run stays fully reversible via `warehouse.stale_floor_fix_audit`.
+- **🔴 Found while fixing — THE ENTIRE TEST GATE WAS DEAD:** every suite `tests/run.sh` is supposed to gate deploys on had rotted to a target that no longer exists, and failed **silently**:
+  - `tests/regression_tests.py` had `SCHEMA = 'pcb_inventory'` — a schema **renamed to `warehouse`** long ago — so it errored out instead of testing, for every deploy since the rename. Repointed at `warehouse`.
+  - `acceptance_app.py` / `acceptance_b.py` / `acceptance_extra.py` were pinned to a `kosh_rebuild` scratch DB that was **later dropped** → all three dead. They COMMIT real movements (they drive the real `restock_pcb`), so the pin was **replaced, not removed**: new `tests/testdb.py` targets `kosh_test` by default and **refuses to run against `kosh`** outright (verified: `KOSH_TEST_DB=kosh` → `REFUSING TO RUN`). A committing suite must never be one env var away from writing to prod.
+  - `tests/run.sh` only ever ran `regression_tests.py`, so the ledger suites wouldn't run on a deploy even once revived — now wired in (skips with a loud WARN if `kosh_test_webapp` isn't up).
+  With the gate live, **3 of Preet's own previously-fixed bugs were found silently regressed on prod**, all failing with Theresa's exact error: restock-after-PURGE, restock-at-zero-onhand, purged-PCN-restock. Their scenarios also still used the pre-ledger-rewrite `Count Area → Count Area` (rejected by the same-location guard before ever reaching the assertion), so they were corrected to the realistic `MFG Floor → Count Area` the form actually sends. All three are **red on baseline prod code and green with this fix** — verified by running the same corrected suite against an unmodified prod-image container. **`tests/run.sh` against prod is RED right now**, and should go green on deploy.
+
+### Recurrences / new case reports
+<!-- Same bug reported again? APPEND a dated line here. -->
 
 ---
 

@@ -1500,22 +1500,11 @@ class DatabaseManager:
                         'error': f'No parts found for {"PCN " + str(pcn) if pcn else "Item " + item}'
                     }
 
-                pcn_num, item_num, mpn, dc, mfg_qty, current_onhand, existing_loc_to = result
+                pcn_num, item_num, mpn, dc, _mfg_qty, _current_onhand, existing_loc_to = result
 
                 # If no destination specified, auto-assign to Count Area on restock
                 if not location_to:
                     location_to = 'Count Area'
-
-                # Handle NULL quantities and convert mfg_qty from text to int
-                if current_onhand is None:
-                    current_onhand = 0
-                if mfg_qty is None or mfg_qty == '':
-                    mfg_qty_int = 0
-                else:
-                    try:
-                        mfg_qty_int = int(mfg_qty)
-                    except (ValueError, TypeError):
-                        mfg_qty_int = 0
 
                 # Check last KOSH-era PICK/RESTOCK/PURGE to decide if restock is valid.
                 # Legacy MDB transactions are excluded (userid LIKE '%@%' keeps
@@ -1546,23 +1535,25 @@ class DatabaseManager:
                         'error': f'PCN {pcn_num} has already been restocked. It must be picked again before it can be restocked.'
                     }
 
-                # Log if restocking more than tracked MFG quantity (user may have physical count)
-                if mfg_qty_int < quantity:
-                    logger.info(f'Restock qty ({quantity}) exceeds tracked MFG qty ({mfg_qty_int}) for PCN {pcn}. User override.')
-
-                # THE authoritative write: RESTOCK = transfer MFG Floor -> destination
-                # in ONE transaction (I2). The floor balance for this PCN decrements by
-                # exactly `quantity`; any leftover STAYS on the floor (a pure transfer —
-                # consumed parts are a separate consumption event, not silently dropped).
-                # Restocking more than the floor holds is REJECTED (I1), never absorbed —
-                # that is what used to manufacture phantom stock.
+                # THE authoritative write: the operator is physically holding these
+                # parts, so the floor balance never vetoes the restock (Theresa's
+                # day-one requirement: parts picked at zero, purged, or never actually
+                # consumed still come back). What the floor can account for moves as a
+                # RESTOCK transfer; any leftover STAYS on the floor. What it cannot is
+                # recorded as FOUND rather than rejected or silently absorbed — see
+                # ledger.restock_physical.
                 try:
-                    ledger.restock(cursor, item=item_num, mpn=mpn, pcn=str(pcn_num),
-                                   qty=quantity, to_bin=location_to,
-                                   from_floor=location_from or 'MFG Floor', user=username)
+                    split = ledger.restock_physical(
+                        cursor, item=item_num, mpn=mpn, pcn=str(pcn_num),
+                        qty=quantity, to_bin=location_to,
+                        from_floor=location_from or 'MFG Floor', user=username)
                 except ledger.LedgerError as le:
                     conn.rollback()
                     return {'success': False, 'error': str(le)}
+                if split['found']:
+                    logger.info(
+                        f"Restock PCN {pcn_num}: floor held {split['transferred']} of "
+                        f"{quantity}; {split['found']} booked as FOUND by {username}")
                 ledger.project_warehouse(cursor, str(pcn_num))
                 updated_rows = 1
 
@@ -1575,6 +1566,16 @@ class DatabaseManager:
                     (trantype, item, pcn, mpn, dc, msd, tranqty, tran_time, loc_from, loc_to, userid)
                     VALUES ('RESTOCK', %s, %s, %s, %s, %s, %s, TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York', 'MM/DD/YY HH24:MI:SS'), %s, %s, %s)
                 """, (item_num, pcn_num, mpn, dc, msd, quantity, location_from, location_to, username))
+
+                # Report the projected result, not pre-write arithmetic: with a short
+                # floor the old `mfg_qty - quantity` went negative and lied.
+                cursor.execute("""
+                    SELECT COALESCE(onhandqty,0),
+                           CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END
+                    FROM warehouse."tblWhse_Inventory" WHERE pcn::text = %s LIMIT 1
+                """, (str(pcn_num),))
+                projected = cursor.fetchone()
+                new_onhand_qty, new_mfg_qty = projected if projected else (0, 0)
 
                 conn.commit()
                 logger.info(f"Restock operation: PCN {pcn_num}, Item {item_num}, restocked {quantity} units from {location_from} to {location_to}")
@@ -1591,8 +1592,10 @@ class DatabaseManager:
                     'item': item_num,
                     'mpn': mpn,
                     'location_to': location_to,
-                    'new_mfg_qty': mfg_qty_int - quantity,
-                    'new_onhand_qty': current_onhand + quantity
+                    'new_mfg_qty': new_mfg_qty,
+                    'new_onhand_qty': new_onhand_qty,
+                    'found_qty': split['found'],
+                    'transferred_qty': split['transferred']
                 }
 
             except psycopg2.extensions.TransactionRollbackError as e:
@@ -4182,9 +4185,17 @@ def restock():
 
             if result.get('success'):
                 location_to = result.get('location_to', '')
-                log_user_activity('RESTOCK', f"Restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to {location_to}", f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}")
+                found_qty = result.get('found_qty') or 0
+                # A short floor no longer blocks the restock; say so plainly instead of
+                # letting the units appear with no explanation.
+                found_note = (
+                    f" {found_qty} unit(s) were not on the MFG Floor per KOSH and were "
+                    f"added as physically found." if found_qty else ""
+                )
+                log_user_activity('RESTOCK', f"Restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to {location_to}", f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}, Found: {found_qty}")
                 flash(f"Successfully restocked {result['quantity']} units of {result['item']} (PCN: {result['pcn']}) to {location_to}. "
-                      f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}", 'success')
+                      f"MFG Qty: {result['new_mfg_qty']}, On Hand: {result['new_onhand_qty']}.{found_note}",
+                      'warning' if found_qty else 'success')
                 # Pass PCN to show print label button
                 return redirect(url_for('restock', restocked_pcn=result['pcn']))
             else:

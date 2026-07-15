@@ -52,5 +52,30 @@ else
 fi
 
 # --- Postgres data-shape regressions (run inside the container) ---
+# These isolate with SAVEPOINT/ROLLBACK + test PCNs >=99000, so they are safe against
+# the live DB. Everything ledger-related is below, on the test DB, because it commits.
 docker cp tests/regression_tests.py "${CONTAINER}:/app/tests/regression_tests.py"
 docker exec "${CONTAINER}" python /app/tests/regression_tests.py
+
+# --- Ledger acceptance suites (test DB only — they COMMIT real movements) ---
+# 2026-07-15: these had been pinned to a `kosh_rebuild` scratch DB that was later
+# dropped, so all four silently stopped running (same rot that had regression_tests.py
+# pointing at the renamed `pcb_inventory` schema). They now target kosh_test and
+# REFUSE to run against production (tests/testdb.py).
+TEST_CONTAINER=kosh_test_webapp
+if docker ps --filter "name=${TEST_CONTAINER}" --format '{{.Names}}' | grep -q "${TEST_CONTAINER}"; then
+    echo "[ledger-acceptance] running against ${TEST_CONTAINER} (kosh_test)…"
+    docker exec "${TEST_CONTAINER}" mkdir -p /app/tests
+    for f in testdb.py acceptance_found.py acceptance_b.py acceptance_extra.py acceptance_app.py; do
+        docker cp "tests/${f}" "${TEST_CONTAINER}:/app/tests/${f}"
+    done
+    for s in acceptance_found acceptance_b acceptance_extra acceptance_app; do
+        echo "  --- ${s}"
+        docker exec "${TEST_CONTAINER}" python "/app/tests/${s}.py"
+    done
+    echo "[ledger-acceptance] OK — all ledger suites green."
+else
+    echo "WARN: ${TEST_CONTAINER} not running — SKIPPING the ledger acceptance suites."
+    echo "      The ledger (restock/pick/FOUND, Warehouse==History) is NOT covered by"
+    echo "      this run. Start it to get full coverage before shipping ledger changes."
+fi
