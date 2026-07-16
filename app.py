@@ -4342,7 +4342,18 @@ def part_number_change():
                 flash(f'Failed to update PCN {pcn}. No rows were modified.', 'danger')
                 return render_template('inventory_ops/part_number_change.html')
 
-            # Log the change in transaction table
+            # Re-file the LEDGER balance onto the new part number, in this same
+            # transaction. Renaming only the snapshot above leaves the stock filed under
+            # the old part_id, and pick — which resolves part_id from the new name —
+            # then reads 0 and refuses to pick a bin that is full (bug 28). Quantity is
+            # untouched: a relabel is metadata, never a movement (I8).
+            lcur = conn.cursor()  # tuple cursor for the ledger service (same txn)
+            moved_rows, moved_qty = ledger.relabel_pcn(
+                lcur, pcn, new_part_number, item['mpn'], user=username)
+            ledger.project_warehouse(lcur, str(pcn))
+
+            # Log the change in transaction table. tranqty is 0 — a relabel moves no
+            # stock, and logging one with the full qty is what produced phantom stock.
             cursor.execute('''
                 INSERT INTO warehouse."tblTransaction"
                 (trantype, item, pcn, mpn, tranqty, tran_time, loc_to, userid, created_at)
@@ -4352,7 +4363,9 @@ def part_number_change():
             conn.commit()
 
             log_user_activity('PART_NUMBER_CHANGE', f"Changed part number for PCN {pcn}: '{old_part_number}' → '{new_part_number}'")
-            logger.info(f"Part number changed by {username}: PCN {pcn} from '{old_part_number}' to '{new_part_number}'")
+            logger.info(f"Part number changed by {username}: PCN {pcn} from '{old_part_number}' "
+                        f"to '{new_part_number}' (ledger re-filed: {moved_rows} location(s), "
+                        f"{moved_qty} units — qty unchanged)")
             flash(f'Successfully changed part number for PCN {pcn} from "{old_part_number}" to "{new_part_number}".', 'success')
 
             # Fetch updated item

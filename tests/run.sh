@@ -82,6 +82,15 @@ for s in acceptance_found acceptance_b acceptance_extra acceptance_app; do
 done
 echo "[ledger-acceptance] OK — all ledger suites green."
 
+# --- Part Number Change must take the stock with it (bug 28, 2026-07-16) ---------
+# The rename used to update only the legacy snapshot, leaving the ledger balance filed
+# under the OLD part_id: pick then read 0 against a full bin ("insufficient quantity")
+# and project_warehouse added the orphan on top of any edit ("expected 80, got 280").
+echo "[pn-change-ledger] running against ${CONTAINER} (kosh_test)…"
+docker cp tests/test_part_number_change_ledger.py "${CONTAINER}:/app/tests/test_part_number_change_ledger.py"
+docker exec "${CONTAINER}" python /app/tests/test_part_number_change_ledger.py
+echo "[pn-change-ledger] OK — a relabel keeps its stock, and mints none."
+
 # --- Auth/CSRF regression (bug 27, 2026-07-16) -----------------------------------
 # Kitting means two tabs (/pick + /part-number-change). A same-user SSO round-trip
 # used to session.clear(), rotating csrf_token and breaking the OTHER tab's form —

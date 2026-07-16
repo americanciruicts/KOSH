@@ -378,6 +378,50 @@ def set_pcn_snapshot(cur, item, mpn, pcn, bin_code, bin_qty, floor_qty, *, user=
         set_balance(cur, item, mpn, pcn, floor_qty, FLOOR_CODE, user=user, note='manual edit')
 
 
+def relabel_pcn(cur, pcn, new_item, new_mpn, *, user='system'):
+    """Re-file a PCN's balances onto (new_item, new_mpn) after a part number change.
+
+    A relabel is metadata, NOT a stock movement (I8): the parts never leave the bin, so
+    this writes NO inventory_txn row and changes NO quantity — it only corrects *which
+    part* the existing balance is filed under.  Booking a relabel as a qty movement is
+    exactly what minted the 15.3M phantom units behind the 2026-06 reconcile; the total
+    before and after this call is identical by construction.
+
+    Needed because a balance is keyed (part_id, pcn_id, location_id) while the legacy
+    snapshot is keyed by pcn alone.  Renaming only the snapshot leaves the balance under
+    the OLD part_id, so pick resolves the new name to a different part_id, finds no row,
+    and reports "insufficient stock … have 0" against a bin that is not empty (bug 28).
+
+    Returns (rows_moved, qty_moved).
+    """
+    new_part_id = resolve_part(cur, new_item, new_mpn)
+    cur.execute(
+        """
+        SELECT part_id, location_id, qty FROM warehouse.inventory_balance
+        WHERE pcn_id = %s AND part_id <> %s
+        ORDER BY part_id, location_id
+        FOR UPDATE
+        """,
+        (str(pcn), new_part_id),
+    )
+    stale = cur.fetchall()
+    moved_qty = 0
+    for old_part_id, location_id, qty in stale:
+        # Delete first, then _add: if the PCN already holds stock at this location under
+        # the new part, the two must MERGE into one row, not collide on the PK.
+        cur.execute(
+            """
+            DELETE FROM warehouse.inventory_balance
+            WHERE part_id=%s AND pcn_id=%s AND location_id=%s
+            """,
+            (old_part_id, str(pcn), location_id),
+        )
+        if qty:
+            _add(cur, new_part_id, pcn, location_id, qty)
+            moved_qty += int(qty)
+    return len(stale), moved_qty
+
+
 def zero_out(cur, pcn, *, user='system', note='pcn removed'):
     """Drive a PCN's on-hand to 0 by appending an ADJUST-out at every location that
     still holds stock (I5: history preserved — we never DELETE ledger rows).  After

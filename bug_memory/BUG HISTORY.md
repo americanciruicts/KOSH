@@ -29,6 +29,7 @@
 
 | # | Date | Bug | Area | Sev | Status |
 |:-:|------|-----|------|:---:|:------:|
+| [28](#bug28) | 2026-07-16 | Part Number Change left the stock behind → "insufficient quantity available" picking a full bin, and "Save verification failed: expected 80, got 280" editing Whse Inv | PN Change / Ledger | 🟥 | ✅ |
 | [27](#bug27) | 2026-07-16 | "KOSH signs me out after every transaction" while kitting — two open tabs knocked each other through SSO in a loop | Auth / SSO / CSRF | 🟧 | ✅ |
 | [26](#bug26) | 2026-07-15 | Restock rejected with "insufficient stock at MFG Floor: have 0, need 62" — parts physically in hand could not be received (PCN 38159) | Restock / Ledger | 🟥 | ✅ |
 | [25](#bug25) | 2026-07-07 | Shortage report dropped every non-short line → "all the BOM lines didn't come in" when a job's stock is staged on the MFG Floor (job 8355M) | Shortage | 🟧 | ✅ |
@@ -93,6 +94,26 @@ bug — it's structural. The two screens are **two different computations**:
 ---
 
 # 📒 Detailed entries
+
+---
+
+<h3 id="bug28">🟥 <span style="color:#c0392b">28 — Part Number Change left the stock behind ("insufficient quantity available" on a full bin)</span> ✅</h3>
+
+> **Date:** 2026-07-16 · **Severity:** 🟥 Critical (blocks picking + qty edits; 14 PCNs / 12,700 units stranded) · **Area:** PN Change / Ledger · **Reported by:** Theresa (via Preet) — *"I am now not able to pick PCN's. Error message states insufficient quantity available. It will also not allow me to edit quantities using the Whse Inv function … error updating item: Save verification failed: expected 80, got 280."*
+
+- **● Issue (what was wrong):** two symptoms, one cause. (1) Picking a renamed PCN failed with *insufficient quantity available* even though the bin was full. (2) Editing that PCN's qty in Whse Inv failed with `Save verification failed: expected 80, got 280`. **No stock was ever lost or deleted** — every unit stayed in `inventory_balance`, in its bin, filed under the PCN's **old** part number where nothing looks for it.
+- **● Example:** **PCN 44967** — pick as `6390L-13` → `insufficient stock at bin 2203304: have 0, need 63 (pcn 44967, location 2757)`. Bin 2203304 was **not** empty: it held **63**, filed under `6366-13`, the pre-rename name. Reproduced from the prod error in `docker logs stockandpick_webapp`. 14 PCNs / **12,700 units** total, incl. PCN 42821 (5,000 u) and PCN 1908 (4,950 u). The `80 → 280`: **PCN 36996** held **200** orphaned under `6590L-A-31`; the operator typed **80**; the projection summed both → **280**.
+- **● Root cause:** a balance is keyed **`(part_id, pcn_id, location_id)`** but the legacy snapshot is keyed by **pcn alone**. `part_number_change` only ran `UPDATE tblWhse_Inventory SET item = …` (`app.py`) and never touched `inv_part`/`inventory_balance`, so the balance stayed under the OLD `part_id`. Pick resolves `part_id` from the NEW name → different key → `_subtract` finds no row → `have 0`. And `project_warehouse` sums by **`pcn_id` regardless of `part_id`**, so the orphan was *also* added on top of any edit — hence 80 + 200 = 280. The save-verification guard then correctly refused to store a number it could not stand behind, which is the only reason this surfaced as an error rather than as silent corruption. Latent since the ledger rewrite; renaming a part is the only thing that triggers it, which is why a batch of PN changes lit it up all at once.
+- **● Fixed (what changed):** new **`ledger.relabel_pcn()`** re-files a PCN's balances onto the new part, **merging** if the PCN already holds stock there. `part_number_change` calls it + `project_warehouse` in the **same transaction** as the rename, so the snapshot and the ledger can never again disagree about which part a PCN is. Crucially it is **quantity-neutral and writes no `inventory_txn` row** — a relabel is metadata, never a movement (**I8**). Booking relabels as qty movements is exactly what minted the 15.3M phantom units behind the 2026-06 reconcile; that trap was deliberately not re-entered, and the test asserts total-before == total-after.
+- **🛠️ Files & lines:** `ledger.py` — new `relabel_pcn()`. `app.py` — `part_number_change()` re-files the ledger + projects (tuple `lcur` on the same txn); log line now reports the units re-filed. `scripts/fix_stranded_part_relabels.py` (backfill, calls the shipped `relabel_pcn` — not a SQL copy). Tests: `tests/test_part_number_change_ledger.py` (new), wired into `tests/run.sh`.
+- **● When:** 2026-07-16 · **Deployed:** yes, 2026-07-16 (code). Data backfill: see Scope/impact.
+- **● Did it handle it?:** **Yes** — red-on-baseline / green-on-fix against `kosh_test` with the real ledger. Baseline reproduces **both** reported errors verbatim, from independent paths: `insufficient stock at bin 2203304: have 0, need 200` and an edit of 80 reading back **exactly 280**. With the fix: stock follows the rename (200 under new, 0 under old), the pick succeeds, the edit stores 80, and the total is 200 before and after. Backfill exercised end-to-end on `kosh_test` against a seeded copy of the real stranded rows: dry-run rolls back (verified — the rows were still stranded after), `--apply` re-files, re-run finds nothing (idempotent).
+- **🛡️ Guard:** `tests/test_part_number_change_ledger.py` in `tests/run.sh` — asserts a rename carries its stock, mints none, stays pickable, and does not inflate an edit. The quantity-neutrality assertion is the one that keeps the phantom-stock class from coming back through this door.
+- **● Scope/impact:** code fix stops **new** strandings. The 14 already-stranded PCNs / 12,700 units need the **separate backfill** (`scripts/fix_stranded_part_relabels.py --apply --db kosh`) — a code fix cannot re-file stock that is already mis-keyed. The backfill aborts the whole run if any PCN's total would change, skips PCNs whose snapshot is ambiguous (>1 distinct item), and records every moved row's pre-state in `warehouse.part_relabel_fix_audit` (`fix_tag = bug28_part_relabel_20260716`) so it is fully reversible.
+
+### Recurrences / new case reports
+<!-- Same bug reported again? APPEND a dated line here. NEVER edit/remove the
+     original issue, example, or fix above — stack the new occurrence below. -->
 
 ---
 
