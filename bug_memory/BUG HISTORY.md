@@ -29,6 +29,7 @@
 
 | # | Date | Bug | Area | Sev | Status |
 |:-:|------|-----|------|:---:|:------:|
+| [27](#bug27) | 2026-07-16 | "KOSH signs me out after every transaction" while kitting — two open tabs knocked each other through SSO in a loop | Auth / SSO / CSRF | 🟧 | ✅ |
 | [26](#bug26) | 2026-07-15 | Restock rejected with "insufficient stock at MFG Floor: have 0, need 62" — parts physically in hand could not be received (PCN 38159) | Restock / Ledger | 🟥 | ✅ |
 | [25](#bug25) | 2026-07-07 | Shortage report dropped every non-short line → "all the BOM lines didn't come in" when a job's stock is staged on the MFG Floor (job 8355M) | Shortage | 🟧 | ✅ |
 | [24](#bug24) | 2026-07-01 | Phantom 0-qty "purge" PICK made Warehouse Inventory look out of sync with PCN History (PCN 13959) | Inventory / History `[WHSE≠HIST]` | 🟩 | ✅ |
@@ -92,6 +93,29 @@ bug — it's structural. The two screens are **two different computations**:
 ---
 
 # 📒 Detailed entries
+
+---
+
+<h3 id="bug27">🟧 <span style="color:#e67e22">27 — "KOSH keeps signing me out after each transaction" (kitting a job)</span> ✅</h3>
+
+> **Date:** 2026-07-16 · **Severity:** 🟧 High (every kitting session; no data loss) · **Area:** Auth / SSO / CSRF · **Reported by:** Preet — *"Do you happen to know why KOSH keeps signing me out after each transaction? I am kitting a job right now."*
+
+- **● Issue (what was wrong):** while kitting, roughly every other submit dumped the user back through the login screen. It looked like a session timeout. It was not — `PERMANENT_SESSION_LIFETIME` is 14h and the session never expired.
+- **● Example:** prod `docker logs stockandpick_webapp`, 2026-07-16, user `parts@americancircuits.com`. Every "sign-out" is preceded by `INFO:flask_wtf.csrf:The CSRF tokens do not match.` The alternation is the tell — one transaction succeeds per re-login, then the *other* page fails: `14:44:07 POST /pick 200` → `14:44:37 POST /part-number-change` CSRF fail → SSO → `14:45:08 POST /part-number-change 200` → `14:45:29 POST /pick` CSRF fail → SSO → `14:46:37 POST /part-number-change 200` → `14:46:59 POST /pick` CSRF fail. Repeats for ~1h. Transactions themselves were fine (PCN 44711 → `6390L-9`, PCN 44982 → `6390L-10` both committed).
+- **● Root cause:** two behaviours forming a loop, each harmless alone. Kitting means working `/pick` and `/part-number-change` **in two tabs**.
+  1. `sso_callback()` called **`session.clear()` unconditionally** — including when the *same* user was already signed in. Clearing rotates `csrf_token`, so every form already rendered in any other tab is instantly stale. `WTF_CSRF_TIME_LIMIT = None`, so a mismatch can only mean *different session* — never expiry.
+  2. `handle_csrf_error()` **silently redirected** instead of surfacing an error. The redirect lands on a `@require_auth` route; with the tab's session rotated out from under it the user hits `login` → FORGE → SSO → back to (1), rotating the token again and breaking the tab they just came from.
+  Net effect: tab A's submit breaks tab B, tab B's submit breaks tab A, forever. It presents as "signed out every transaction" because the CSRF failure is invisible — the user only ever sees the login screen.
+- **● Fixed (what changed):** `app.py` — `sso_callback()` now only clears when `session.get('user_id') != user['id']`, so a same-user SSO round-trip **preserves the session and its `csrf_token`** and leaves other tabs working. `handle_csrf_error()` now, when still signed in, flashes *"Your form had expired and was not submitted — the page has been refreshed. Please enter it again."* and re-renders the same page (fresh token) rather than bouncing to login. Redirect target changed `request.url` → `request.path`: behind the Cloudflare tunnel Flask sees scheme `http`, so `request.url` sent an **https page to an http URL** (confirmed by the dropped `Referer` in the prod access log).
+- **🛠️ Files & lines:** `app.py` — `sso_callback()` (session reset now conditional), `handle_csrf_error()`. Test: `tests/test_csrf_pingpong.py` (new).
+- **● When:** 2026-07-16 · **Deployed:** yes, 2026-07-16.
+- **● Did it handle it?:** **Yes** — reproduced against `kosh_test` with the real app: two tabs, SSO round-trip between them. Baseline prod code is **RED** (tab A's token rotated away; its submit → `302` to FORGE login = the reported bug). With the fix, all 4 green: token survives the SSO round-trip, tab A's submit renders in place (`200`), a genuinely bad token returns to `/pick` instead of login, and the user stays signed in through a CSRF failure.
+- **🛡️ Guard:** `tests/test_csrf_pingpong.py` — asserts a same-user SSO round-trip does not rotate `csrf_token` and that a CSRF failure never redirects to the FORGE login. Verified red-on-baseline / green-on-fix, so it cannot silently come back.
+- **● Scope/impact:** code-only; **no data backfill**. No transactions were lost or double-applied — every bounce happened *before* the POST was processed, so the failed submits simply never ran. Affects any user with more than one KOSH tab open, which kitting always requires.
+
+### Recurrences / new case reports
+<!-- Same bug reported again? APPEND a dated line here. NEVER edit/remove the
+     original issue, example, or fix above — stack the new occurrence below. -->
 
 ---
 

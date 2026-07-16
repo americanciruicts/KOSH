@@ -81,3 +81,12 @@ for s in acceptance_found acceptance_b acceptance_extra acceptance_app; do
     docker exec "${CONTAINER}" python "/app/tests/${s}.py"
 done
 echo "[ledger-acceptance] OK — all ledger suites green."
+
+# --- Auth/CSRF regression (bug 27, 2026-07-16) -----------------------------------
+# Kitting means two tabs (/pick + /part-number-change). A same-user SSO round-trip
+# used to session.clear(), rotating csrf_token and breaking the OTHER tab's form —
+# which bounced it back through SSO, breaking the first tab. Read-only: no commits.
+echo "[csrf-pingpong] running against ${CONTAINER} (kosh_test)…"
+docker cp tests/test_csrf_pingpong.py "${CONTAINER}:/app/tests/test_csrf_pingpong.py"
+docker exec "${CONTAINER}" python /app/tests/test_csrf_pingpong.py
+echo "[csrf-pingpong] OK — SSO round-trip no longer signs the user out."

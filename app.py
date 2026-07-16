@@ -6078,8 +6078,13 @@ def sso_callback():
             flash(f'SSO login failed: Could not create user "{username}" in KOSH. Contact your administrator.', 'danger')
             return redirect(url_for('login'))
 
-        # Create KOSH session (same as regular login)
-        session.clear()
+        # Create KOSH session (same as regular login).
+        # Only reset the session when a different user signs in. Clearing a session that
+        # already belongs to this user rotates csrf_token, which invalidates the forms
+        # already rendered in their other open tabs — and each resulting CSRF bounce
+        # re-enters SSO and invalidates the next tab, looping indefinitely.
+        if session.get('user_id') != user['id']:
+            session.clear()
         session['user_id'] = user['id']
         session['username'] = user['userlogin']
         session['full_name'] = user['username']
@@ -9353,8 +9358,16 @@ def handle_csrf_error(e):
             'error': 'CSRF token validation failed. Please refresh the page and try again.'
         }), 400
 
-    # For non-API requests, silently redirect back — fresh page with new token
-    return redirect(request.url)
+    # Still signed in? The token was merely stale, so re-render the same page (which
+    # issues a fresh token) and say the submit did not go through, instead of bouncing
+    # through login and looking like a random sign-out.
+    # request.path keeps this relative: request.url reports scheme http behind the
+    # tunnel, and redirecting an https page to http drops the session cookie context.
+    if 'user_id' in session:
+        flash('Your form had expired and was not submitted — the page has been refreshed. Please enter it again.', 'warning')
+        return redirect(request.path)
+
+    return redirect(request.path)
 
 @app.errorhandler(404)
 def not_found_error(error):
