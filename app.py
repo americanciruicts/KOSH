@@ -488,7 +488,13 @@ def is_admin_user():
 # Users listed here are RESTRICTED to only the tools specified
 # Admins always have access to everything regardless of this setting
 USER_TOOL_ACCESS = {
-    'james@americancircuits.com': {'dashboard', 'generate_pcn', 'stock', 'pick', 'restock', 'pcn_history', 'warehouse_inventory', 'part_number_change'},
+    # James: same access as Theresa
+    'james@americancircuits.com': {
+        'dashboard', 'generate_pcn', 'stock', 'pick', 'restock',
+        'jobs', 'shortage_report', 'warehouse_inventory', 'print_label',
+        'pcn_history', 'po_history', 'part_number_change', 'bom_loader',
+        'reports', 'manage'
+    },
     # Theresa: everything except warehouse
     'parts@americancircuits.com': {
         'dashboard', 'generate_pcn', 'stock', 'pick', 'restock',
@@ -522,20 +528,20 @@ def can_access_tool(tool_name):
     return True  # unrestricted users get everything
 
 # Users allowed to access ACI Numbers and Locations (in addition to admins)
-MANAGE_AUTHORIZED_USERS = {'parts@americancircuits.com'}
+MANAGE_AUTHORIZED_USERS = {'parts@americancircuits.com', 'james@americancircuits.com'}
 
-# Users allowed to use Reel Change. Admins + Theresa always; Jay added so the
-# SMT line gets the tool without seeing ACI Numbers / Locations.
-REEL_CHANGE_AUTHORIZED_USERS = {'parts@americancircuits.com', 'jayt@americancircuits.com'}
+# Users allowed to use Reel Change. Admins + Theresa + James always; Jay added so
+# the SMT line gets the tool without seeing ACI Numbers / Locations.
+REEL_CHANGE_AUTHORIZED_USERS = {'parts@americancircuits.com', 'james@americancircuits.com', 'jayt@americancircuits.com'}
 
 def can_manage_parts():
-    """Check if user can access ACI Numbers and Locations (admins + Theresa)."""
+    """Check if user can access ACI Numbers and Locations (admins + Theresa + James)."""
     if is_admin_user():
         return True
     return session.get('username', '').lower() in MANAGE_AUTHORIZED_USERS
 
 def can_use_reel_change():
-    """Check if user can access Reel Change (admins + Theresa + Jay + anyone
+    """Check if user can access Reel Change (admins + Theresa + James + Jay + anyone
     with 'reel_change' in their per-user tool allowlist)."""
     if is_admin_user():
         return True
