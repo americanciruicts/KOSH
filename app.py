@@ -6837,8 +6837,9 @@ def api_generate_pcn():
                 quantity = int(data.get('quantity'))
             except (ValueError, TypeError):
                 return jsonify({'error': 'Quantity must be a number'}), 400
-            if quantity < 1 or quantity > 10000:
-                return jsonify({'error': 'Quantity must be between 1 and 10000'}), 400
+            # Upper cap raised to 100000 so component reels aren't blocked.
+            if quantity < 1 or quantity > 100000:
+                return jsonify({'error': 'Quantity must be between 1 and 100000'}), 400
 
             # Generate new PCN using MAX+1 with advisory lock to prevent duplicates
             # Lock key 73746 = arbitrary constant for PCN generation
