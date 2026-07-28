@@ -15,7 +15,7 @@
     },
     {
       "src": "/(.*)",
-      "dest": "https://tale-organ-setup-walking.trycloudflare.com/$1"
+      "dest": "https://days-places-strategic-encyclopedia.trycloudflare.com/$1"
     }
   ]
 }
