@@ -201,7 +201,7 @@ def validate_quantity(quantity: Any) -> tuple[bool, int]:
     """Validate quantity is a positive integer."""
     try:
         qty = int(quantity)
-        return (1 <= qty <= 10000, qty)
+        return (1 <= qty <= 100000, qty)
     except (ValueError, TypeError):
         return (False, 0)
 
@@ -241,7 +241,7 @@ def validate_api_request(required_fields: list):
                 if 'quantity' in data:
                     is_valid, qty = validate_quantity(data['quantity'])
                     if not is_valid:
-                        return jsonify({'success': False, 'error': 'Invalid quantity (must be 1-10000)'}), 400
+                        return jsonify({'success': False, 'error': 'Invalid quantity (must be 1-100000)'}), 400
                     data['quantity'] = qty
                 
                 if 'location' in data and not validate_location(data['location']):
@@ -1035,10 +1035,10 @@ class DatabaseManager:
         Otherwise, picks using FIFO across all PCNs for the item.
         """
         # CRITICAL: Input validation to prevent invalid data
-        if not isinstance(quantity, int) or quantity < 0 or quantity > 10000:
+        if not isinstance(quantity, int) or quantity < 0 or quantity > 100000:
             return {
                 'success': False,
-                'error': f'Invalid quantity: {quantity}. Must be between 0 and 10,000.'
+                'error': f'Invalid quantity: {quantity}. Must be between 0 and 100,000.'
             }
 
         if not job or not isinstance(job, str) or len(job) > 50:
