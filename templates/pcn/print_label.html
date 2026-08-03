@@ -80,7 +80,15 @@
             align-items: center;
             flex: 1;
             min-width: 0;
-            padding: 0 4px;
+            /* QUIET ZONE. CODE128 needs clear space of ~10x the bar module width on each
+               side or the reader cannot lock onto the start/stop pattern. The module is
+               1px, so 11px ≈ 2.9mm clears the ~2.65mm requirement. This lives here rather
+               than in JsBarcode's marginLeft/marginRight because those cannot be set
+               without also touching marginTop/marginBottom, where passing 0 silently
+               falls back to the library default of 10 (that bug rendered a 42px barcode
+               and broke both the layout and scanning on 2026-08-03). The label is white,
+               so container padding is a real quiet zone. */
+            padding: 0 11px;
         }
 
         /* Bottom section: 2-column, 3-row grid. Every detail line uses the
@@ -287,9 +295,18 @@
                 // (align-content:start), never from the barcode.
                 JsBarcode("#labelBarcode", barcodeData, {
                     format: "CODE128",
+                    // width is the BAR THICKNESS — keep at 1. Raising it to 1.5 (commit
+                    // 7f7fb3c) is what made the bars print "too bold" and bleed together.
                     width: 1,
-                    height: 18,
+                    // height is bar LENGTH, not thickness — it does not affect how bold the
+                    // label looks, and taller bars are markedly easier to scan. 18px was
+                    // only 4.8mm; 26px ≈ 6.9mm. Nearly free in layout terms because the
+                    // PCN/QTY text block beside it is already ~25px tall, so the row height
+                    // barely changes.
+                    height: 26,
                     displayValue: false,
+                    // 0 here is deliberate and safe (it is `margin`, not `marginTop`). The
+                    // quiet zone comes from .barcode-section's horizontal padding.
                     margin: 0,
                     background: "#ffffff",
                     lineColor: "#000000"
