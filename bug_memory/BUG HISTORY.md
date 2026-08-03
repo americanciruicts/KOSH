@@ -440,10 +440,34 @@ this and was never at fault; it is back at its original coordinates. Evidence th
 prints via the browser **Print Label** button, not Download ZPL: restoring the ZPL to
 original did not change the reported symptom.
 
-**Still open:** a long MPN that wraps to two lines leaves only ~0.3px bottom clearance, so
-MSD/PO can still clip on those labels. Not reproduced against a specific PCN yet.
-The original top-clipping report is addressed in the browser path only (top padding
-0.03in → 0.05in); no ZPL-printed label has been confirmed bad.
+**Rule overlapping the barcode (same day, my regression):** raising the bar height to 26px
+made the barcode taller than the PCN/QTY block (25.2px), so it defined the row height —
+and `padding-bottom` had already been removed to close the QTY gap, so the rule landed on
+the bars. The two requirements only conflict while both are centred in the row: `.info-left`
+is now `align-self: flex-end` (QTY sits on the rule regardless of barcode height) and
+`.barcode-section` has `padding-bottom: 4px` (bars clear the rule).
+
+**Verified by rendering, not by arithmetic.** Every earlier attempt was reasoned from a
+pixel budget and each one shipped a regression. The label is now rendered headlessly
+(Chrome, `templates/pcn/print_label.html` with sample data) and inspected, and the barcode
+is decoded from the raster with @zxing/library:
+
+| render | result |
+|---|---|
+| typical MPN, 4x | layout correct, no overlap, MSD/PO clear |
+| long wrapping MPN, 4x | layout correct, MSD/PO clear |
+| 203dpi (printer's real resolution) | **CODE128 decodes → "46891"** |
+| 1x (worst case) | **CODE128 decodes → "46891"** |
+
+So the symbol KOSH generates is valid and rasterizes cleanly at print resolution. If a
+PRINTED label still will not scan, the remaining causes are physical, not in this code:
+thermal darkness set too high (bars bleed together — consistent with the "too bold"
+report), print scale not 100% in the browser dialog (any "fit to page" distorts the module
+widths), or the wrong paper size selected.
+
+**Still open:** a long MPN that wraps to two lines leaves ~2.9px bottom clearance — fits,
+but with little margin. The original top-clipping report is addressed in the browser path
+only; no ZPL-printed label has been confirmed bad.
 
 ---
 
