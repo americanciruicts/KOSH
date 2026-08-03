@@ -190,7 +190,10 @@
             .label-box {
                 width: 3in;
                 height: 1in;
-                padding: 0.03in 0.06in 0.03in 0.14in;
+                /* Top padding raised 0.03in -> 0.07in so the barcode and PCN line clear
+                   the printer's non-printable top edge. Paid for by the barcode's
+                   marginTop/marginBottom going to 0 — see JsBarcode options below. */
+                padding: 0.07in 0.06in 0.02in 0.14in;
                 margin: 0 !important;
                 box-shadow: none;
                 border: none;
@@ -252,12 +255,19 @@
                 console.log('Barcode data (PCN only):', barcodeData);
 
                 // Thicker bars + taller height for reliable scanning
+                // marginTop/Bottom 0 frees ~4px of vertical space for the label's top
+                // margin (the top of the barcode was printing off the edge). The LEFT and
+                // RIGHT margins are the barcode's quiet zone and are widened, not removed —
+                // a CODE128 needs clear space either side to scan reliably.
                 JsBarcode("#labelBarcode", barcodeData, {
                     format: "CODE128",
                     width: 1.5,
                     height: 25,
                     displayValue: false,
-                    margin: 2,
+                    marginTop: 0,
+                    marginBottom: 0,
+                    marginLeft: 8,
+                    marginRight: 8,
                     background: "#ffffff",
                     lineColor: "#000000"
                 });
