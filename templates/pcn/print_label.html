@@ -55,6 +55,10 @@
             flex-direction: column;
             justify-content: center;
             flex-shrink: 0;
+            /* Bottom-aligned, so QTY sits directly on the rule with no gap, independently
+               of how tall the barcode beside it is. Centering it meant any change to the
+               barcode height re-opened the gap under QTY. */
+            align-self: flex-end;
             /* 1.05, not 1.15: the half-leading under QTY was reading as a gap above the
                rule. Kept just above 1 so the tail of the Q is not clipped by the border. */
             line-height: 1.05;
@@ -87,8 +91,13 @@
                without also touching marginTop/marginBottom, where passing 0 silently
                falls back to the library default of 10 (that bug rendered a 42px barcode
                and broke both the layout and scanning on 2026-08-03). The label is white,
-               so container padding is a real quiet zone. */
-            padding: 0 11px;
+               so container padding is a real quiet zone.
+
+               The 5px BOTTOM padding keeps the rule off the bars. Without it the barcode
+               (26px) is taller than the PCN/QTY block (25.2px), so it defines the row
+               height and the border-bottom lands straight on the bottom of the bars —
+               which both looks broken and eats into the symbol. */
+            padding: 0 11px 4px;
         }
 
         /* Bottom section: 2-column, 3-row grid. Every detail line uses the
@@ -102,7 +111,10 @@
             gap: 1px 10px;
             font-size: 12px;
             font-weight: 600;
-            line-height: 1.3;
+            /* 1.15, not 1.3: with the barcode row now 30px the detail block has to fit in
+               what is left, and at 1.3 a wrapped (2-line) MPN pushed MSD/PO 1.7px past the
+               bottom edge. 1.15 is still comfortable at 12px and buys 3.6px. */
+            line-height: 1.15;
             flex: 1;
             /* PACK THE ROWS UP — do not spread them (2026-08-03, MSD/PO printing off the
                bottom edge). This block is flex:1, so it takes all the leftover height;
