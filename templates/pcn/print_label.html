@@ -97,7 +97,7 @@
                (26px) is taller than the PCN/QTY block (25.2px), so it defines the row
                height and the border-bottom lands straight on the bottom of the bars —
                which both looks broken and eats into the symbol. */
-            padding: 0 11px 4px;
+            padding: 0 11px 5px;
         }
 
         /* Bottom section: 2-column, 3-row grid. Every detail line uses the
@@ -108,8 +108,8 @@
             /* Left col gets 2× the width so long Item No / PO values don't
                clip; right col only carries short fields (DCC, MSD). */
             grid-template-columns: 2fr 1fr;
-            gap: 1px 10px;
-            font-size: 12px;
+            gap: 3px 10px;
+            font-size: 13px;
             font-weight: 600;
             /* 1.15, not 1.3: with the barcode row now 30px the detail block has to fit in
                what is left, and at 1.3 a wrapped (2-line) MPN pushed MSD/PO 1.7px past the
@@ -125,7 +125,12 @@
                start keeps the rows tight under the separator and leaves ALL the slack as
                bottom margin, which is where it is needed. */
             align-content: start;
-            padding-top: 2px;
+            /* NO min-height:0 here. Setting it let the grid rows COMPRESS: a 13px row
+               measured 8.4px tall, so the row BOX fitted inside the label while the glyph
+               INK overflowed and was clipped mid-character. Left at the flex default
+               (auto) the rows keep their natural height and the block visibly overruns the
+               label, which is what the auto-fit below measures. */
+            padding-top: 3px;
         }
 
         .detail-line {
@@ -151,7 +156,7 @@
                second line is what pushes MSD/PO off the bottom. The smaller size fits
                ~42 chars per line instead of ~39, so fewer MPNs wrap at all, and a wrap
                costs 24px instead of 28px. Still the full string — never truncated. */
-            font-size: 11px;
+            font-size: 12px;
             line-height: 1.1;
         }
 
@@ -315,7 +320,7 @@
                     // only 4.8mm; 26px ≈ 6.9mm. Nearly free in layout terms because the
                     // PCN/QTY text block beside it is already ~25px tall, so the row height
                     // barely changes.
-                    height: 26,
+                    height: 30,
                     displayValue: false,
                     // 0 here is deliberate and safe (it is `margin`, not `marginTop`). The
                     // quiet zone comes from .barcode-section's horizontal padding.
@@ -324,6 +329,35 @@
                     lineColor: "#000000"
                 });
                 console.log('Barcode generated for PCN:', barcodeData);
+
+                // AUTO-FIT. The layout is sized to FILL a 1in label for a normal MPN, so
+                // there is no spare room left for one that wraps to a second line — and a
+                // wrapped MPN pushing MSD/PO off the bottom edge is the exact bug the floor
+                // reported on 2026-08-03. Rather than shrink every label to survive the
+                // rare long one, shrink only the MPN, and only when it actually overflows.
+                // The MPN is the one field that may wrap, so it is the one that gives.
+                (function fitLabel() {
+                    var box = document.querySelector('.label-box');
+                    var details = document.querySelector('.label-details');
+                    var mpn = document.querySelector('.mpn-line');
+                    if (!box || !details || !mpn) return;
+                    // Measure the LAST ROW, not the details block. The block is flex:1, so
+                    // it always stretches to the container's bottom edge — its own bottom is
+                    // at the limit no matter what, and testing it shrank the MPN to the
+                    // floor on every label. The last row (PO / MSD) is what actually falls
+                    // off the label. 1px of slack absorbs glyph ink overhanging its box.
+                    var rows = details.querySelectorAll('.detail-line');
+                    var last = rows[rows.length - 1];
+                    if (!last) return;
+                    var limit = box.getBoundingClientRect().bottom -
+                                parseFloat(getComputedStyle(box).paddingBottom) - 1;
+                    var size = 12;
+                    while (last.getBoundingClientRect().bottom > limit && size > 7.5) {
+                        size -= 0.5;
+                        mpn.style.fontSize = size + 'px';
+                    }
+                    if (size < 12) console.log('MPN shrunk to ' + size + 'px to fit the label');
+                })();
 
                 // Auto-trigger print dialog after barcode is generated
                 setTimeout(function() {
