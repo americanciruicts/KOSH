@@ -465,8 +465,21 @@ thermal darkness set too high (bars bleed together — consistent with the "too 
 report), print scale not 100% in the browser dialog (any "fit to page" distorts the module
 widths), or the wrong paper size selected.
 
-**Still open:** a long MPN that wraps to two lines leaves ~2.9px bottom clearance — fits,
-but with little margin. The original top-clipping report is addressed in the browser path
+**Final layout (Preet chose "Option 1" from four rendered mockups, 2026-08-03):** barcode
+stays top-right; detail rows 12→13px, row gap 3px, barcode 26→30px tall, so the content
+fills the label instead of leaving a ~15px blank strip at the bottom (~1.2px slack now).
+A long MPN auto-shrinks on load until the last row fits, rather than every label being
+shrunk to survive the rare long one — a typical MPN stays at 12px, the long test MPN
+settles at 10.5px on one line with 2.8px to spare.
+
+Two bugs found building that fitter, both only visible by measuring in the browser:
+`min-height:0` on `.label-details` let the grid rows COMPRESS (a 13px row measured 8.4px,
+so the row BOX fitted while the glyph INK overflowed and clipped mid-character); and the
+fitter first tested the details block's own bottom, but that block is `flex:1` and always
+stretches to the container edge, so the test was always true and shrank the MPN to the
+7.5px floor on every label. It now measures the LAST ROW.
+
+**Still open:** the ZPL path is untouched and unverified on paper. The original top-clipping report is addressed in the browser path
 only; no ZPL-printed label has been confirmed bad.
 
 ---
