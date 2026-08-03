@@ -274,17 +274,23 @@
                 console.log('Barcode data (PCN only):', barcodeData);
 
                 // Thicker bars + taller height for reliable scanning
-                // DO NOT TUNE THESE FOR LAYOUT. height 25 / width 1.5 / margin 2 is the
-                // combination that scans on the floor's readers. It was shortened to 22 and
-                // its margins reshuffled on 2026-08-03 to buy a few px of label space, and
-                // the barcode stopped scanning entirely. The vertical space has to come from
-                // the detail rows (align-content:start) instead — never from the barcode.
+                // width/height/margin are BACK to the values the label used before commit
+                // 7f7fb3c (2026-08-03, Preet: "the barcode became too bold"). `width` is the
+                // bar MODULE width, so the 1 -> 1.5 bump in 7f7fb3c made every bar 50%
+                // thicker; on a thermal printer thick bars bleed into each other and the
+                // reader loses the pattern.
+                //
+                // DO NOT TUNE THESE FOR LAYOUT. A separate attempt to reclaim label space
+                // via height:22 + marginTop/marginBottom:0 rendered a 42px barcode, not
+                // 22px — JsBarcode resolves those two with a falsy check, so 0 falls back to
+                // its default margin of 10. Vertical space comes from the detail rows
+                // (align-content:start), never from the barcode.
                 JsBarcode("#labelBarcode", barcodeData, {
                     format: "CODE128",
-                    width: 1.5,
-                    height: 25,
+                    width: 1,
+                    height: 18,
                     displayValue: false,
-                    margin: 2,
+                    margin: 0,
                     background: "#ffffff",
                     lineColor: "#000000"
                 });

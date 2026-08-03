@@ -421,8 +421,12 @@ So the barcode **grew 13px instead of shrinking 4px**. It pushed the detail grid
 were clipped, so there was nothing valid left to scan. Every layout measurement taken
 during the fix attempts was against a 22px barcode that never existed.
 
-**Fixed:** barcode restored to `height: 25, margin: 2` — the combination known to scan.
-Do not tune it for layout.
+**Fixed:** barcode restored to `width: 1, height: 18, margin: 0` — the values the label
+used before commit `7f7fb3c`. Preet then reported the bars printing "too bold": `7f7fb3c`
+had also raised `width` (the bar MODULE width) from 1 to 1.5, making every bar 50%
+thicker. On a thermal printer thick bars bleed together and the reader loses the pattern,
+so that bump is a plausible contributor to the scan failure independent of the 42px bug.
+Module width is now 0.265mm (CODE128 minimum is 0.25mm). Do not tune these for layout.
 
 **Also found and kept (a genuine, separate defect):** `.label-details` is `flex: 1` with
 `align-content: space-evenly`, so it absorbs all leftover height and spreads its three
