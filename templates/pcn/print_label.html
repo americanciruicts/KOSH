@@ -43,7 +43,8 @@
             align-items: center;
             justify-content: space-between;
             margin-bottom: 1px;
-            padding-bottom: 1px;
+            /* No padding under the QTY line — the rule sits directly beneath it. */
+            padding-bottom: 0;
             border-bottom: 1.5px solid #000;
             flex-shrink: 0;
             min-height: 0;
@@ -54,7 +55,9 @@
             flex-direction: column;
             justify-content: center;
             flex-shrink: 0;
-            line-height: 1.15;
+            /* 1.05, not 1.15: the half-leading under QTY was reading as a gap above the
+               rule. Kept just above 1 so the tail of the Q is not clipped by the border. */
+            line-height: 1.05;
         }
 
         .pcn-line {
