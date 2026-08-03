@@ -397,6 +397,52 @@ what drives SR-3, WI-1, and PK-1 together.
 
 ---
 
+## 🏷️ LABEL PRINT — barcode unscannable + MSD/PO cut off (2026-08-03)
+
+Reported by Preet from the floor, in this order: (1) barcode and PCN clipped at the top
+of the label, (2) after a fix attempt, **MSD and PO cut off the bottom**, (3) **barcode
+would not scan at all**. (2) and (3) were caused by the fix attempts, not the original
+complaint.
+
+**Root cause of (2) and (3) — one bug, two symptoms.** In `templates/pcn/print_label.html`
+the barcode was changed to `height: 22, marginTop: 0, marginBottom: 0` to reclaim a few
+px of vertical space. **JsBarcode resolves `marginTop`/`marginBottom` with a falsy check,
+so `0` does not mean "no margin" — it falls back to the default `margin: 10`.** The SVG
+rendered at **42px** (22 + 10 + 10), not 22px. Verified by rendering both configs under
+jsdom against the exact CDN build the page loads:
+
+| config | SVG height |
+|---|---|
+| `height:25, margin:2` (original) | 29px |
+| `height:22, marginTop/Bottom:0` | **42px** |
+
+So the barcode **grew 13px instead of shrinking 4px**. It pushed the detail grid down
+13px — MSD/PO off the bottom — and at 42px inside a 1in `overflow:hidden` label the bars
+were clipped, so there was nothing valid left to scan. Every layout measurement taken
+during the fix attempts was against a 22px barcode that never existed.
+
+**Fixed:** barcode restored to `height: 25, margin: 2` — the combination known to scan.
+Do not tune it for layout.
+
+**Also found and kept (a genuine, separate defect):** `.label-details` is `flex: 1` with
+`align-content: space-evenly`, so it absorbs all leftover height and spreads its three
+rows across it, parking MSD/PO hard against the bottom edge — and every attempt to shrink
+the header handed the grid *more* height and pushed that row *lower*. Changed to
+`align-content: start`, which packs the rows under the separator and leaves the slack as
+bottom margin. Typical label bottom clearance ~3px → ~12px.
+
+**Reverted:** the ZPL label (`app.py`, `generate_zpl_label`) was modified twice chasing
+this and was never at fault; it is back at its original coordinates. Evidence the floor
+prints via the browser **Print Label** button, not Download ZPL: restoring the ZPL to
+original did not change the reported symptom.
+
+**Still open:** a long MPN that wraps to two lines leaves only ~0.3px bottom clearance, so
+MSD/PO can still clip on those labels. Not reproduced against a specific PCN yet.
+The original top-clipping report is addressed in the browser path only (top padding
+0.03in → 0.05in); no ZPL-printed label has been confirmed bad.
+
+---
+
 # ✅ Definition of done (what "fixed" will finally mean)
 
 An issue is closed ONLY when all of the following hold — no exceptions, no "deployed =
