@@ -133,7 +133,21 @@ def qty_display(row):
     column shows the resulting balance (17 -> 0 for that ADJT), and From/To show where the
     parts went. Only the display is unsigned — `_qty`/`apply_txn` still read the SIGNED
     tranqty, so an ADJT of -17 still subtracts 17 from the balance. Never route the
-    balance math through this function."""
+    balance math through this function.
+
+    RESTOCK PRINTS 0 (Preet, 2026-08-03)
+    ------------------------------------
+    "when restocked the pick qty should be zero and on hand get a number." A restock is
+    stock coming back IN, so nothing was picked on that row and the quantity column — which
+    the floor reads as a pick quantity — shows 0. The number itself is not lost: a restock
+    SETS the bin balance, so the On Hand column on the same row carries it (restock 49 ->
+    On Hand 49), and Warehouse Inventory shows the same 49.
+
+    This is deliberately narrower than the pre-14b44fc behaviour, which blanked the
+    quantity on EVERY non-PICK type. PTWY/RNDT/INDF/ADJT still print their own quantity,
+    so the PCN 44956 case — a put-away of 46 that read as the balance 150 — stays fixed."""
+    if (row.get('trantype') or '').strip() == 'RESTOCK':
+        return 0
     raw = str(row.get('tranqty') if row.get('tranqty') is not None else '').strip()
     if not raw:
         return None

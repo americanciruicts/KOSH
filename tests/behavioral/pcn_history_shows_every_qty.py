@@ -36,7 +36,8 @@ def check(cond, label):
 # ---- the rule itself, independent of any data --------------------------------
 check(qty_display({'trantype': 'PTWY',    'tranqty': '46'})    == 46,   'PTWY 46 prints 46 (was a dash)')
 check(qty_display({'trantype': 'RNDT',    'tranqty': '46'})    == 46,   'RNDT 46 prints 46 (was a dash)')
-check(qty_display({'trantype': 'RESTOCK', 'tranqty': '2000'})  == 2000, 'RESTOCK prints its qty (was a dash)')
+check(qty_display({'trantype': 'RESTOCK', 'tranqty': '2000'})  == 0,    'RESTOCK prints 0 - nothing was picked (Preet 2026-08-03); On Hand carries the 2000')
+check(qty_display({'trantype': 'RESTOCK', 'tranqty': '49'})    == 0,    'PCN 46924: the 49 restock prints 0 in the qty column')
 check(qty_display({'trantype': 'INDF',    'tranqty': '150'})   == 150,  'INDF prints its qty (was a dash)')
 check(qty_display({'trantype': 'PICK',    'tranqty': '-150'})  == 150,  'PICK prints unsigned (the row already says it left)')
 check(qty_display({'trantype': 'PURGE',   'tranqty': '0'})     == 0,    'PURGE prints unsigned')
@@ -44,8 +45,9 @@ check(qty_display({'trantype': 'ADJT',    'tranqty': '-1000'}) == 1000, 'ADJT pr
 check(qty_display({'trantype': 'ADJT',    'tranqty': '30'})    == 30,   'ADJT positive delta prints 30')
 check(qty_display({'trantype': 'ADJT',    'tranqty': '-17'})   == 17,   'PCN 24996: the -17 that zeroed a bin prints as 17')
 check(all(qty_display({'trantype': t, 'tranqty': '-42'}) == 42
-          for t in ('PICK','PURGE','ADJT','PTWY','RNDT','RESTOCK','INDF','SCRA','STOCK')),
+          for t in ('PICK','PURGE','ADJT','PTWY','RNDT','INDF','SCRA','STOCK')),
       'NO transaction type can ever print a negative quantity')
+check(qty_display({'trantype': 'RESTOCK', 'tranqty': '-42'}) == 0, 'RESTOCK is 0 regardless of what tranqty holds')
 check(qty_display({'trantype': 'PTWY',    'tranqty': None})    is None, 'no quantity -> dash, never a fabricated 0')
 check(qty_display({'trantype': 'PTWY',    'tranqty': 'n/a'})   is None, 'unreadable quantity -> dash, never a fabricated 0')
 
