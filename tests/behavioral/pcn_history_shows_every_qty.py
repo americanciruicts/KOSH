@@ -40,8 +40,12 @@ check(qty_display({'trantype': 'RESTOCK', 'tranqty': '2000'})  == 2000, 'RESTOCK
 check(qty_display({'trantype': 'INDF',    'tranqty': '150'})   == 150,  'INDF prints its qty (was a dash)')
 check(qty_display({'trantype': 'PICK',    'tranqty': '-150'})  == 150,  'PICK prints unsigned (the row already says it left)')
 check(qty_display({'trantype': 'PURGE',   'tranqty': '0'})     == 0,    'PURGE prints unsigned')
-check(qty_display({'trantype': 'ADJT',    'tranqty': '-1000'}) == -1000,'ADJT keeps its SIGN - the sign is the meaning')
-check(qty_display({'trantype': 'ADJT',    'tranqty': '30'})    == 30,   'ADJT positive delta prints +30')
+check(qty_display({'trantype': 'ADJT',    'tranqty': '-1000'}) == 1000, 'ADJT prints UNSIGNED - a quantity is never negative (Preet 2026-08-03)')
+check(qty_display({'trantype': 'ADJT',    'tranqty': '30'})    == 30,   'ADJT positive delta prints 30')
+check(qty_display({'trantype': 'ADJT',    'tranqty': '-17'})   == 17,   'PCN 24996: the -17 that zeroed a bin prints as 17')
+check(all(qty_display({'trantype': t, 'tranqty': '-42'}) == 42
+          for t in ('PICK','PURGE','ADJT','PTWY','RNDT','RESTOCK','INDF','SCRA','STOCK')),
+      'NO transaction type can ever print a negative quantity')
 check(qty_display({'trantype': 'PTWY',    'tranqty': None})    is None, 'no quantity -> dash, never a fabricated 0')
 check(qty_display({'trantype': 'PTWY',    'tranqty': 'n/a'})   is None, 'unreadable quantity -> dash, never a fabricated 0')
 

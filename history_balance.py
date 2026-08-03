@@ -122,8 +122,18 @@ def qty_display(row):
     The 46 was in the database, on that row, the whole time. 155,692 rows across 35,134
     PCNs had their quantity hidden this way, so this is not one PCN's problem.
 
-    A PICK/PURGE is printed unsigned (the row already says it left), but an ADJT is a
-    SIGNED recount delta and its sign is the meaning — "-1000" must not print as "1000"."""
+    ALWAYS UNSIGNED (Preet, 2026-08-03: "the qty should never ever come as negative")
+    ----------------------------------------------------------------------------------
+    Every transaction type prints the magnitude only. This column answers "how many parts
+    did this transaction move", and a count of parts is never a negative number — a "-17"
+    under a quantity heading reads as broken data to the floor (reported on PCN 24996,
+    an ADJT -17 that zeroed a bin before a purge).
+
+    The DIRECTION is not lost, it is just carried by the rest of the row: the On Hand
+    column shows the resulting balance (17 -> 0 for that ADJT), and From/To show where the
+    parts went. Only the display is unsigned — `_qty`/`apply_txn` still read the SIGNED
+    tranqty, so an ADJT of -17 still subtracts 17 from the balance. Never route the
+    balance math through this function."""
     raw = str(row.get('tranqty') if row.get('tranqty') is not None else '').strip()
     if not raw:
         return None
@@ -131,7 +141,7 @@ def qty_display(row):
         n = int(raw)
     except ValueError:
         return None
-    return abs(n) if (row.get('trantype') or '').strip() in ('PICK', 'PURGE') else n
+    return abs(n)
 
 
 def compute_anchored_history_balances(transactions, anchor):
