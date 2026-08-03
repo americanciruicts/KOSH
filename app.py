@@ -7760,22 +7760,19 @@ def generate_zpl_label(pcn_number):
             # 2/100th of an inch from the edge, inside the ZP450's top-of-form registration
             # tolerance, so the floor saw both shaved off.
             #
-            # DO NOT FIX THIS BY SHIFTING EVERY FIELD DOWN. That was tried the same day and
-            # pushed MSD/PO off the BOTTOM: the label's usable area ends well before the
-            # nominal 203 dots, which is why the original layout stopped at y=160. The
-            # bottom half has no slack to borrow.
-            #
-            # The top margin is bought by SHRINKING the header instead: PCN/QTY drop from a
-            # 24-dot to a 20-dot font and the barcode from 55 to 42 dots tall, which frees
-            # the room to start at y=14 while still clearing the separator at y=58.
-            # EVERYTHING BELOW THE SEPARATOR IS UNCHANGED — Item/DCC y=65, MPN y=88,
-            # MSD/PO y=140 are exactly as they shipped, because those positions are known
-            # to print. A 42-dot CODE128 still scans fine at this bar width.
+            # This layout is ORIGINAL and known to print and scan. It was modified twice on
+            # 2026-08-03 chasing a top-clipping report and reverted both times: the real
+            # fault was in the BROWSER label (templates/pcn/print_label.html), where
+            # JsBarcode silently ignored marginTop/marginBottom:0 — 0 is falsy, so it fell
+            # back to its default margin of 10 — and rendered a 42px-tall barcode instead of
+            # 22px. That pushed MSD/PO off the bottom and clipped the bars unscannable.
+            # Nothing was ever wrong with the ZPL. Leave these coordinates alone unless a
+            # ZPL-printed label is confirmed bad.
             zpl = f"""^XA
-^FO30,16^A0N,20,20^FDPCN: {data['pcn_number']}^FS
-^FO30,37^A0N,20,20^FDQTY: {data.get('quantity', 0)}^FS
+^FO30,5^A0N,24,24^FDPCN: {data['pcn_number']}^FS
+^FO30,28^A0N,24,24^FDQTY: {data.get('quantity', 0)}^FS
 
-^FO210,14^BY3,2,42^BCN,42,N,N,N^FD{data['pcn_number']}^FS
+^FO210,2^BY3,2,55^BCN,55,N,N,N^FD{data['pcn_number']}^FS
 
 ^FO15,58^GB579,0,2^FS
 

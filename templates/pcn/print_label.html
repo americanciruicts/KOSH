@@ -274,19 +274,17 @@
                 console.log('Barcode data (PCN only):', barcodeData);
 
                 // Thicker bars + taller height for reliable scanning
-                // Height 25 -> 22 and marginTop/Bottom 2 -> 0 frees ~7px, which pays for the
-                // label's top margin WITHOUT stealing from the bottom (doing that cut MSD/PO
-                // off the label). The LEFT and RIGHT margins are the barcode's quiet zone and
-                // are widened, not removed — a CODE128 needs clear space either side to scan.
+                // DO NOT TUNE THESE FOR LAYOUT. height 25 / width 1.5 / margin 2 is the
+                // combination that scans on the floor's readers. It was shortened to 22 and
+                // its margins reshuffled on 2026-08-03 to buy a few px of label space, and
+                // the barcode stopped scanning entirely. The vertical space has to come from
+                // the detail rows (align-content:start) instead — never from the barcode.
                 JsBarcode("#labelBarcode", barcodeData, {
                     format: "CODE128",
                     width: 1.5,
-                    height: 22,
+                    height: 25,
                     displayValue: false,
-                    marginTop: 0,
-                    marginBottom: 0,
-                    marginLeft: 8,
-                    marginRight: 8,
+                    margin: 2,
                     background: "#ffffff",
                     lineColor: "#000000"
                 });
