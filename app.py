@@ -7756,38 +7756,36 @@ def generate_zpl_label(pcn_number):
 
             # Generate ZPL code for 3x1 inch label (Zebra ZP450) - v5.0 compact scannable
             # Label dimensions: 3 inches wide (609 dots @ 203dpi), 1 inch tall (203 dots @ 203dpi)
-            # TOP MARGIN (2026-08-03): the barcode used to start at y=2 and the PCN line at
-            # y=5 — 2/100th of an inch from the edge. Any top-of-form registration slop on
-            # the ZP450 (normal on direct-thermal gap media) shaved the top off both, which
-            # is exactly what the floor reported. Every field is shifted down 20 dots so
-            # nothing lives in the printer's edge tolerance. There is room: the old layout
-            # ended at y=160 on a 203-dot label, so the 20 dots come out of unused space at
-            # the bottom, not out of any field. Content now spans y=22..180, leaving a
-            # ~22-dot margin top AND bottom.
+            # TOP MARGIN (2026-08-03): the barcode started at y=2 and the PCN line at y=5 —
+            # 2/100th of an inch from the edge, inside the ZP450's top-of-form registration
+            # tolerance, so the floor saw both shaved off.
             #
-            # ^PW/^LL/^LH/^LT are set explicitly so the label does not inherit a stored
-            # offset from whatever the printer was last configured for — without them a
-            # persisted ^LT on the printer can drag the whole label up again.
+            # DO NOT FIX THIS BY SHIFTING EVERY FIELD DOWN. That was tried the same day and
+            # pushed MSD/PO off the BOTTOM: the label's usable area ends well before the
+            # nominal 203 dots, which is why the original layout stopped at y=160. The
+            # bottom half has no slack to borrow.
+            #
+            # The top margin is bought by SHRINKING the header instead: PCN/QTY drop from a
+            # 24-dot to a 20-dot font and the barcode from 55 to 42 dots tall, which frees
+            # the room to start at y=14 while still clearing the separator at y=58.
+            # EVERYTHING BELOW THE SEPARATOR IS UNCHANGED — Item/DCC y=65, MPN y=88,
+            # MSD/PO y=140 are exactly as they shipped, because those positions are known
+            # to print. A 42-dot CODE128 still scans fine at this bar width.
             zpl = f"""^XA
-^PW609
-^LL203
-^LH0,0
-^LT0
+^FO30,16^A0N,20,20^FDPCN: {data['pcn_number']}^FS
+^FO30,37^A0N,20,20^FDQTY: {data.get('quantity', 0)}^FS
 
-^FO30,25^A0N,24,24^FDPCN: {data['pcn_number']}^FS
-^FO30,48^A0N,24,24^FDQTY: {data.get('quantity', 0)}^FS
+^FO210,14^BY3,2,42^BCN,42,N,N,N^FD{data['pcn_number']}^FS
 
-^FO210,22^BY3,2,55^BCN,55,N,N,N^FD{data['pcn_number']}^FS
+^FO15,58^GB579,0,2^FS
 
-^FO15,78^GB579,0,2^FS
+^FO35,65^A0N,20,20^FDItem No: {data.get('item', 'N/A')}^FS
+^FO320,65^A0N,20,20^FDDCC: {data.get('date_code', 'N/A')}^FS
 
-^FO35,85^A0N,20,20^FDItem No: {data.get('item', 'N/A')}^FS
-^FO320,85^A0N,20,20^FDDCC: {data.get('date_code', 'N/A')}^FS
+^FO35,88^A0N,18,18^FB560,2,0,L,0^FDMPN: {data.get('mpn', 'N/A')}^FS
 
-^FO35,108^A0N,18,18^FB560,2,0,L,0^FDMPN: {data.get('mpn', 'N/A')}^FS
-
-^FO35,160^A0N,20,20^FDMSD: {data.get('msd', 'N/A')}^FS
-^FO320,160^A0N,20,20^FDPO: {data.get('po_number', 'N/A')}^FS
+^FO35,140^A0N,20,20^FDMSD: {data.get('msd', 'N/A')}^FS
+^FO320,140^A0N,20,20^FDPO: {data.get('po_number', 'N/A')}^FS
 
 ^XZ"""
 

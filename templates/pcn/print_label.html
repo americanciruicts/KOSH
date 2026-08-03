@@ -190,10 +190,13 @@
             .label-box {
                 width: 3in;
                 height: 1in;
-                /* Top padding raised 0.03in -> 0.07in so the barcode and PCN line clear
-                   the printer's non-printable top edge. Paid for by the barcode's
-                   marginTop/marginBottom going to 0 — see JsBarcode options below. */
-                padding: 0.07in 0.06in 0.02in 0.14in;
+                /* Top padding raised 0.03in -> 0.05in so the barcode and PCN line clear the
+                   printer's non-printable top edge. The BOTTOM padding stays at 0.03in —
+                   taking it from the bottom cut MSD/PO off the label. The extra top room is
+                   paid for by the barcode getting shorter and losing its vertical margins
+                   (see the JsBarcode options below), which nets the detail rows ~5px MORE
+                   space than they had originally, not less. */
+                padding: 0.05in 0.06in 0.03in 0.14in;
                 margin: 0 !important;
                 box-shadow: none;
                 border: none;
@@ -255,14 +258,14 @@
                 console.log('Barcode data (PCN only):', barcodeData);
 
                 // Thicker bars + taller height for reliable scanning
-                // marginTop/Bottom 0 frees ~4px of vertical space for the label's top
-                // margin (the top of the barcode was printing off the edge). The LEFT and
-                // RIGHT margins are the barcode's quiet zone and are widened, not removed —
-                // a CODE128 needs clear space either side to scan reliably.
+                // Height 25 -> 22 and marginTop/Bottom 2 -> 0 frees ~7px, which pays for the
+                // label's top margin WITHOUT stealing from the bottom (doing that cut MSD/PO
+                // off the label). The LEFT and RIGHT margins are the barcode's quiet zone and
+                // are widened, not removed — a CODE128 needs clear space either side to scan.
                 JsBarcode("#labelBarcode", barcodeData, {
                     format: "CODE128",
                     width: 1.5,
-                    height: 25,
+                    height: 22,
                     displayValue: false,
                     marginTop: 0,
                     marginBottom: 0,
