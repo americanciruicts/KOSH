@@ -22,3 +22,6 @@ __pycache__/
 # DB dumps (exceed GitHub 100MB limit)
 kosh_backup_*.sql
 *.sql.gz
+
+# Local per-environment compose overrides (staging values must never be committed)
+docker-compose.override.yml

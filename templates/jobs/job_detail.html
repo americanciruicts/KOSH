@@ -16,6 +16,16 @@
     }
     .shortage-row { background-color: #fee2e2 !important; }
     [data-theme="dark"] .shortage-row { background-color: rgba(239, 68, 68, 0.2) !important; }
+    .zsub-subrow td { background-color: #fffbeb !important; font-size: 0.9rem; }
+    [data-theme="dark"] .zsub-subrow td { background-color: rgba(245,158,11,0.10) !important; }
+
+    /* NOT-ON-BOM sub-rows: stock under this PN whose MPN the BOM does not approve.
+       Reads as a warning, not as available stock — the qty is a plain number but is
+       NOT part of On Hand; the row tint and NOT ON BOM badge carry that. */
+    .notonbom-subrow td { background-color: #fef2f2 !important; font-size: 0.9rem; }
+    [data-theme="dark"] .notonbom-subrow td { background-color: rgba(239,68,68,0.10) !important; }
+    .pcn-subrow td { background-color: #eff6ff !important; font-size: 0.9rem; }
+    [data-theme="dark"] .pcn-subrow td { background-color: rgba(59,130,246,0.10) !important; }
     .stat-card { text-align: center; padding: 15px; }
     .stat-card .stat-value { font-size: 2rem; font-weight: 700; }
     .stat-card .stat-label { font-size: 0.875rem; color: var(--text-secondary); }
@@ -158,6 +168,37 @@
                 </thead>
                 <tbody>
                     {% for line in lines %}
+                    {% if line.pcn_rows %}
+                    {# Multiple PCNs: one line PER PCN with that lot's own qty — no lumped total line. #}
+                    {% for p in line.pcn_rows %}
+                    <tr class="{% if line.shortage < 0 %}shortage-row{% endif %}">
+                        <td>{{ line.line_no }}</td>
+                        <td><small>{{ p.pcn or '-' }}</small></td>
+                        <td><strong>{{ line.aci_pn or '-' }}</strong></td>
+                        <td>
+                            <small>{{ line.description or '-' }}</small>
+                            {% if line.manufacturer %}
+                            <br><span class="text-muted" style="font-size: 0.75rem;">{{ line.manufacturer }}</span>
+                            {% endif %}
+                        </td>
+                        {# each PCN's OWN mpn — printing line.mpn here is what stamped the
+                           dashed 'EEE-FC1E101P' over PCN 31639's real 'EEEFC1E101P'. #}
+                        <td><small>{{ p.mpn or line.mpn or '-' }}</small>
+                            {% if p.is_zsub %}<span class="badge bg-info text-dark ms-1" style="font-size:0.6rem;">ZSUB</span>{% endif %}
+                        </td>
+                        <td class="text-center">{{ line.qty }}</td>
+                        <td class="text-center"><strong>{{ line.req }}</strong></td>
+                        <td class="text-center"><span class="{% if line.shortage < 0 %}text-danger fw-bold{% endif %}">{{ p.qty or 0 }}</span></td>
+                        <td>{{ p.location or '-' }}</td>
+                        <td class="text-end">${{ '%.2f'|format(line.unit_cost) }}</td>
+                        <td class="text-center">
+                            {% if line.shortage < 0 %}<span class="badge bg-danger">{{ line.shortage }}</span>
+                            {% elif line.shortage == 0 %}<span class="text-muted">0</span>
+                            {% else %}<span class="text-success">+{{ line.shortage }}</span>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% else %}
                     <tr class="{% if line.shortage < 0 %}shortage-row{% endif %}">
                         <td>{{ line.line_no }}</td>
                         <td><small>{{ line.pcn or '-' }}</small></td>
@@ -190,6 +231,49 @@
                             {% endif %}
                         </td>
                     </tr>
+                    {% endif %}
+                    {% for z in line.zsub_rows %}
+                    <tr class="zsub-subrow" title="ZSUB substitute from the BOM for this line. Approved alternate part.">
+                        <td>{{ line.line_no }}</td>
+                        <td><small>{{ z.pcn or '-' }}</small></td>
+                        <td><strong>{{ line.aci_pn or '-' }}</strong></td>
+                        <td><small>ZSUB — {{ z.description or '' }}</small></td>
+                        <td>
+                            <small>{{ z.mpn or '-' }}</small>
+                            {% if z.manufacturer %}
+                            <br><span class="text-muted" style="font-size: 0.75rem;">{{ z.manufacturer }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">{{ line.qty }}</td>
+                        <td class="text-center">{{ line.req }}</td>
+                        <td class="text-center"><span class="{% if (z.qty or 0) > 0 %}text-success fw-bold{% else %}text-muted{% endif %}">{{ z.qty or 0 }}</span></td>
+                        <td>{{ z.location or '-' }}</td>
+                        <td class="text-end">-</td>
+                        <td class="text-center">-</td>
+                    </tr>
+                    {% endfor %}
+                    {# Stock filed under this ACI PN whose MPN the BOM does NOT approve. NOT
+                       counted in On Hand — shown so a tightened total never looks like stock
+                       vanished, and so someone can rule on the part. #}
+                    {% for bad in line.unmatched_rows %}
+                    <tr class="notonbom-subrow"
+                        title="NOT counted in On Hand: PCN {{ bad.pcn }} is filed under {{ line.aci_pn }} but holds MPN {{ bad.mpn }}, which is not on this BOM line. Verify before pulling.">
+                        <td>{{ line.line_no }}</td>
+                        <td><small>{{ bad.pcn or '-' }}</small></td>
+                        <td><strong>{{ line.aci_pn or '-' }}</strong></td>
+                        <td><small>NOT ON BOM — verify before pulling</small></td>
+                        <td>
+                            <small class="text-danger">{{ bad.mpn or '-' }}</small>
+                            <span class="badge bg-warning text-dark ms-1" style="font-size:0.6rem;">NOT ON BOM</span>
+                        </td>
+                        <td class="text-center">{{ line.qty }}</td>
+                        <td class="text-center">{{ line.req }}</td>
+                        <td class="text-center"><span class="text-muted">{{ bad.qty or 0 }}</span></td>
+                        <td>{{ bad.location or '-' }}</td>
+                        <td class="text-end">-</td>
+                        <td class="text-center">-</td>
+                    </tr>
+                    {% endfor %}
                     {% endfor %}
                 </tbody>
                 <tfoot class="table-light">

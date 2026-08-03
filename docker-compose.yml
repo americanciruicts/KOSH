@@ -41,6 +41,10 @@ services:
       - DATABASE_URL=postgresql://aci:Pr1xtjxb3jUo@aci-database:5432/kosh
       - FLASK_RUN_PORT=5000
       - SSO_SECRET_KEY=D4T_WY71xsF0_UB4QjIzlAjVlj-M5kEG0jsIws6isvPn5NNK4s5-_E_--WI6C6YT6jkerJ3EHncBEuG3tK5Rlg
+      # Pinned Flask SECRET_KEY (defensive, bug SO-1): a stable secret keeps session
+      # cookies valid across restarts/workers so kitting never bounces to SSO. Value
+      # matches the in-code fallback so existing sessions stay signed-in.
+      - SECRET_KEY=kosh-pcb-inventory-secret-key-2025-production-v1
     expose:
       - "5000"
     # Using external database, no dependency needed

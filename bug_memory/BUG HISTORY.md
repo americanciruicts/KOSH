@@ -1,755 +1,419 @@
 <h1 align="center">🐞 KOSH — BUG HISTORY</h1>
 
 <p align="center">
-  <b>Permanent, human-readable record of every bug fixed in KOSH.</b><br>
-  <span style="color:#7f8c8d">Window covered: <b>13 May 2026 → 23 June 2026</b> · 49 commits</span><br>
-  <span style="color:#7f8c8d">Document created: <b>2026-06-23</b> · Last updated: <b>2026-07-15</b></span>
+  <b>Reframed 2026-07-17 from the user's own reports — Theresa's 5 emails + the 7-16 issue list.</b><br>
+  <span style="color:#c0392b"><b>STATUS: 🔴 ALL ISSUES UNFIXED.</b></span><br>
+  <span style="color:#7f8c8d">The prior per-bug "fixed" folders, verify scripts and audit docs were deleted —
+  they claimed fixes that did not hold. This file is now the single record, and it tracks
+  what the <b>user</b> actually sees, not what the code was believed to do.</span>
 </p>
 
-> 📌 **How to use:** one entry per distinct bug, newest first. When the **same** bug is
-> reported again, append a dated line under that entry's **Recurrences** section — never
-> delete the original. See [`README.md`](./README.md).
+---
+
+## Why this file was rewritten
+
+Every bug in the old log was marked ✅ "Fixed & deployed." The user (Preet) and the
+primary user (**Theresa**, Inventory Specialist) report that the same problems keep
+coming back or turn into new ones. A fix ships, and either the bug returns or something
+else breaks. So **nothing here is treated as fixed.** An item is closed only when the
+exact complaint below is impossible *and* Theresa confirms it at her desk.
+
+> **The core issue is trust, not any single bug.** Theresa was satisfied with KOSH
+> before. She no longer trusts it. In her words:
+>
+> - *"I no longer trust it."* — 2026-06-23
+> - *"Up until today I believed that the shortage report could be trusted. After the
+>   issues I found, I do not trust the validity of the data being created in this
+>   report."* — 2026-06-03
 
 ---
 
-## 🎨 Legend
+## 📎 Source evidence (the only authority for this file)
 
-**Severity (color):**
-🟥 <span style="color:#c0392b">**Critical**</span> — data integrity / outage ·
-🟧 <span style="color:#e67e22">**High**</span> — wrong data shown to users ·
-🟨 <span style="color:#f1c40f">**Medium**</span> — crash / UX-data ·
-🟩 <span style="color:#27ae60">**Low**</span> — isolated
+All in the `KOSH/` folder:
 
-**Status:** ✅ Fixed & deployed · 🟡 Partial · 🔴 Open · 🔁 Recurring
-**Tag:** `[WHSE≠HIST]` = a cause of the recurring *"Warehouse Inventory ≠ PCN History"* complaint.
-
----
-
-## 📋 Quick reference
-
-| # | Date | Bug | Area | Sev | Status |
-|:-:|------|-----|------|:---:|:------:|
-| [28](#bug28) | 2026-07-16 | Part Number Change left the stock behind → "insufficient quantity available" picking a full bin, and "Save verification failed: expected 80, got 280" editing Whse Inv | PN Change / Ledger | 🟥 | ✅ |
-| [27](#bug27) | 2026-07-16 | "KOSH signs me out after every transaction" while kitting — two open tabs knocked each other through SSO in a loop | Auth / SSO / CSRF | 🟧 | ✅ |
-| [26](#bug26) | 2026-07-15 | Restock rejected with "insufficient stock at MFG Floor: have 0, need 62" — parts physically in hand could not be received (PCN 38159) | Restock / Ledger | 🟥 | ✅ |
-| [25](#bug25) | 2026-07-07 | Shortage report dropped every non-short line → "all the BOM lines didn't come in" when a job's stock is staged on the MFG Floor (job 8355M) | Shortage | 🟧 | ✅ |
-| [24](#bug24) | 2026-07-01 | Phantom 0-qty "purge" PICK made Warehouse Inventory look out of sync with PCN History (PCN 13959) | Inventory / History `[WHSE≠HIST]` | 🟩 | ✅ |
-| [23](#bug23) | 2026-06-30 | Shortage report same-MPN visibility over-matched (1234 also showed 12345/123456) | Shortage / MPN match | 🟧 | ✅ |
-| [22](#bug22) | 2026-06-30 | BOM Loader saved only 1 of N lines → "MPN not available" generating a PCN for any other line | BOM Loader / Parser | 🟧 | ✅ |
-| [21](#bug21) | 2026-06-29 | Generate-PCN MPN dropdown empty though BOM display shows the MPN (case-sensitive lookup) | BOM Loader / PCN | 🟧 | ✅ |
-| [1](#bug1) | 2026-06-23 | Shortage report showed "MFG Floor" instead of the real bin | Shortage / Location | 🟧 | ✅ |
-| [2](#bug2) | 2026-06-22 | On-hand reconcile wiped fresh restocks to 0 | Inventory / Reconcile | 🟥 | ✅ |
-| [3](#bug3) | 2026-06-18 | PCN History page crashed for every PCN | PCN History | 🟨 | ✅ |
-| [4](#bug4) | 2026-06-18 | RESTOCK-after-recount doubling (History ≠ Warehouse) | Inventory / History | 🟥 | ✅ |
-| [5](#bug5) | 2026-06-17 | Location reconcile dropped 8-digit bins | Warehouse Location | 🟧 | ✅ |
-| [6](#bug6) | 2026-06-16 | Manual bin edits didn't stick | Warehouse Location | 🟧 | ✅ |
-| [7](#bug7) | 2026-06-16 | PCN History ≠ Warehouse on relabels | PCN History | 🟥 | ✅ |
-| [8](#bug8) | 2026-06-15 | Warehouse location never synced (stale bins) | Warehouse Location | 🟧 | ✅ |
-| [9](#bug9) | 2026-06-15 | Shortage report ignored MFG-Floor stock | Shortage | 🟧 | ✅ |
-| [10](#bug10) | 2026-06-12 | Phantom stock — ~15.3M phantom units | Inventory / Reconcile | 🟥 | ✅ |
-| [11](#bug11) | 2026-06-12 | False shortage from case-mismatched part numbers | Shortage | 🟧 | ✅ |
-| [12](#bug12) | 2026-06-05 | SSO auto-create failed for first-time users | Auth | 🟩 | ✅ |
-| [13](#bug13) | 2026-06-04 | Shortage report crashed on 11 jobs (qty/cost parse) | Shortage | 🟨 | ✅ |
-| [14](#bug14) | 2026-06-03 | Shortage structural bugs + "missing lines" | Shortage | 🟧 | ✅ |
-| [15](#bug15) | 2026-06-01 | Connection leaks + open data routes + wrong cost | Infra / Security | 🟧 | ✅ |
-| [16](#bug16) | 2026-05-29 | DB connection leak → pool exhaustion (outage) | Infra | 🟥 | ✅ |
-| [17](#bug17) | 2026-05-29 | Restock quantity silently dropping by 1 | Pick / Restock | 🟨 | ✅ |
-| [18](#bug18) | 2026-05-18 | Restock qty autofill / MFG-floor not zeroed | Pick / Restock | 🟨 | ✅ |
+| File | Date | What it reports |
+|------|------|-----------------|
+| `KOSH ISSUES 7-16-26.xlsx` | 2026-07-16 | Theresa's **current** issue list (see below) |
+| `KOSH SHORTAGE REPORT.eml` | 2026-06-03 | Shortage report QTY/REQ columns blank; missing lines; same-MPN PCNs not included; "trust was lost" |
+| `KOSH.eml` | 2026-06-17 | Warehouse Inventory still not showing the latest transactions seen in History |
+| `SHORTAGE REPORT.eml` | 2026-06-17 | Shortage report data wrong on 9 lines she hand-verified |
+| `LATEST SHORTAGE REPORT.eml` | 2026-06-23 | A line item missing from the report; a listed line "not actually in stock"; trust lost |
+| `KOSH HISTORY VERSUS WAREHOUSE INVENTORY.eml` | 2026-07-01 | Warehouse Inventory not reflecting the last entry in PCN History |
+| Verbal — Preet | 2026-07-21 | 5 more shortage-report defects (SR-3 line-item #, SR-8 location, SR-9 on-hand sum, SR-4 per-PCN lines, SR-1 ZSUB) |
 
 ---
 
-## 🧭 The core symptom — <span style="color:#c0392b">"Warehouse Inventory ≠ PCN History"</span>
+# 🔧 FIX ORDER — the sequence issues get fixed in
 
-This is the complaint Theresa reported again and again in different shapes. It isn't one
-bug — it's structural. The two screens are **two different computations**:
+Fix the **inventory foundation first**, then the shortage report reads correctly on top of
+it. This is why the report bugs are late in the list even though they're what Purchasing
+sees — most of them can't be right until on-hand is one number. Aligned to
+`ACTION-PLAN.md` phases.
 
-| Screen | What it is | Kept up to date by |
-|--------|-----------|--------------------|
-| **Warehouse Inventory** | Stored snapshot in `tblWhse_Inventory` (`onhandqty` = bin, `mfg_qty` = MFG-Floor, `loc_to` = bin) | direct ops + 5-min on-hand reconcile + location reconcile |
-| **PCN History** | Live view derived from the `tblTransaction` trail, with a running on-hand balance | recomputed on every view |
-
-- **● Quantity divergence** — History replayed the dirty ledger forward (counting relabel
-  ADJTs as `+qty`; stacking a RESTOCK on top of an RNDT recount) while the reconcile used
-  different math.
-  - ◦ *Example:* PCN **1247** — History 18,000 vs Warehouse 9,000.
-  - ◦ *Example:* PCN **41664** — History 4,000 vs Warehouse 2,000.
-- **● Location divergence** — relocations arrive as imported PTWY/ADJT; History showed the
-  true bin, Warehouse's `loc_to` never synced (~4,792 stale rows).
-- **● Resolution** — History now **anchors to Warehouse** and walks backward
-  (`compute_anchored_history_balances` @ `app.py` **L3294**), so the current on-hand has a
-  **single source of truth**; the location reconcile syncs `loc_to` within ~5 min.
-- **● ⚠️ Still not 100%** — the anchor sums per-PCN (multi-MPN edge cases); the reconcile is
-  a "lower-only" patch over a dirty ledger; the source data is still ambiguous.
-  ➡️ <span style="color:#c0392b">**Durable fix = rebuild the inventory / PCN / transaction data model.**</span>
-
----
-
-## 🔌 Recurring root cause — the dirty Access import
-- **●** Renumbers/relabels logged as `ADJT` carrying the **full qty** with **item numbers in
-  the location fields** → counted as stock movements (phantom stock).
-- **●** `tran_time` is **out of order** (batch migration) → never sort by row id.
-- **●** Bin / MFG-Floor / item-number all share the loc fields → wrong selection.
-- **●** Ledger has **more PICKs than stock-ins** for some parts → forward replay goes negative.
+| # | Bug | What it is | Phase |
+|:--:|:--|:--|:--:|
+| 1 | **PH-1** | Same qty shown as on-hand AND picked (double-count) | 2 |
+| 2 | **WI-2** | Warehouse Inventory ≠ PCN History | 2 |
+| 3 | **WI-1** | Can't edit quantities (save-verify fails) | 1→2 |
+| 4 | **PK-1** | Can't pick: "insufficient qty" though stock is there | 1 |
+| 5 | **SR-3** | Wrong ACI PN **and** line-item # on the report | 1 (surfaces in 5) |
+| 6 | **RS-1** | Restock refuses parts in hand ("qty at zero") | 3 |
+| 7 | **SO-1** | Signed out after each kitting action | 4 |
+| 8 | **SR-9** | Report on-hand = bin + MFG floor summed, not real on-hand | 5 (needs one-number) |
+| 9 | **SR-8** | Report location wrongly shows "MFG FLOOR" | 5 |
+| 10 | **SR-1** | Substitutes not generated / **ZSUB** not labeled as ZSUB | 5 |
+| 11 | **SR-2** | Lists "like" MPNs instead of the exact match | 5 |
+| 12 | **SR-4** | Multiple PCNs per MPN lumped, not separate lines | 5 |
+| 13 | **SR-5** | Report drops BOM lines | 5 |
+| 14 | **SR-6** | QTY / REQ show 0 instead of real numbers | 5 |
+| 15 | **SR-7** | Line's own stock left off the report | 5 |
 
 ---
 
-# 📒 Detailed entries
+# 🔴 CURRENT OPEN ISSUES — from `KOSH ISSUES 7-16-26.xlsx` (2026-07-16)
+
+These are the live, unfixed issues, in Theresa's own categories.
+
+## 🟠 GENERATE PCN — URGENT, blocking Theresa right now
+
+### 🟠 GP-1 — Cannot generate a PCN (qty column capped at 10,000)
+- **Reported:** 2026-07-21 (Theresa, email: *"I ended last night with not being able to
+  generate a PCN. I started this morning with the same problem."*). Diagnosed by Preet as the
+  **qty column cap**.
+- **What she sees:** generating a PCN fails when the quantity entered is over **10,000** —
+  the qty column was capped at 1–10,000, so a larger qty is rejected and no PCN is created.
+- **Fix applied in code (2026-07-21):** raised the qty cap from **10,000 → 100,000** in all
+  five validation sites in `app.py` (shared `validate_quantity`, the API decorator, and the
+  `stock` / `pick` / `restock` paths) plus the PCN-generate endpoint. **NOT yet deployed / NOT
+  yet confirmed by Theresa** — stays open until deployed and she generates the PCN live.
+- **Caveat:** this removes the qty-cap blocker specifically. If her failure was a *different*
+  cause, we still need her exact quantity and the on-screen error to confirm.
+
+## 🔴 SHORTAGE REPORT
+
+### 🔴 SR-1 — Does not generate Substitute parts listed on the BOM
+- **Reported:** 2026-07-16 (xlsx). **Status: UNFIXED.**
+- **What she sees:** substitute/alternate parts that ARE on the BOM are not produced on
+  the shortage report, so Purchasing can miss valid alternatives.
+- **Also (2026-07-21, Preet):** a **ZSUB** substitute in the uploaded BOM does not carry
+  through as a ZSUB — neither in what KOSH displays nor on the shortage report; the ZSUB
+  designation is lost.
+
+### 🔴 SR-2 — Lists "like" MPNs instead of the exact match
+- **Reported:** 2026-07-16 (xlsx); also 2026-06-03 (`KOSH SHORTAGE REPORT.eml`). **Status: UNFIXED.**
+- **What she sees:** the report pulls in MPNs that merely resemble the line's MPN, padding
+  it with parts that are not the same component.
+
+### 🔴 SR-3 — Wrong ACI PN in the first column (not the job's line item)
+- **Reported:** 2026-07-16 (xlsx). **Status: UNFIXED.**
+- **What she sees:** the ACI PN column shows the wrong part. *Her example: it shows
+  `6366L-9` where `6390L-8` is what should be.* Stock renamed/renumbered is left filed
+  under the old part number, so the report points at the wrong one.
+- **Also (2026-07-21, Preet):** it's not only the ACI PN — the **line-item number** on the
+  report is wrong too. On a job (e.g. order `12345-6`, work order `2358-5`) an MPN that IS in
+  the system but tied to some other ACI PN/line shows up on the report under **that** ACI PN
+  and line number, instead of the job's real ACI PN and line item.
+
+### 🔴 SR-4 — Multiple PCNs per line not listed, only the total quantity
+- **Reported:** 2026-07-16 (xlsx). **Status: UNFIXED.**
+- **What she sees:** when a line item has 3 different PCNs, the report shows only the
+  combined quantity available, not each PCN — so she can't tell where the stock is.
+- **Also (2026-07-21, Preet):** for one MPN with multiple PCNs, each PCN must appear as its
+  **own line with the qty for that PCN** — not one lumped total.
+
+### 🔴 SR-5 — Report drops lines: "missing several lines of data"
+- **Reported:** 2026-06-03 (`KOSH SHORTAGE REPORT.eml`) and again 2026-06-23
+  (`LATEST SHORTAGE REPORT.eml`). **Status: UNFIXED.**
+- **What she sees:** a report for a job came back **missing several BOM lines** that had been
+  there when she ran the same job the day before; and a line item that was in inventory
+  **did not show on the report at all**. Purchasing therefore never sees those parts.
+- **Her words:** *"This report was missing several lines of data needed to inform Purchasing
+  about parts needed… **This is where trust was lost**."*
+
+### 🔴 SR-6 — QTY and REQ columns show "0" instead of the real numbers
+- **Reported:** 2026-06-03 (`KOSH SHORTAGE REPORT.eml`). **Status: UNFIXED.**
+- **What she sees:** on some (not all) line items the **QTY** and **REQ** columns read `0`, so
+  she has to open the BOM to find out how many are needed to build. Notably the *same job* ran
+  correctly for Preet the same morning — so it depends on the data, not the job.
+
+### 🔴 SR-7 — A line's OWN stock is left out of the report
+- **Reported:** 2026-06-03 (`KOSH SHORTAGE REPORT.eml`). **Status: UNFIXED.**
+- **What she sees:** the report failed to include other PCNs holding the same MPN — **and the
+  line item's own stock as well** — so parts she has are reported as missing.
+
+### 🔴 SR-8 — Report shows the location as "MFG FLOOR" when it shouldn't
+- **Reported:** 2026-07-21 (Preet). **Status: UNFIXED.**
+- **What he sees:** the part's **location** on the shortage report comes back as **MFG
+  FLOOR**, a location that should not appear there. ("MFG Floor" is a status label meaning the
+  PCN is out on the floor, not a stock location — see the inventory-model note in
+  `ACTION-PLAN.md`.)
+
+### 🔴 SR-9 — Report on-hand = bin + MFG floor added together, not the real on-hand
+- **Reported:** 2026-07-21 (Preet). **Status: UNFIXED.**
+- **What he sees:** for a PCN (e.g. `4848`) the **on-hand qty** on the shortage report is the
+  **sum of bin on-hand + MFG floor**, not the true on-hand. This is the same double-count as
+  PH-1 leaking onto the report; under the one-number model a picked PCN reads 0 and the floor
+  is never added.
+
+### 🔴 SR-10 — Report offers PCNs whose MPN is NOT the line's part
+- **Reported:** 2026-07-27, Theresa handwritten note (`Shortage Report updates.jpg`), marked
+  **LIVE**. **Status: FIXED ON STAGING — awaiting Theresa.**
+- **What she sees:** on `7946L-30` the report offers **PCNs 29534, 28800, 36430** — *"not
+  options, MPN does not match."*
+- **Root cause:** on-hand and the per-PCN rows matched stock on the **ACI part number alone**
+  and never compared the MPN. PCNs 29534/28800 hold `CM316X5R475K50AT` and 36430 holds
+  `C0805C471K5RAC7800` (that is line **355's** part), all filed under `7946L-30`. The line read
+  **1720** when only **1270** was the BOM part `C1206C475K5PACTU`. SR-2's exact-MPN fix only
+  ever touched the cross-part-number search — the own-part path had no MPN comparison to
+  tighten, so it was missed.
+- **Fix:** `line_mpns` (the BOM's primary MPN + its ZSUB alternates, current job_rev) now
+  gates every stock lookup, SR-2's exact-string rule unchanged. Excluded stock is **not
+  dropped** — `unmatched_pcn_rows_by_acipn()` still surfaces it. **2026-07-29 (Preet):** those
+  rows were removed from the **shortage report and its Excel pull sheet** — an MPN that is not
+  on the BOM must never appear on a shortage report, full stop. They remain on the **job tab**.
+  Trade-off accepted knowingly: on the report a line's on-hand can now drop (7946L-30:
+  1720 → 1270) with nothing on the page saying where the other 450 units went. Same guard applied to the **job-detail**
+  query, which had the identical bug and would otherwise have shown 1720 next to the
+  report's 1270.
+
+### 🔴 SR-11 — Per-PCN rows print the BOM's MPN over each PCN's real MPN
+- **Reported:** 2026-07-27, same note. **Status: FIXED ON STAGING — awaiting Theresa.**
+- **What she sees:** on `7946L-55`, a PCN with a *"different MPN NO dash, system put dash in."*
+- **Root cause:** the report prints **one** MPN per line, taken from the BOM, and stamped it
+  onto every per-PCN sub-row. PCN **31639** really holds `EEEFC1E101P` (no dash); the BOM says
+  `EEE-FC1E101P`. Its own MPN was read from the database, then thrown away and overwritten
+  with the dashed one. Not a matching bug — a display bug, in the web view, the Excel pull
+  sheet and the job tab.
+- **Fix:** every per-PCN row prints its OWN mpn (already being fetched, just discarded).
+  ZSUB lots carry a `ZSUB` badge; the main row prefers a lot of the line's primary MPN so it
+  stays self-consistent.
+
+### 🔴 SR-12 — Approved ZSUB stock under another part number is invisible
+- **Reported:** 2026-07-27, same note. **Status: FIXED ON STAGING — awaiting Theresa.**
+- **What she sees:** `7946L-10` — *"sub has 3 more PCN's available. Not shown on Shortage
+  Report."*
+- **Root cause:** a hole between two paths with opposite blind spots. The own-part path could
+  not see other part numbers; the cross-part-number path could, but only ever searched the
+  line's **primary** MPN. So *approved ZSUB under someone else's PN* was covered by neither.
+  207 units of the approved ZSUB `C0603C104M5RACTU` sat in bins under `8019-3` (PCN 11807,
+  100), `8041-3` (PCN 11806, 100) and `8188L-5` (PCN 11805, 7) — her exact three.
+- **Fix:** the cross-part-number search now covers the line's whole approved-MPN set and tags
+  each row `is_zsub`, so those rows read "ZSUB @ another PN" instead of looking like the
+  primary part.
+
+> **Scope: the guard is system-wide, not per-job.** `line_mpns` is built per job from
+> `tblBOM`, so every job gets it automatically. Verified read-only across the whole DB
+> (2026-07-27): **5,471 jobs / 31,831 BOM lines**, and the invariant holds everywhere —
+> **0 lines where on-hand was invented, 0 where units were lost** (counted + flagged always
+> equals what the old part-number-only rule blindly summed). Four surfaces were carrying the
+> bug and all four now share the rule: the shortage report, its Excel pull sheet, the **job
+> tab**, and the **job-tab Excel export** (`job_export`, found last and fixed in the same
+> pass — it would otherwise have printed 1720 where the report printed 1270).
+
+> **Data debt this exposed (needs Theresa/Preet, not code):** system-wide, **2,816,473 units
+> across 2,209 lines in 642 jobs** were being counted as the BOM part while the bin actually
+> holds a different MPN — 30% of all stock attributed to BOM lines. Only **15,301 units (27
+> jobs)** are mere formatting differences fixable by an `UPDATE` (`EEEFC1E101P` vs
+> `EEE-FC1E101P`, `74HC14D,653` vs `74HC14D, 653`). The other **2.80M units need a human
+> ruling**, and they are not one kind of problem:
+> - **Cross-manufacturer / packaging equivalents** — almost certainly legitimate alternates
+>   never recorded as ZSUBs: `0402YD104KAT2A` (AVX) vs `GRM155R71C104KA88J` (Murata), both
+>   0.1µF 0402, 28,000 units on job 7918; `CRCW12061R43FKEA` vs `...FKTA` (same Vishay part,
+>   different packaging code); `GRM1555C1E390JA01` vs the same with a `D` packaging suffix.
+>   These belong on the BOM as ZSUBs, after which they count again automatically.
+> - **Genuinely wrong stock** — e.g. `6980-19` is an LED (`LTST-C150CKT`) but the bin holds
+>   `ERJ-2RKF4992X`, a 49.9k resistor (8,700 units); `ERA-2AED102X` (1k 0.1%) vs
+>   `ERJ-2GEJ152X` (1.5k 5%) — different value *and* tolerance.
+>
+> Before this fix all 2.8M of those units read as available BOM stock on every shortage
+> report — a direct, quantified explanation for the recurring *"the report said we had it"*
+> complaints. **Do not "fix" this by loosening MPN matching**: only 0.5% of it is a separator
+> difference, and separator-blind normalization is what SR-2 removed for merging `1.5KE15`
+> with `1.5KE150CA` (15V vs 150V).
+
+> **Shortage-report history (emails):** 2026-06-03 — QTY and REQ columns showed "0" on
+> some lines (had to consult the BOM); a re-run of the same job was missing several
+> lines; same-MPN PCNs not included → *"trust was lost."* 2026-06-17 — data wrong on 9
+> hand-checked lines. 2026-06-23 — a line missing entirely, and a listed line "not
+> actually in stock" per PCN History. These are the same shortage-report failures,
+> recurring for 6+ weeks.
+
+## 🔴 WAREHOUSE INVENTORY
+
+### 🔴 WI-1 — Unable to edit quantities
+- **Status 2026-07-30: root cause found and FIXED on staging, UNVALIDATED.** It was still
+  live. Preet's 2026-07-29 check on PCN 46606 passed only because that PCN was in bin
+  `1251457` by then; the failure is specific to a PCN whose `loc_to` is `MFG Floor`, where
+  the `trg_bin_xor_floor` guard (added for PH-1) forces `onhandqty = 0` and the post-save
+  check compared the typed number against that 0, 500'd, and rolled the edit back.
+  **12,851 rows** sit on the MFG Floor. Fix verifies against the bucket the location
+  dictates and rejects the ambiguous case with an actionable message.
+  Test `tests/behavioral/warehouse_qty_edit_on_floor.py`.
+- **Reported:** 2026-07-16 (xlsx). **Status: UNFIXED.**
+- **What she sees:** editing a quantity in Warehouse Inventory fails (a save-verification
+  error). Stock filed under a renamed part inflates the expected number, so the save is
+  refused.
+
+### 🔴 WI-2 — PCN History and Warehouse Inventory do not match
+- **Reported:** 2026-07-16 (xlsx, "last week"); 2026-06-17 (`KOSH.eml`); 2026-07-01
+  (`KOSH HISTORY VERSUS WAREHOUSE INVENTORY.eml`). **Status: UNFIXED.**
+- **What she sees:** Warehouse Inventory shows a PCN as picked, while PCN History shows
+  the item still in stock (or vice-versa). The two screens disagree.
+
+## 🔴 PICK
+
+### 🔴 PK-1 — Cannot pick line items to a job: "insufficient qty available"
+- **Reported:** 2026-07-16 (xlsx). **Status: UNFIXED.**
+- **What she sees:** the pick is refused with *insufficient quantity available* even when
+  the stock is physically there — because the stock is filed under a renamed part number.
+
+### 🔴 PK-2 — Pick success toast reports the WRONG "Remaining"
+- **Reported:** 2026-07-30 by **Preet** (screenshot `image.png`, staging, PCN 46607).
+  **Status: fixed on staging 2026-07-30, UNVALIDATED.**
+- **What he saw:** picked all 50000 units of PCN 46607 (item 7942-16); the toast read
+  *"Successfully picked 50000 units of 7942-16. Remaining: 2000"*.
+- **Root cause:** `new_qty` was the **item total across every PCN**. The 2000 was PCN
+  45082, a different PCN still in bin 1605010 that the pick never touched. Meanwhile the
+  pre-pick confirm dialog reads the PCN row (pick.html:999) and said *"Remaining After
+  Pick: 0"* — two screens contradicting each other on one operation, which reads as units
+  going missing.
+- **Second defect found with it:** `pick_pcb` never returned `pcn`/`mpn`/`loc_from`, so
+  **every** pick's history detail line recorded literally `PCN: -, MPN: -, From: -`
+  (app.py:4207) — the audit trail lost which PCN and which bin the pick came from.
+- **Fix:** per-PCN remaining added (app.py:1511) and the PCN/MPN/source bin echoed back;
+  the toast now names **only the PCN that was picked** (Preet, 2026-07-30: the item total
+  must not appear at all). Test `tests/behavioral/pick_message_reports_picked_pcn.py`.
+
+## 🔴 SIGN OUT
+
+### 🔴 SO-1 — System signs her out after each transaction while kitting
+- **Reported:** 2026-07-16 (xlsx). **Status: UNFIXED.**
+- **What she sees:** during kitting, roughly every other action dumps her back to the
+  login screen.
+
+## 🔴 PCN HISTORY
+
+### 🔴 PH-1 — Shows the same quantity on-hand and picked
+- **Reported:** 2026-07-16 (xlsx, "last week"). **Status: UNFIXED.**
+- **What she sees:** PCN History shows the same number as both on-hand and picked — which
+  should never happen, especially on the same date as the transaction. (Double-count.)
+- **RE-REPORTED 2026-07-30** (email, screenshot `pickqty-onhand.jpg`, PCN 44598): *"The
+  other problem, still … On Hand Qty and Pick Qty show on the same transaction line. What
+  the system is doing, now is adding both together. There is no way for me to rectify the
+  PCN I am currently dealing with."* Her screenshot is **production**
+  (`aci-kosh.vercel.app`) — a PICK row showing Pick Qty 20 / On Hand 24.
+- **Staging status 2026-07-30:** the additive replay is gone on staging (rewritten
+  `history_balance.py`, 2026-07-29). Swept **all 34,808 PCNs** / 198,368 transaction rows
+  through the real code: **0** where the displayed On Hand differs from Warehouse
+  Inventory, **0** PICK rows with a computed non-zero On Hand. Same PCN 44598, same
+  02/04/26 PICK row: production 24, staging 0. **Still live in production** until the
+  deploy. Stays 🔴 — Theresa closes it, not us.
+- **Caveat she may still object to:** 2,156 PICK rows do display a non-zero On Hand, but
+  every one is the **newest** row anchored to the stored Warehouse value (0 are computed).
+  The number shown is the warehouse's own, never a sum — but the *shape* she complained
+  about (both columns filled on a PICK line) still appears.
+
+## 🔴 RESTOCK — flagged by Theresa as a REOCCURRING PAST ISSUE
+
+### 🔴 RS-1 — Restock stops working: "qty at zero"
+- **Reported:** 2026-07-16 (xlsx), marked **REOCCURRING**. **Status: UNFIXED.**
+- **What she sees:** the restock function refuses parts she is physically holding,
+  erroring that the quantity is at zero. She flagged this as a past issue that has
+  come back.
+
+### 🔴 RS-2 — A PCN can be restocked twice with no pick in between
+- **Reported:** 2026-07-30 (email). **Status: guard implemented on staging 2026-07-30,
+  UNVALIDATED.**
+- **In her words:** *"I had a PCN showing as '0' on hand and 20 in MFG QTY in Whse Inv.
+  PCN History showed this PCN had been restocked on 3/18/26. I attempted to Restock the
+  parts, which since it was already restocked, should not have allowed this transaction
+  and it did. Whenever a PCN is restocked, I should never be allowed to restock it again
+  without being picked first. The restock function, at one time, would not allow restock
+  of a PCN twice without a pick function being performed first. I am not sure how this
+  function disappeared, but it will need to be reinstated."*
+- **Why it disappeared:** removed deliberately on **2026-07-22** with the ledger, on the
+  reasoning that a restock SETs on-hand so a repeat cannot double-count. That protects the
+  arithmetic, not the process — the second restock silently overwrites the first count and
+  nothing records that two different numbers were claimed for one PCN. Note `pick_pcb`
+  kept its mirror guard (app.py:1373), so the two paths were asymmetric.
+- **Confirmed on staging before the fix:** restocked one scratch PCN **3× in a row**, all
+  succeeded, 3 RESTOCK rows written. 906 PCNs were in that state; 7 restock-after-restock
+  events already exist in the staging trail.
+- **Fix (app.py:1729):** restock is rejected when the PCN's stored on-hand > 0 — on the
+  snapshot model that IS "restocked and not yet picked" (restock sets it above zero, a
+  pick zeroes it), so it needs no userid/legacy-trantype guessing and holds for
+  Access-imported PCNs. Test `tests/behavioral/restock_blocked_until_picked.py`.
+- **Deliberate exception:** 0 on hand + stock on the MFG Floor stays restockable (the
+  parts are not in a bin, so putting them back is legitimate, and no PCN may become both
+  un-pickable and un-restockable). **This means her own PCN 44598 would still not be
+  blocked** — its 3/18 rows are legacy `PTWY`/`RNDT` put-aways and it had 0 on hand.
+- **Trade-off to tell her:** restock was the recount path ("type what you're holding, it
+  overwrites"). That is now closed for the 19,889 PCNs sitting in bins; corrections must
+  go through the Warehouse Inventory quantity edit, which records an ADJT delta.
+
+### 🔴 RS-3 — "PCN History is not communicating with Whse Inventory"
+- **Reported:** 2026-07-30 (email, same message as RS-2). **Status: root cause identified,
+  NOT fixable by code.**
+- **In her words:** *"The fact that transactions which appear in PCN History are not being
+  updated in Whse Inventory is a huge problem … Could we please figure out why PCN History
+  is not communicating with Whse Inv? This will become detrimental with a new ERP system."*
+- **Finding (staging, PCN 44598):** the 3/18/26 movement she read as a restock is an
+  `RNDT` (MFG Floor → Count Area) + `PTWY` (Count Area → bin 2103303) pair, qty 8. Those
+  two transaction types are **100% Access imports — KOSH has never written one**: PTWY
+  72,892 rows / 0 by KOSH, RNDT 24,549 / 0 by KOSH. So that movement never passed through
+  KOSH and was never applied to Warehouse Inventory, which still reflects the 02/04/26
+  PICK (0 on hand, 20 on the floor).
+- A restock done **in KOSH** updates `tblWhse_Inventory` and `tblTransaction` in one
+  transaction, so this is a legacy-import gap, not a live write failure. Repairing the
+  restock function will not fix it.
+- Related scale: **3,276 PCNs (9.4%)** have a trail that cannot reproduce the stored
+  on-hand unaided. PCN History anchors the newest row to the stored value and flags the
+  trail as incomplete rather than presenting a computed number as fact.
 
 ---
 
-<h3 id="bug28">🟥 <span style="color:#c0392b">28 — Part Number Change left the stock behind ("insufficient quantity available" on a full bin)</span> ✅</h3>
+# 🧭 The one root cause behind all of it
 
-> **Date:** 2026-07-16 · **Severity:** 🟥 Critical (blocks picking + qty edits; 14 PCNs / 12,700 units stranded) · **Area:** PN Change / Ledger · **Reported by:** Theresa (via Preet) — *"I am now not able to pick PCN's. Error message states insufficient quantity available. It will also not allow me to edit quantities using the Whse Inv function … error updating item: Save verification failed: expected 80, got 280."*
+KOSH computes on-hand more than one way and the answers drift:
 
-- **● Issue (what was wrong):** two symptoms, one cause. (1) Picking a renamed PCN failed with *insufficient quantity available* even though the bin was full. (2) Editing that PCN's qty in Whse Inv failed with `Save verification failed: expected 80, got 280`. **No stock was ever lost or deleted** — every unit stayed in `inventory_balance`, in its bin, filed under the PCN's **old** part number where nothing looks for it.
-- **● Example:** **PCN 44967** — pick as `6390L-13` → `insufficient stock at bin 2203304: have 0, need 63 (pcn 44967, location 2757)`. Bin 2203304 was **not** empty: it held **63**, filed under `6366-13`, the pre-rename name. Reproduced from the prod error in `docker logs stockandpick_webapp`. 14 PCNs / **12,700 units** total, incl. PCN 42821 (5,000 u) and PCN 1908 (4,950 u). The `80 → 280`: **PCN 36996** held **200** orphaned under `6590L-A-31`; the operator typed **80**; the projection summed both → **280**.
-- **● Root cause:** a balance is keyed **`(part_id, pcn_id, location_id)`** but the legacy snapshot is keyed by **pcn alone**. `part_number_change` only ran `UPDATE tblWhse_Inventory SET item = …` (`app.py`) and never touched `inv_part`/`inventory_balance`, so the balance stayed under the OLD `part_id`. Pick resolves `part_id` from the NEW name → different key → `_subtract` finds no row → `have 0`. And `project_warehouse` sums by **`pcn_id` regardless of `part_id`**, so the orphan was *also* added on top of any edit — hence 80 + 200 = 280. The save-verification guard then correctly refused to store a number it could not stand behind, which is the only reason this surfaced as an error rather than as silent corruption. Latent since the ledger rewrite; renaming a part is the only thing that triggers it, which is why a batch of PN changes lit it up all at once.
-- **● Fixed (what changed):** new **`ledger.relabel_pcn()`** re-files a PCN's balances onto the new part, **merging** if the PCN already holds stock there. `part_number_change` calls it + `project_warehouse` in the **same transaction** as the rename, so the snapshot and the ledger can never again disagree about which part a PCN is. Crucially it is **quantity-neutral and writes no `inventory_txn` row** — a relabel is metadata, never a movement (**I8**). Booking relabels as qty movements is exactly what minted the 15.3M phantom units behind the 2026-06 reconcile; that trap was deliberately not re-entered, and the test asserts total-before == total-after.
-- **🛠️ Files & lines:** `ledger.py` — new `relabel_pcn()`. `app.py` — `part_number_change()` re-files the ledger + projects (tuple `lcur` on the same txn); log line now reports the units re-filed. `scripts/fix_stranded_part_relabels.py` (backfill, calls the shipped `relabel_pcn` — not a SQL copy). Tests: `tests/test_part_number_change_ledger.py` (new), wired into `tests/run.sh`.
-- **● When:** 2026-07-16 · **Deployed:** yes, 2026-07-16 (code). Data backfill: see Scope/impact.
-- **● Did it handle it?:** **Yes** — red-on-baseline / green-on-fix against `kosh_test` with the real ledger. Baseline reproduces **both** reported errors verbatim, from independent paths: `insufficient stock at bin 2203304: have 0, need 200` and an edit of 80 reading back **exactly 280**. With the fix: stock follows the rename (200 under new, 0 under old), the pick succeeds, the edit stores 80, and the total is 200 before and after. Backfill exercised end-to-end on `kosh_test` against a seeded copy of the real stranded rows: dry-run rolls back (verified — the rows were still stranded after), `--apply` re-files, re-run finds nothing (idempotent).
-- **🛡️ Guard:** `tests/test_part_number_change_ledger.py` in `tests/run.sh` — asserts a rename carries its stock, mints none, stays pickable, and does not inflate an edit. The quantity-neutrality assertion is the one that keeps the phantom-stock class from coming back through this door.
-- **● Scope/impact:** code fix stops **new** strandings. The 14 already-stranded PCNs / 12,700 units need the **separate backfill** (`scripts/fix_stranded_part_relabels.py --apply --db kosh`) — a code fix cannot re-file stock that is already mis-keyed. The backfill aborts the whole run if any PCN's total would change, skips PCNs whose snapshot is ambiguous (>1 distinct item), and records every moved row's pre-state in `warehouse.part_relabel_fix_audit` (`fix_tag = bug28_part_relabel_20260716`) so it is fully reversible.
+- **Warehouse Inventory** = a stored snapshot.
+- **PCN History** = a balance derived from the transaction trail.
+- Plus rebuilt data models that were added but never fully cut over.
 
-### Recurrences / new case reports
-<!-- Same bug reported again? APPEND a dated line here. NEVER edit/remove the
-     original issue, example, or fix above — stack the new occurrence below. -->
+Two (now three) sources of truth over dirty imported data will always disagree. Every
+past fix guarded one of them, and the side effect became the next complaint — which is
+exactly the "fix one thing, break another" pattern Theresa keeps hitting. On top of
+that, renamed/renumbered parts leave their stock filed under the old number, which is
+what drives SR-3, WI-1, and PK-1 together.
 
----
-
-<h3 id="bug27">🟧 <span style="color:#e67e22">27 — "KOSH keeps signing me out after each transaction" (kitting a job)</span> ✅</h3>
-
-> **Date:** 2026-07-16 · **Severity:** 🟧 High (every kitting session; no data loss) · **Area:** Auth / SSO / CSRF · **Reported by:** Preet — *"Do you happen to know why KOSH keeps signing me out after each transaction? I am kitting a job right now."*
-
-- **● Issue (what was wrong):** while kitting, roughly every other submit dumped the user back through the login screen. It looked like a session timeout. It was not — `PERMANENT_SESSION_LIFETIME` is 14h and the session never expired.
-- **● Example:** prod `docker logs stockandpick_webapp`, 2026-07-16, user `parts@americancircuits.com`. Every "sign-out" is preceded by `INFO:flask_wtf.csrf:The CSRF tokens do not match.` The alternation is the tell — one transaction succeeds per re-login, then the *other* page fails: `14:44:07 POST /pick 200` → `14:44:37 POST /part-number-change` CSRF fail → SSO → `14:45:08 POST /part-number-change 200` → `14:45:29 POST /pick` CSRF fail → SSO → `14:46:37 POST /part-number-change 200` → `14:46:59 POST /pick` CSRF fail. Repeats for ~1h. Transactions themselves were fine (PCN 44711 → `6390L-9`, PCN 44982 → `6390L-10` both committed).
-- **● Root cause:** two behaviours forming a loop, each harmless alone. Kitting means working `/pick` and `/part-number-change` **in two tabs**.
-  1. `sso_callback()` called **`session.clear()` unconditionally** — including when the *same* user was already signed in. Clearing rotates `csrf_token`, so every form already rendered in any other tab is instantly stale. `WTF_CSRF_TIME_LIMIT = None`, so a mismatch can only mean *different session* — never expiry.
-  2. `handle_csrf_error()` **silently redirected** instead of surfacing an error. The redirect lands on a `@require_auth` route; with the tab's session rotated out from under it the user hits `login` → FORGE → SSO → back to (1), rotating the token again and breaking the tab they just came from.
-  Net effect: tab A's submit breaks tab B, tab B's submit breaks tab A, forever. It presents as "signed out every transaction" because the CSRF failure is invisible — the user only ever sees the login screen.
-- **● Fixed (what changed):** `app.py` — `sso_callback()` now only clears when `session.get('user_id') != user['id']`, so a same-user SSO round-trip **preserves the session and its `csrf_token`** and leaves other tabs working. `handle_csrf_error()` now, when still signed in, flashes *"Your form had expired and was not submitted — the page has been refreshed. Please enter it again."* and re-renders the same page (fresh token) rather than bouncing to login. Redirect target changed `request.url` → `request.path`: behind the Cloudflare tunnel Flask sees scheme `http`, so `request.url` sent an **https page to an http URL** (confirmed by the dropped `Referer` in the prod access log).
-- **🛠️ Files & lines:** `app.py` — `sso_callback()` (session reset now conditional), `handle_csrf_error()`. Test: `tests/test_csrf_pingpong.py` (new).
-- **● When:** 2026-07-16 · **Deployed:** yes, 2026-07-16.
-- **● Did it handle it?:** **Yes** — reproduced against `kosh_test` with the real app: two tabs, SSO round-trip between them. Baseline prod code is **RED** (tab A's token rotated away; its submit → `302` to FORGE login = the reported bug). With the fix, all 4 green: token survives the SSO round-trip, tab A's submit renders in place (`200`), a genuinely bad token returns to `/pick` instead of login, and the user stays signed in through a CSRF failure.
-- **🛡️ Guard:** `tests/test_csrf_pingpong.py` — asserts a same-user SSO round-trip does not rotate `csrf_token` and that a CSRF failure never redirects to the FORGE login. Verified red-on-baseline / green-on-fix, so it cannot silently come back.
-- **● Scope/impact:** code-only; **no data backfill**. No transactions were lost or double-applied — every bounce happened *before* the POST was processed, so the failed submits simply never ran. Affects any user with more than one KOSH tab open, which kitting always requires.
-
-### Recurrences / new case reports
-<!-- Same bug reported again? APPEND a dated line here. NEVER edit/remove the
-     original issue, example, or fix above — stack the new occurrence below. -->
+### Live-data check (staging `kosh`, dump 2026-07-17, read-only) — confirms UNFIXED
+- **33** rows count the same units in both a bin and the MFG floor (double-count; PH-1) —
+  up from 13 on 2026-07-09.
+- **10,230 of 34,808 PCNs** disagree between the snapshot and the rebuilt ledger — a gap
+  of **3,758,849 units** (WI-2).
+- **46** balance rows disagree with their own transaction log.
+- **2,854** rows hold floor stock with an empty bin (~905K units), never cleared.
 
 ---
 
-<h3 id="bug26">🟥 <span style="color:#c0392b">26 — Restock refused parts the operator was physically holding ("cannot receive, MFG qty is zero")</span> ✅</h3>
-
-> **Date:** 2026-07-15 · **Severity:** 🟥 Critical (blocks receiving; ~9,859 PCNs exposed) · **Area:** Restock / Ledger · **Reported by:** Theresa (via Preet) — *"I am receiving an error … I can not receive parts due to the MFG quantity being at zero. When KOSH was first implemented, I stated that I will need to be able to restock parts no matter what the MFG qty states … The part I am attempting to restock was picked at 62 and not at zero, according to the PCN history."*
-
-- **● Issue (what was wrong):** restocking failed with `insufficient stock at MFG Floor: have 0, need 62`. Theresa was holding the parts; KOSH refused to receive them. She was right on both counts: PCN History **did** show a PICK of 62, and the floor **did** read 0.
-- **● Example:** **PCN 38159** (`7396-440` / `3386X-1-504LF`). Legacy `tblTransaction` shows `PICK 62` on **11/20/25** by `john`. Ledger trail: `STOCK 62 → MFG Floor` (`phase3_seed`), then `ADJUST −62 off MFG Floor` by **`stale_floor_fix_20260714`** ("stale MFG-Floor phantom cleared, last pick 2025-11-20") → floor balance **0**. Reproduced from the prod error in `docker logs stockandpick_webapp`.
-- **● Root cause:** two layers.
-  1. **Restock is modelled as a pure floor→bin TRANSFER** (`ledger.restock`, invariant I1), so it *requires* the floor to already hold the qty. But the floor balance is an **inference**, not a physical fact — KOSH had no consumption event for years, and the [2026-07-14 stale-floor sweep](../scripts/fix_stale_floor_ledger.sql) zeroed **9,859 PCNs / 3,693,334 units** on the rule "last pick >6 months ago ⇒ consumed". When that inference is wrong (parts never consumed, picked at zero, not found, purged), the parts still come back — and restock vetoed them.
-  2. **Theresa's day-one requirement was silently dropped by the ledger rewrite.** `app.py` still logged *"Restock qty exceeds tracked MFG qty … User override"* — the override it describes no longer existed; the ledger rejected instead.
-  The 07-14 sweep did not create this; it exposed it across 9,859 PCNs at once. Theresa was simply the first to hit it.
-- **● Fixed (what changed):** added the **`FOUND`** event — the counterpart to `CONSUME`. CONSUME is stock the ledger thinks exists but doesn't; FOUND is stock that exists but the ledger doesn't know about. The operator-facing restock now splits: `transfer = min(floor_balance, qty)` → `RESTOCK` (conserving), `shortfall = qty − transfer` → `FOUND` (external→bin, **labelled**). Restock can no longer be rejected for a short floor — the shortfall is **recorded rather than refused or silently absorbed**, so the phantom-stock guard is preserved and every FOUND row measures exactly where the floor inference was wrong. The honest case (floor covers it) is byte-for-byte the old behaviour. The strict `ledger.restock()` is **kept** for `reverse_pick` — a reversal that mints stock is a bug, not a find. The double-restock guard is **untouched** and still blocks.
-- **🛠️ Files & lines:** `ledger.py` — new `found()`, `restock_physical()`, `_locked_balance()`; `restock()` left strict. `app.py` — `restock_pcb()` calls `restock_physical`, reports the **projected** on-hand (the old `mfg_qty_int - quantity` went negative and lied) and returns `found_qty`; `/restock` route flashes a warning naming the found units. `scripts/add_found_event.sql` (adds `FOUND` to the `txn_type` CHECK), `scripts/ledger_schema.sql`. Tests: `tests/acceptance_found.py` (new).
-- **● When:** 2026-07-15 · **Deployed:** ⏳ verified in `kosh_test`, awaiting Preet's go-ahead for prod.
-- **● Did it handle it?:** **Yes** — verified against a fresh clone of prod into `kosh_test` reproducing PCN 38159 at floor 0. Theresa's exact call now returns `success: True, found_qty: 62`; warehouse row → `onhand 62 / Count Area`; real HTTP `POST /restock` (PCN 42722, 200 units) succeeds and shows the found note. `tests/acceptance_found.py` all-pass, incl. floor-covers-it ⇒ **zero** found, split 22/28, strict `restock()` still rejects, FOUND reverses cleanly, projection == ledger.
-- **🛡️ Guard:** `tests/acceptance_found.py`; plus `test_restock_allowed_after_purge_following_restock`, `test_restock_allowed_when_zero_onhand_even_if_last_restock`, `test_purged_pcn_can_be_restocked_with_same_pcn` (see the 🔴 finding below), and `test_restock_blocked_when_already_restocked_with_stock_present` proves the double-restock guard survives. Suite: **31 passed, 0 failed** (baseline prod code: 28/3).
-- **● Scope/impact:** code-only; **no data backfill**. The 9,859 swept PCNs are left as-is *by design* — the >6mo rule is right for most of them, and blanket-restoring would put 3.69M phantom units back. Each one now self-heals the moment someone physically restocks it. The 07-14 run stays fully reversible via `warehouse.stale_floor_fix_audit`.
-- **🔴 Found while fixing — THE ENTIRE TEST GATE WAS DEAD:** every suite `tests/run.sh` is supposed to gate deploys on had rotted to a target that no longer exists, and failed **silently**:
-  - `tests/regression_tests.py` had `SCHEMA = 'pcb_inventory'` — a schema **renamed to `warehouse`** long ago — so it errored out instead of testing, for every deploy since the rename. Repointed at `warehouse`.
-  - `acceptance_app.py` / `acceptance_b.py` / `acceptance_extra.py` were pinned to a `kosh_rebuild` scratch DB that was **later dropped** → all three dead. They COMMIT real movements (they drive the real `restock_pcb`), so the pin was **replaced, not removed**: new `tests/testdb.py` targets `kosh_test` by default and **refuses to run against `kosh`** outright (verified: `KOSH_TEST_DB=kosh` → `REFUSING TO RUN`). A committing suite must never be one env var away from writing to prod.
-  - `tests/run.sh` only ever ran `regression_tests.py`, so the ledger suites wouldn't run on a deploy even once revived — now wired in (skips with a loud WARN if `kosh_test_webapp` isn't up).
-  With the gate live, **3 of Preet's own previously-fixed bugs were found silently regressed on prod**, all failing with Theresa's exact error: restock-after-PURGE, restock-at-zero-onhand, purged-PCN-restock. Their scenarios also still used the pre-ledger-rewrite `Count Area → Count Area` (rejected by the same-location guard before ever reaching the assertion), so they were corrected to the realistic `MFG Floor → Count Area` the form actually sends. All three are **red on baseline prod code and green with this fix** — verified by running the same corrected suite against an unmodified prod-image container. **`tests/run.sh` against prod is RED right now**, and should go green on deploy.
-
-### Recurrences / new case reports
-<!-- Same bug reported again? APPEND a dated line here. -->
-
----
-
-<h3 id="bug25">🟧 <span style="color:#e67e22">25 — Shortage report dropped every non-short line ("all the BOM lines didn't come in")</span> ✅</h3>
-
-> **Date:** 2026-07-07 · **Severity:** 🟧 High (report looks empty/broken; recurring) · **Area:** Shortage · **Reported by:** Preet ("ALL THE BOM LINES DID NOT COME IN THE SHORTAGE REPORT … SAME BUG AGAIN AND AGAIN", job **8355M**)
-
-- **● Issue (what was wrong):** generating a shortage report for a job whose material is staged on the **MFG Floor** produced a report with almost no lines. Job **8355M** (18 BOM lines, order_qty 5) stored `total_lines=19` but only **1** line — the other 17 "didn't come in." Reads as the report being broken.
-- **● Diagnosis (reproduced from prod, container `stockandpick_webapp` + `kosh` DB):** **16 of 18** lines had their **entire** on-hand sitting on the MFG Floor (bins empty), e.g. `8355M-40` → bin 0 / floor **730**, `8355M-5` → bin 0 / floor **20**. The shortage builder computes on-hand = `onhandqty + mfg_qty` (floor counts, [bug 9](#bug9)), so those lines read as fully stocked.
-- **● Root cause:** the shared builder `_persist_shortage_report()` ([app.py](../app.py)) **persisted only lines where `on_hand < req`**. Combined with floor stock counting as on-hand, every line whose stock was on the floor was silently dropped from the stored report — even though the view/export were already written to display a full BOM and flag the short rows (comments there already said "MFG-Floor lines NO LONGER excluded"). This is the pendulum behind "same bug again and again": [bug 9](#bug9) made floor stock count (to stop re-buying), which then hid those lines here.
-- **● Fixed (what changed):** code-only. `_persist_shortage_report()` now stores the **FULL BOM** — every matched line is inserted; `shortage_lines`/`shortage_count` still reports only the lines actually below requirement. The view (`templates/reports/shortage_report_view.html`) already highlights `qty_on_hand < req` (red) vs in-stock (green); the Excel export keeps its "shortages only" filter and pull-sheet. [Bug 9](#bug9) stays intact (floor stock still counts → no false shortages / no re-buying). Decision confirmed with Preet (chose "list the full BOM, flag shortages" over "exclude MFG-Floor from on-hand").
-- **🛠️ Files & lines:** `app.py` — `_persist_shortage_report()` (report now = all matched lines; `shortage_count` = lines with `on_hand < req`). Both entry points share this builder (`/jobs/<job>/generate-shortage` and `/shortage_report/generate`), so the fix covers both. Tests: `tests/regression_tests.py` — updated `test_shortage_report_counts_mfg_floor_stock` (non-short line now persists but isn't flagged), added `test_shortage_report_stores_full_bom_not_only_shortages`.
-- **● When:** 2026-07-07 · **Deployed:** ✅ Docker `--no-cache` rebuild + push origin main (Vercel).
-- **● Did it handle it?:** **Yes** — full regression suite **31/31 green**; regenerating 8355M now lists all 18 lines with the short ones flagged.
-
-### Recurrences / new case reports
-<!-- Same bug reported again? APPEND a dated line here. -->
-
----
-
-<h3 id="bug24">🟩 <span style="color:#27ae60">24 — Phantom 0-qty "purge" PICK made Warehouse Inventory look out of sync with PCN History</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-07-01 · **Severity:** 🟩 Low (single PCN, display-only; no real qty wrong) · **Area:** PCN History vs Warehouse Inventory · **Reported by:** Preet ("Warehouse Inventory is still not being updated to reflect the last entry in PCN history", w/ PCN 13959 screenshots)
-
-- **● Issue (what was wrong):** PCN **13959** (item `8095-195`, MPN `ERJ-8CWFR015V`). PCN History's newest row showed a **PICK → MFG Floor** (WO `purge`), so it *looked* like the part had moved to the floor — but Warehouse Inventory still showed **9 on hand in bin 1604009, mfg_qty 0**. Reads as "Warehouse isn't updating from History."
-- **● Diagnosis (both views actually AGREE on qty):** the offending PICK (`tblTransaction.id 178831`, user `john`, 02/27/2026) had **`tranqty = 0`** — zero units moved. So the 9 units correctly never left the bin; **Warehouse Inventory was right.** The only thing wrong was the *history row itself*, which is a legacy artifact of a `purge` attempt that couldn't complete (KOSH blocks purge while on-hand > 0, [app.py:1085](../app.py#L1085)).
-- **● Root cause of the misleading row:** the PCN-specific pick INSERT **hardcodes `loc_to = 'MFG Floor'`** ([app.py:1346](../app.py#L1346)) while the warehouse UPDATE only touches rows with `qty_to_pick > 0` ([app.py:1301-1311](../app.py#L1301-L1311)). A 0-unit pick therefore logs a phantom "→ MFG Floor" movement that never happened. **Not currently reproducible** in KOSH — all **2,968** zero-qty PICK rows are legacy/non-`@` imports; the live pick path rejects a 0-qty pick (`updated_rows=0` → error), so no KOSH-era login has ever created one.
-- **● Fixed (what changed):** **data-only, no code deploy.** Soft-reversed the phantom row: `UPDATE tblTransaction SET reversed = TRUE WHERE id = 178831` (verified exactly 1 row, run in a `BEGIN/COMMIT`). The PCN History page already filters `COALESCE(reversed,false)=false` ([app.py:6614](../app.py#L6614)), so the row is now hidden and 13959's history ends at the real `PTWY → 1604009` event — matching Warehouse Inventory. The row is **preserved** (flagged, not deleted); the on-hand header anchors to Warehouse Inventory so it stayed 9 throughout. **Warehouse table was NOT touched** (0 units moved → nothing to reconcile).
-- **🛠️ Files & lines:** no source change. DB: `pcb_inventory."tblTransaction".id = 178831` on prod `kosh` (container `aci-database`). Reversible via `SET reversed = FALSE WHERE id = 178831`.
-- **● When:** 2026-07-01 · **Deployed:** ✅ prod data updated directly (no container rebuild needed).
-- **● Did it handle it?:** **Yes** — post-fix query confirms the page now renders only `INDF` + `PTWY` (both On Hand 9, ending in bin 1604009), warehouse unchanged at 9 in 1604009.
-- **● ⚠️ Open follow-ups (NOT done — need Preet's say-so):** (1) **If those 9 units are physically gone**, the real intent was a purge → do proper pick-then-purge to zero it; I treated Warehouse as authoritative (units exist). (2) **Optional code hardening:** stop hardcoding `loc_to='MFG Floor'` on any pick that moves 0 units (defensive only — path is currently unreachable). (3) **2,967 other legacy 0-qty PICKs** may cause the same cosmetic complaint on other PCNs; not mass-touched — fix per-PCN as reported.
-
-### Recurrences / new case reports
-<!-- Same bug reported again? APPEND a dated line here. -->
-
----
-
-<h3 id="bug23">🟧 <span style="color:#e67e22">23 — Shortage report's same-MPN visibility over-matched distinct parts (1234 also showed 12345 / 123456)</span> ✅</h3>
-
-> **Date:** 2026-06-30 · **Severity:** 🟧 High · **Area:** Shortage report / same-MPN visibility · **Reported by:** Preet ("when a shortage report is created for 1234 it shows all the MPNs 1234, 12345, 123456 … not the exact match")
-
-- **● Issue (what was wrong):** the "same-MPN stock under a different part number" rows on the shortage report listed parts whose MPN merely **started with** the BOM line's MPN, so a line showed piles of unrelated parts — "pages and pages" of 12345/123456 noise under a 1234 line.
-- **● Example (real data):** BOM MPN `1.5KE15` (15 V TVS) pulled in stock `1.5KE150CA` (150 V — a DIFFERENT part); `ERJ6ENF249` pulled in `ERJ6ENF2491V / 2492V / 2493V` (different resistor values). A scan of live data found 25+ such false numeric over-matches.
-- **● Root cause:** the same-MPN match used a NORMALIZED exact match **OR a directional prefix** `char_length(bom_key) >= 6 AND p.nmpn LIKE bom_key || '%'` (added for reel/packaging suffixes like `ADR03BUJZ`→`ADR03BUJZ-REEL7`). Because normalization strips separators (`-# ./`), the prefix branch couldn't tell a reel suffix from a value-continuation, so for numeric/short MPNs it matched longer DISTINCT parts.
-- **● Fixed (what changed):** removed the prefix branch — match **EXACT only**. Chemring = strict exact-string (unchanged); all other customers = normalized exact (`p.nmpn = bl.bom_key`, case + `-# ./` folded) so format-only variants still match but nothing longer does. Decision confirmed with Preet (chose "Exact MPN only" over a separator-aware reel-tolerant option). Two spots in `_SHORTAGE_MATCH_SQL` (other_mpn_onhand + other_mpn_locations).
-- **🛠️ Files & lines:** `app.py` — `_SHORTAGE_MATCH_SQL` (both CASE expressions). Guard: `tests/regression_tests.py::test_shortage_report_same_mpn_is_exact_not_prefix`. Folder: [`bug-23-shortage-same-mpn-over-match/`](./bug-23-shortage-same-mpn-over-match/) (README + `verify-bug-23-fix.py`).
-- **● When:** 2026-06-30 · commit `9a41bfe` · **Deployed:** ✅ Docker + Vercel.
-- **● Did it handle it?:** **Yes** — new test seeds exact `1.5KE15` (must count) + longer `1.5KE150CA` (must NOT) and asserts only the exact one shows; the two existing same-MPN tests still pass; full suite **30/30**; baked container verified exact-only (prefix `LIKE` gone).
-- **● Guard:** `tests/regression_tests.py::test_shortage_report_same_mpn_is_exact_not_prefix`.
-- **● Scope/impact:** code-only, read-path (report display) — no data mutated. Supersedes the non-Chemring "tolerant reel-suffix" behavior from the Chemring-strict work.
-
-### Recurrences / new case reports
-<!-- Same bug reported again? APPEND a dated line here. -->
-
----
-
-<h3 id="bug22">🟧 <span style="color:#e67e22">22 — BOM Loader saved only 1 of N lines; PCN for any other line said "MPN not available"</span> ✅</h3>
-
-> **Date:** 2026-06-30 · **Severity:** 🟧 High · **Area:** BOM Loader / client-side parser · **Reported by:** Preet ("BOM Loader not working — shows in the display but generating a PCN says MPN not available", reported 3×)
-
-- **● Issue (what was wrong):** after loading a BOM, generating a PCN for a line reported **"MPN not available"** (the MPN dropdown was empty). The line appeared in the BOM preview but most lines were never actually saved.
-- **● Example (from production logs `stockandpick_webapp`, 2026-06-30 11:52–12:53 UTC):** job **8517L-2** loaded with **`total_items=1`** — only **line 5** (`aci_pn 8517L-2-5`) hit `tblBOM`. Preet then tried to PCN **line 25**, requesting `GET /api/bom/mpns/8517L-2-25` ~40× over an hour, each correctly "No MPNs found" — line 25 was never loaded. Two other BOMs from the same days loaded fully and worked (8858L = 35 lines, 6732LF = 28 lines).
-- **● Root cause:** the shared client parser `static/js/bom_parser.js::parseSheet` dropped every data row whose detected **LINE** cell wasn't a clean integer: `if (isNaN(parseInt(row[col.line]))) continue;`. When the wrong/sparse column was auto-detected as `LINE` (only the first data row had a number there), all the other real component rows were silently discarded — so a 25-line BOM became a 1-line BOM. Same "silently dropped BOM lines" class as the May 2026 incident, new trigger.
-- **● ⚠️ PREVIOUS (WRONG) FIX — what I did first (2026-06-29, bug 21):** I hypothesized the cause was a **case-sensitive** MPN lookup (`/api/bom/mpns/<part>` used `WHERE aci_pn = %s`) and shipped `UPPER(aci_pn)=UPPER(%s)` + a regression test, committed `73d51e8`, deployed Docker+Vercel. That endpoint fix is **real and kept** (a genuine latent bug), but it was the **wrong root cause for this report** — I shipped it without reproducing Preet's exact case, and he came back "same issue, not fixed at all." Lesson logged in memory: reproduce from container logs before shipping.
-- **● FIXED NOW — what actually resolves it (2026-06-30):** in `parseSheet`, a non-empty row that carries a real part identifier (`mpn` **or** `aci_pn`) is **never dropped** for a bad LINE cell — it's kept with a fallback auto line number (its `aci_pn` from the sheet is preserved, which is what the PCN lookup and display key on). Rows with no part id (notes/totals/section headers) are still excluded. Added `rescued_rows` / `skipped_rows` counts to the parser output and a **loud UI guardrail** in `templates/jobs/jobs.html`: if any non-empty rows are skipped, the upload status turns to a ⚠️ warning telling the user to verify every line before clicking Load — so a partial parse can never be silent again.
-- **🛠️ Files & lines:** `static/js/bom_parser.js` (`parseSheet` line-number rescue + `rescued_rows`/`skipped_rows`; later `tightRange` + only-BOM-to-Load), `templates/jobs/jobs.html` (partial-parse warning; "job exists" modal removed), `tests/test_bom_parser.js` (synthetic bug-22 fixtures + updated `countDataRows` mirror). Folder: [`bug-22-bom-loader-line-drop-bloat-sheet/`](./bug-22-bom-loader-line-drop-bloat-sheet/) (README + `verify-bug-22-fix.js` covering 22a/22b/22c + the real files).
-- **● When:** 2026-06-30 · commit `12d525c` · **Deployed:** ✅ Docker + Vercel.
-- **● Did it handle it?:** **Yes** — parser suite green incl. new fixtures: the 8517L-2 pattern (line# only on row 1, MPNs on all 5) now keeps **all 5** rows incl. `8517L-2-25`; junk/notes rows stay excluded; a clean BOM is unchanged (line #s 5,10,15 preserved, 0 rescues). Real files re-parsed without error (8765 export rescued 1 previously-dropped row). NOTE: the literal `8517L-2.xlsx` was never on disk (uploaded BOMs are parsed client-side and not stored), so the fix targets the proven mechanism, not that exact file.
-- **● Guard:** `tests/test_bom_parser.js` synthetic fixtures (`bug22: all 5 component rows kept`, `junk: only the 1 real part is kept`, `clean: line numbers preserved`).
-- **● Scope/impact:** code-only; strictly additive — can only RESCUE rows that were being dropped, never removes a row that previously loaded. No data migration. Jobs already loaded partially (e.g. 8517L-2) must be **re-uploaded** to pick up the missing lines.
-
-### Recurrences / new case reports
-<!-- Same bug reported again? APPEND a dated line here. -->
-- 2026-06-30 — reported again (Preet, "the BOM will not load into the system"), file `8517L-2 PARATA 320-0121 BOM FOR ASSEMBLY.xlsx`. DIFFERENT root cause this time: **template bloat**, not line-drop. The file's "Assy BOM" tab declares range **A1:AI6588** (6,588 rows × 35 cols) but holds only ~11 real rows (64 cells); the .xlsx is **3.9 MB** and `XLSX.utils.sheet_to_json` materialized all 6,588 empty rows, freezing the in-browser parse long enough to look like a failed upload. (Server-side the load was verified fine: 200, line 5 `8517L-2-5`/`VTB8441BH` inserted — and this BOM genuinely has only that one component, on BOTH tabs.) **Fix (commit `5032bbc`, deployed Docker+Vercel):** `static/js/bom_parser.js::parseSheet` now recomputes a TIGHT range from the cells that actually exist and passes it to `sheet_to_json`, so an oversized declared range costs nothing — parse of this file dropped ~96ms→~7ms. Guard: `tests/test_bom_parser.js` bloat fixtures (`bloat: tightRange shrinks A1:AI6588…`, `bloat: still extracts the 1 real line`). Also advised Preet to clean the empty rows on the "Assy BOM" tab to shrink the file.
-
----
-
-<h3 id="bug21">🟧 <span style="color:#e67e22">21 — Generate-PCN MPN dropdown came up empty even though the BOM display shows the MPN (case-sensitive BOM lookup)</span> ✅</h3>
-
-> **Date:** 2026-06-29 · **Severity:** 🟧 High · **Area:** BOM Loader / Generate PCN · **Reported by:** Preet ("BOM Loader not working — line shows in the display but generating a PCN says MPN not available")
-
-- **● Issue (what was wrong):** on the Generate PCN page the **MPN dropdown populated with nothing** ("No MPNs found in BOM for this part"), so the user couldn't pick an MPN and the form blocked submission with the MPN-required message — even though the very same line's MPN was visible on the job / BOM display. Looked like the BOM Loader had failed; the BOM data was actually fine.
-- **● Example:** BOM part `8805L-5` (MPN `CMF50221R00FHEB`). Against the live `kosh` DB the endpoint's query returned `[]` when the part arrived as `8805l-5` (e.g. scanned/typed lower-case) but `['CMF50221R00FHEB']` with case-insensitive matching. The job display showed the MPN the whole time because it already matches case-insensitively.
-- **● Root cause:** `/api/bom/mpns/<part>` ([`api_get_mpns_for_part`](../app.py)) matched with an exact, **case-sensitive** `WHERE aci_pn = %s`. Part numbers reach the endpoint in mixed case (a scanned label's casing vs. the BOM-stored casing), so any case difference silently returned zero MPNs. Every other part-number lookup in KOSH (inventory join, shortage report — see [bug 11](#bug11)) already normalizes with `UPPER()`; this one endpoint was the lone case-sensitive holdout, so the PCN dropdown and the BOM display disagreed.
-- **● Fixed (what changed):** changed the lookup to `WHERE UPPER(aci_pn) = UPPER(%s)`, matching the rest of the app. One-line SQL change in `api_get_mpns_for_part`; no data migration (BOM data was never wrong).
-- **🛠️ Files & lines:** `app.py` — `api_get_mpns_for_part` (`/api/bom/mpns/<part_number>`). Folder: [`bug-21-bom-mpn-lookup-case-sensitive/`](./bug-21-bom-mpn-lookup-case-sensitive/) (README + `verify-bug-21-fix.py`).
-- **● When:** 2026-06-29 · commit `73d51e8` · **Deployed:** ✅ Docker + Vercel.
-- **● Did it handle it?:** **Yes** — new regression `test_bom_mpns_lookup_is_case_insensitive` seeds a BOM row and asserts the endpoint returns the MPN for lower/upper/exact casing. It **FAILS on the pre-fix container** (returned `[]` for `casetest-5`) and **PASSES on the fixed code**; full suite **29/29** green.
-- **● Guard:** `tests/regression_tests.py::test_bom_mpns_lookup_is_case_insensitive`.
-- **● Scope/impact:** code-only fix; affected any Generate-PCN attempt where the entered/scanned part number's case differed from the BOM-stored `aci_pn`. No rows mutated.
-
-### Recurrences / new case reports
-<!-- Same bug reported again? APPEND a dated line here. -->
-- 2026-06-30 — reported by Preet ("same issue, not fixed at all"). **The case-insensitive fix above did NOT resolve his symptom — it was the wrong root cause for THIS report.** Production logs (`stockandpick_webapp`, 2026-06-30 11:52–12:53 UTC) show the truth: he loaded BOM for job **8517L-2**, but the loader posted **`total_items=1`** and saved only **line 5** (`aci_pn 8517L-2-5`). He then tried to generate a PCN for **line 25**, hammering `GET /api/bom/mpns/8517L-2-25` ~40× — every one correctly "No MPNs found", because line 25 (and 10/15/20…) were never loaded. **Real root cause: the client-side BOM parser (`static/js/bom_parser.js::parseSheet`) dropped every data line except one for this file** — the same "silently dropped BOM lines" class as the May 2026 incident. Most likely the line-number guard `if (isNaN(parseInt(row[col.line]))) continue;` (bom_parser.js L94–96) skipping rows because the wrong column was detected as `LINE`, or non-integer line cells. **Status: OPEN — needs the actual `8517L-2.xlsx` to reproduce the parser failure without breaking the BOMs that parse correctly (8858L=35 lines, 6732LF=28 lines both verified OK).** Tracked as a new distinct bug (parser line-drop) — now entered and fixed as **[bug 22](#bug22)** (2026-06-30, parser rescue + UI guardrail + tests). The case-insensitive endpoint fix here in bug 21 is kept as a valid latent fix.
-
----
-
-<h3 id="bug20">🟥 <span style="color:#c0392b">20 — On-hand double-counted across bin + MFG floor (Warehouse ≠ PCN History; restock compounds)</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-26 · **Severity:** 🟥 Critical · **Area:** Inventory / On-hand · **Reported by:** Preet ("onhand 1100 + mfg 1100 → restock → 2200")
-
-- **● Issue (what was wrong):** the same physical units were counted in BOTH `onhandqty` (bin) and `mfg_qty` (MFG floor) on a row. Views that sum bin+floor (Shortage report) showed 2× the real qty, while PCN History (anchored to `onhandqty` only) showed 1×, so the two screens disagreed; and a restock (`onhandqty += qty`) on such a row compounded the double.
-- **● Example:** PCN **29862** (8461L-75): `onhandqty=140`, `mfg_qty=140`, `loc_to=MFG Floor` → Shortage showed **280**, PCN History showed **140**. Its only KOSH txn was a RESTOCK whose `loc_to` was 'MFG Floor'. 10 rows in this exact `onhand==mfg` state (5 floor-located, 5 bin-located).
-- **● Root cause:** bin and floor are meant to be DISJOINT (a unit is in a bin OR on the floor) but nothing enforced it; the on-hand reconcile re-derived bin on-hand for parts already on the floor (RESTOCK-to-MFG-Floor counts as +bin on the ledger) while `mfg_qty` still held them. Also the three views used DIFFERENT on-hand definitions (onhand-only vs onhand+floor), so they could never agree when floor stock existed.
-- **● Fixed (what changed):** (1) PCN History anchor now sums `onhandqty + mfg_qty` — one definition across all three views; (2) new shipped guard `reconcile_floor_onhand` (wired into the 5-min sync) zeroes phantom bin on-hand on rows physically on the MFG floor (lower-only, audit-logged) — fixes the 5 floor rows + prevents floor-class recurrence; (3) removed the false "0 rows with both onhand>0 and mfg>0" comment in the shortage SQL. Bin-located doubles are surfaced for explicit review, not auto-mutated.
-- **🛠️ Files & lines:** `app.py` — `pcn_history` anchor; `_FLOOR_ONHAND_DEDUPE_SQL` + `reconcile_floor_onhand`; `_sync_onhand_from_transactions` wiring; shortage on-hand comment. Folder: [`bug-20-onhand-mfg-floor-double-count/`](./bug-20-onhand-mfg-floor-double-count/).
-- **● When:** 2026-06-26 · commit `cd542da` · **Deployed:** ✅ Docker + Vercel.
-- **● Did it handle it?:** **Yes** — 3-level test-user run all green:
-  - **L1 code:** regression suite **28/28** (incl. the 2 new bug-20 guards) + all **20** per-bug verifiers pass.
-  - **L2 affected views as test user:** Warehouse Inventory **matches PCN History for all 10 PCNs** (one on-hand definition now); `/pcn-history` + `/warehouse-inventory` render 200 for the test user. **12/12.**
-  - **L3 full workflow as test user:** (3a) page-render smoke 8/8; (3b) **full job DATA flow** — upload job BOM → shortage report → check Warehouse==PCN History → pick → check both → restock → check both. On-hand conserved at 100 throughout, both screens agree at every step, and after restock it's **100 not 200** (the exact bug). **ALL PASS.**
-  - Live container: the shipped `reconcile_floor_onhand` guard de-duped **19 floor-located rows (1,637 phantom bin units removed)**, audit-logged (`floor_onhand_dedupe`); the 5 floor-affected rows are now `onhand=0, mfg=N`.
-  - **All 10 double rows resolved; whole-table `remaining_doubles = 0`.** After tracing each of the 5 bin-located rows (all = received → picked to floor → recounted → **put away back into a bin**, so the parts are in the bin and `mfg_qty` was a stale floor count), the stale `mfg_qty` was zeroed for those 5 (audit `bug20_bin_stale_mfg_zeroed`, `onhandqty` untouched → no stock lost). Re-run L2: all 10 PCNs match AND de-doubled.
-- **● Guard:** `test_floor_onhand_dedupe_zeroes_phantom_bin_not_floor_or_bins`, `test_pcn_history_anchor_counts_mfg_floor_stock`, `verify-bug-20-fix.py`. Full pass/fail log: [`TEST-RUN-2026-06-26-bug20.md`](./TEST-RUN-2026-06-26-bug20.md).
-- **● Scope/impact:** floor class (19 rows) auto-fixed by the shipped guard + guarded against recurrence; 5 bin-located doubles fixed by a verified, audit-logged one-time correction (zero stale mfg, keep bin on-hand). Whole-table double-count now zero, no data loss. The bin case is NOT a blanket guard (a legitimate partial-pick split also has onhand+mfg both >0, so auto-zeroing mfg there would lose floor stock); new occurrences are surfaced by the integrity monitor for verified one-time correction.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug19">🟥 <span style="color:#c0392b">19 — Over-pick buried later stock → ledger computed 0 (false WHSE≠HIST)</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-25 · **Severity:** 🟥 Critical · **Area:** Inventory / Reconcile · **Reported by:** Preet (Warehouse vs PCN History discrepancy review)
-
-- **● Issue** — the reconcile/diagnostic ledger computed **0 on-hand** for parts that physically have stock, making Warehouse Inventory look like phantom stock vs the ledger. A proposed one-off `bug_memory/fix-bidirectional-reconcile.sql` would have "corrected" Warehouse *down to those 0s*, deleting real inventory.
-- **● Example** — PCN **9141** (6779ML-100): `RNDT 1800`, then `PICK 3600` (only 1800 ever existed — a double-entered/erroneous pick), then `RESTOCK 1800`. Old math: `1800 − 3600 + 1800 = 0`. True on-hand: **1800** (in bin 1501601). 25 PCNs (~5,800 units) were flagged this way; all latest-event = RESTOCK.
-- **● Root cause** — the `net` ledger **summed every delta and clamped once** with `GREATEST(0, base + Σdelta)`. An over-pick drove the running total negative and a later receipt only refilled it back toward 0, so the receipt's units were "absorbed" by the earlier impossible pick.
-- **● Fixed (what changed)** — replaced sum-then-clamp with a **running floor at 0** (Skorokhod reflection): `on-hand = (base + Σdelta) − LEAST(0, base + min running balance)`. You can't pick below empty, so the dip is absorbed at the pick and later receipts rebuild from 0. Implemented as `net_deltas → net_run (window) → net` in `app.py` `_ONHAND_RECONCILE_SQL` (the shipped `reconcile_onhand_from_ledger`) and mirrored in the nightly integrity-monitor ledger.
-- **● When** — 2026-06-25 · commit `3c32a8e` · **Deployed:** ✅ Docker + Vercel.
-- **● Did it handle it?** — Yes. Live-DB validation: pcn 9141 ledger `0 → 1800` (= Warehouse); phantom rows (WHSE > ledger by >5) **25 → 0**; invariant **new ≥ old across all 35,294 (pcn,mpn) groups, 0 violations** (37 raised). Since the reconcile is **lower-only**, a never-lower ledger can only lower *less* → **provably no new data loss**. **No warehouse rows were mutated** — fixing the math made Warehouse and the ledger agree on their own.
-- **● Guard** — `tests/regression_tests.py::test_onhand_reconcile_overpick_does_not_zero_refilled_stock` (over-pick + non-receipt refill, phantom-high warehouse → reconcile lowers to the true 1800, not 0).
-- **● Scope/impact** — code/computation fix only; no data backfill needed. The `fix-bidirectional-reconcile.sql` script was **NOT run** (it would have wiped the 25 RESTOCK rows).
-- **🧪 Full test-user run (2026-06-25)** — entire bug list re-verified: **all 19 per-bug verifiers PASS** + **regression suite 26/26** (incl. this bug's new guard) + 28 page routes, 0 server errors. Details & per-action output: [`TEST-RUN-2026-06-25-all-bugs-test-user.md`](./TEST-RUN-2026-06-25-all-bugs-test-user.md). Folder: [`bug-19-overpick-buried-later-stock/`](./bug-19-overpick-buried-later-stock/).
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug1">🟧 <span style="color:#e67e22">1 — Shortage report showed "MFG Floor" instead of the real bin</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-23 · **Severity:** 🟧 High · **Area:** Shortage / Location · **Reported by:** Theresa (job 5455M / WO# 24214-2 + screenshot)
-
-- **● Issue** — the report sent the picker to a location with nothing pickable; the bin that actually held the stock didn't show.
-- **● Example**
-  - ◦ Line 3 (5455M-3): **278 units in bin 2204207** (PCN 37656) — but the report showed **"MFG Floor"** (PCN 37654: 0 in bin, 840 on floor).
-  - ◦ Lines 1 & 11 were floor-only → correctly showed MFG Floor.
-- **● Root cause** — displayed PCN/location chosen by **highest bin+floor total**, so a big floor-only lot out-ranked a smaller real-bin lot.
-- **● Fix** — rank the displayed lot **bin-first** (`(onhandqty>0) DESC, onhandqty DESC, floor DESC`); fall back to MFG Floor only if no bin stock. Also: Item-Number search → *exact-wins-else-prefix*.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_SHORTAGE_MATCH_SQL` › `inv` CTE location pick **@ L5153** (mirrored job views **@ L8432, L8734**)
-  - ◦ `app.py` — `warehouse_inventory()` search_item filter **@ L4522**
-  - ◦ `tests/regression_tests.py` — `test_shortage_report_shows_bin_location_not_floor`
-- **📝 Fixed Code** — The actual implementation in app.py:
-  ```python
-  # Line 5153 (and mirrored @ 8432, 8734) - Bin-first location ranking:
-  (array_agg(COALESCE(w.loc_to, '')
-      ORDER BY
-          (COALESCE(w.onhandqty,0) > 0) DESC,  # ✅ Bin exists first (TRUE > FALSE)
-          COALESCE(w.onhandqty,0) DESC,        # ✅ Highest bin quantity
-          (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST  # ✅ Floor quantity
-  ))[1] as location
-
-  # Line 4522-4539 - Exact-or-prefix item search:
-  # EXACT-match-wins, else PREFIX (Theresa 2026-06-23)
-  LOWER(TRIM(w.item::text)) = %s  # Exact match first
-  OR (NOT EXISTS (...) AND LOWER(TRIM(w.item::text)) LIKE %s)  # Prefix if no exact
-  ```
-- **● When** — 2026-06-23 · commit `e88ae7b` · **Deployed:** ✅
-- **● Verified** — 2026-06-23 · Code inspection confirmed bin-first logic active in production
-- **● Did it handle it?** — Yes. Verified live (line 3 → 2204207). Fleet-wide **1,492 items** mis-pointing → 0.
-- **📚 Engineering docs** — See `bug_memory/bug01-shortage-report-mfg-floor-instead-of-real-bin/` for comprehensive analysis, UAT plan, verification queries, and risk review.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug2">🟥 <span style="color:#c0392b">2 — On-hand reconcile wiped fresh restocks to 0</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-22 · **Severity:** 🟥 Critical · **Area:** Inventory / Reconcile · **Reported by:** Preet ("edits not saving")
-
-- **● Issue** — a real restock saved, then hours later Warehouse showed **0** while PCN History still showed the restock.
-- **● Example** — PCN **42137**: `parts@` restocked 15 on 6/18 07:30; reconcile zeroed it at 11:31 same day.
-- **● Root cause** — reconcile replays the whole ledger; parts with more PICKs than stock-ins net negative → clamp to 0 → lower-only guard saw `0 < 15` and overwrote the restock.
-- **● Fix** — never lower a row whose **latest material transaction is a fresh receipt (RESTOCK/STOCK)**; phantom-high stock (latest = PICK/RNDT) still corrected.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_ONHAND_RECONCILE_SQL` › new `latest_event` CTE + guard **@ L3204**
-  - ◦ `tests/regression_tests.py` — `test_onhand_reconcile_never_wipes_fresh_restock`
-- **📝 Fixed Code** — The actual implementation in app.py:
-  ```python
-  # Line 3204-3220 - Latest event tracking CTE:
-  latest_event AS (
-      -- The most recent MATERIAL transaction per (pcn, mpn). When this
-      -- is a fresh receipt (RESTOCK/STOCK) the row's on-hand was just
-      -- established by that receipt's own UPDATE.
-      SELECT DISTINCT ON (pcn, mpn_key) pcn, mpn_key, trantype AS last_type
-      FROM parsed
-      WHERE reversed = false
-        AND trantype IN ('PICK','PURGE','SCRA','RESTOCK','STOCK','INDF','ADJT','PCN Generation')
-      ORDER BY pcn, mpn_key, ts DESC NULLS LAST, id DESC
-  )
-  
-  # Line 3230-3237 - Guard prevents lowering fresh receipts:
-  LEFT JOIN latest_event le ON le.pcn = n.pcn AND le.mpn_key = n.mpn_key
-  WHERE w.onhandqty IS DISTINCT FROM n.qty
-    AND (a.pick_count > 0 OR a.touch_count > 0)
-    -- ✅ Never lower a row whose latest event is RESTOCK/STOCK
-    AND COALESCE(le.last_type, '') NOT IN ('RESTOCK','STOCK')  # Bug #2 fix
-    AND n.qty < w.onhandqty  # Lower-only guard (existing)
-  ```
-- **● When** — 2026-06-22 · commit `1958a08` · **Deployed:** ✅
-- **● Verified** — 2026-06-23 · Code inspection confirmed fresh-receipt protection active at L3237
-- **● Did it handle it?** — Yes. **Data fix (separate pass):** 62 zeroed rows backfilled (audit `restock_wipe_backfill_20260622`).
-- **📚 Engineering docs** — See `bug_memory/bug02-onhand-reconcile-wiped-fresh-restocks/` for complete analysis, verification queries, and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug3">🟨 <span style="color:#f39c12">3 — PCN History page crashed for every real PCN</span> ✅</h3>
-
-> **Date:** 2026-06-18 · **Severity:** 🟨 Medium · **Area:** PCN History
-
-- **● Issue** — opening History for any PCN showed *"Error loading PCN history: 0"*.
-- **● Example** — every real PCN; only the empty search form worked.
-- **● Root cause** — anchor query on a `RealDictCursor` read the aggregate as `anchor_row[0]` → `KeyError: 0`. Smoke test only hit the empty form; unit test used a plain cursor.
-- **● Fix** — read by alias: `SELECT … AS total` → `anchor_row['total']`; added a test on the exact RealDictCursor path.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `pcn_history()` anchor read **@ L6556** (route `def pcn_history` **@ L6471**)
-  - ◦ `tests/regression_tests.py` — RealDictCursor anchor-path test
-- **📝 Fixed Code** — The actual implementation in app.py:
-  ```python
-  # Line 6553-6554 - Comment explains the fix:
-  # NOTE: cur is a RealDictCursor here, so fetchone() returns a
-  # dict — read the aggregate by its alias, never by index [0].
-  
-  # Line 6556 - Query with explicit alias:
-  cur.execute("""
-      SELECT COALESCE(SUM(onhandqty), 0) AS total  # ✅ Explicit alias
-      FROM pcb_inventory."tblWhse_Inventory"
-      WHERE pcn::text = %s
-  """, (search_pcn,))
-  
-  # Line 6561 - Read by alias with safety:
-  anchor_row = cur.fetchone()
-  anchor = int(anchor_row['total']) if anchor_row and anchor_row.get('total') is not None else 0  # ✅ Dict access
-  # Before fix: anchor = int(anchor_row[0])  # ❌ KeyError: 0
-  ```
-- **● When** — 2026-06-18 · commit `069819e` · **Deployed:** ✅
-- **● Verified** — 2026-06-23 · Code inspection confirmed RealDictCursor dict access at L6561
-- **● Did it handle it?** — Yes. PCN History fully functional for all PCNs.
-- **📚 Engineering docs** — See `bug_memory/bug03-pcn-history-page-crashed/` for complete analysis, tests, and verification queries.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug4">🟥 <span style="color:#c0392b">4 — RESTOCK-after-recount doubling (the WHSE≠HIST architectural fix)</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-18 · **Severity:** 🟥 Critical · **Area:** Inventory / History
-
-- **● Issue** — PCN History on-hand double the Warehouse value.
-- **● Example** — PCN **41664**: History 4,000 vs Warehouse 2,000; also a 79→158 shape.
-- **● Root cause** — History replayed forward, treated an **RNDT recount as baseline**, then **added a later RESTOCK** of the same parts on top.
-- **● Fix** — History now **anchors** to the authoritative Warehouse value and walks the trail **backward**. SCRA now subtracts; RNDT is quantity-neutral. Extracted reconcile SQL so tests run the shipped query.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `compute_anchored_history_balances()` **@ L3294**, `_history_delta()` **@ L3272**
-  - ◦ `app.py` — `_ONHAND_RECONCILE_SQL` **@ L3094**, `reconcile_onhand_from_ledger()` **@ L3264**
-  - ◦ `tests/regression_tests.py` — anchor / no-doubling / relabel-neutral tests
-- **● When** — 2026-06-18 · commit `5b1967c` · **Deployed:** ✅
-- **● Verified** — 2026-06-23 · Architectural fix verified - all 5 tests passed
-- **● Did it handle it?** — Yes — this is *the* structural guarantee that the two screens match.
-- **📚 Engineering docs** — See `bug_memory/bug04-restock-after-recount-doubling/` for verification test and documentation.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug5">🟧 <span style="color:#e67e22">5 — Location reconcile dropped 8-digit bins (relocations reverted)</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-17 · **Severity:** 🟧 High · **Area:** Warehouse Location
-
-- **● Issue** — Warehouse kept reverting relocations; "location stays old."
-- **● Example** — PCN **45504** → bin 14051021 (8 digits) kept reverting.
-- **● Root cause** — placement filter only accepted **6–7-digit** bins (`^[0-9]{6,7}$`), dropping every 8-digit bin (2,306 txns / 41 rows); reconcile fell back to an older placement. Shipped "green" twice because the test embedded a **copy** of the buggy query.
-- **● Fix** — a placement is now **a numeric bin of ANY length OR a recognized named location**; tests call the shipped function with 8-digit bins.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_LOCATION_RECONCILE_SQL` **@ L3024**, `reconcile_warehouse_locations()` **@ L3078**
-  - ◦ `tests/regression_tests.py` — location-reconcile tests (now run the shipped query)
-- **● When** — 2026-06-17 · commit `3fb6463` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (regex accepts any-length bins, locvocab check, function exists, fix documented)
-- **● Did it handle it?** — Yes — corrected 318 stale rows.
-- **📚 Engineering docs** — See `bug_memory/bug-05-location-reconcile-dropped-8digit-bins/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug6">🟧 <span style="color:#e67e22">6 — Manual bin edits didn't stick</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-16 · **Severity:** 🟧 High · **Area:** Warehouse Location
-
-- **● Issue** — a manual location change in the Warehouse editor reverted within 5 min.
-- **● Example** — ~2,435 stocked PCNs reverting in live data.
-- **● Root cause** — reconcile only treated PTWY/RESTOCK/INDF/STOCK as placements; a manual edit logs an **ADJT**, which was ignored.
-- **● Fix** — add ADJT to the placements set (the loc filter still rejects relabel-ADJTs carrying item numbers).
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_LOCATION_RECONCILE_SQL` placements set **@ L3024**
-  - ◦ `tests/regression_tests.py` — `test_location_reconcile_honors_manual_adjt_edit`
-- **● When** — 2026-06-16 · commit `5de9e4c` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 3 TESTS PASSED (ADJT in placements, documentation, relabel filter)
-- **● Did it handle it?** — Yes.
-- **📚 Engineering docs** — See `bug_memory/bug-06-manual-bin-edits-didnt-stick/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug7">🟥 <span style="color:#c0392b">7 — PCN History ≠ Warehouse on relabels</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-16 · **Severity:** 🟥 Critical · **Area:** PCN History
-
-- **● Issue** — History on-hand higher than Warehouse; full-reel picks left phantom qty.
-- **● Example** — PCN **1247**: History 18,000 vs Warehouse 9,000; a 9,000 pick left phantom 9,000 instead of 0.
-- **● Root cause** — History counted relabel-ADJTs as `+qty` while the reconcile (12 Jun) treated them as neutral — two formulas over the same data.
-- **● Fix** — apply the same `is_relabel` predicate inside the History balance replay.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `pcn_history()` balance replay + `_history_delta()` **@ L3272** / route **@ L6471**
-  - ◦ `tests/regression_tests.py` — `test_pcn_history_balance_matches_reconcile_on_relabel` (+ real-PCN test `5adb737`)
-- **● When** — 2026-06-16 · commit `6c2ded8` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (_history_delta relabel check, is_relabel predicate, documentation, function exists)
-- **● Did it handle it?** — Yes (PCN 1247 → 9,000; full pick → 0).
-- **📚 Engineering docs** — See `bug_memory/bug-07-pcn-history-ne-warehouse-on-relabels/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug8">🟧 <span style="color:#e67e22">8 — Warehouse Inventory location never synced (stale bins)</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-15 · **Severity:** 🟧 High · **Area:** Warehouse Location · **Reported by:** Theresa
-
-- **● Issue** — Warehouse showed the old bin; History showed the true one.
-- **● Example** — ~4,792 stocked rows stale at first sync.
-- **● Root cause** — put-aways arrive as imported PTWY; KOSH only set `loc_to` on its own ops; reconcile synced *on-hand only*.
-- **● Fix** — added the location reconcile (latest placement by chronological `tran_time`; picks/purges ignored). First run backfills, then self-heals.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_LOCATION_RECONCILE_SQL` **@ L3024**, `reconcile_warehouse_locations()` **@ L3078** (snapshot `tblWhse_Inventory_locbak_20260615`)
-  - ◦ `tests/regression_tests.py` — `test_location_reconcile_follows_latest_placement`
-- **● When** — 2026-06-15 · commit `b06f52b` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (_LOCATION_RECONCILE_SQL exists, reconcile function, chronological order, picks/purges ignored)
-- **● Did it handle it?** — Yes.
-- **📚 Engineering docs** — See `bug_memory/bug-08-warehouse-inventory-location-never-synced/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug9">🟧 <span style="color:#e67e22">9 — Shortage report ignored MFG-Floor stock (false shortages)</span> ✅</h3>
-
-> **Date:** 2026-06-15 · **Severity:** 🟧 High · **Area:** Shortage
-
-- **● Issue** — a job with material on the MFG Floor was flagged short → Purchasing re-bought.
-- **● Example** — a job whose parts physically sat on the MFG Floor read **0 on-hand** for those lines and showed up as a shortage.
-- **● Root cause** — report excluded `loc_to='MFG Floor'` rows, so floor stock (`mfg_qty`) read as 0.
-- **● Fix** — on-hand = `SUM(onhandqty + mfg_qty)`; safe because no row has both > 0 (12 Jun fix).
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_SHORTAGE_MATCH_SQL` › `inv` CTE **@ L5142** (+ mirrored job views **@ L8421, L8724**)
-  - ◦ `tests/regression_tests.py` — `test_shortage_report_counts_mfg_floor_stock`
-- **● When** — 2026-06-15 · commit `0a020fc` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (shortage report, job view 1, job view 2, documentation)
-- **● Did it handle it?** — Yes.
-- **📚 Engineering docs** — See `bug_memory/bug-09-shortage-report-ignored-mfg-floor-stock/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug10">🟥 <span style="color:#c0392b">10 — Phantom stock (~15.3M phantom units)</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-06-12 · **Severity:** 🟥 Critical · **Area:** Inventory / Reconcile
-
-- **● Issue** — parts with impossible on-hand.
-- **● Example** — PCN **30314**: 10,000 on-hand **and** 10,000 on MFG Floor.
-- **● Root cause** — renumbers logged as `ADJT` (full qty, item numbers in loc fields); reconcile counted them as `+qty` → ~15.3M phantom units across 6,855 PCNs.
-- **● Fix** — flag a renumber-ADJT (both loc fields non-locations) → quantity-neutral; normalize MPN in (pcn,mpn) grouping; downward-only guard. Removed **1,439,125** phantom units across 2,523 rows; idempotent; reversible.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_ONHAND_RECONCILE_SQL` is_relabel logic **@ L3094**
-  - ◦ `app.py` — nightly `_nightly_integrity_check` (monitor) · `tblIntegrityCheckLog`
-  - ◦ `tests/regression_tests.py` — `test_onhand_reconcile_neutralizes_relabel_adjt`
-  - ◦ docs: `MAJOR_DATA_INTEGRITY_ISSUE.md`
-- **● When** — 2026-06-12 · commit `0d3682c` (+ monitor `4a5a3ea`, `0ecc242`) · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (_ONHAND_RECONCILE_SQL exists, is_relabel predicate, quantity-neutral, documentation)
-- **● Did it handle it?** — Yes (verified on a staging copy; monitored nightly).
-- **📚 Engineering docs** — See `bug_memory/bug-10-phantom-stock-15m-phantom-units/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug11">🟧 <span style="color:#e67e22">11 — Shortage report: false shortage from case-mismatched part numbers</span> ✅</h3>
-
-> **Date:** 2026-06-12 · **Severity:** 🟧 High · **Area:** Shortage
-
-- **● Issue** — a part with stock flagged short; same part also shown as a "same-MPN, other PN" row.
-- **● Example** — BOM `6779ML-97` vs stock `6779ml-97` — 890 on hand under the other case wasn't counted.
-- **● Root cause** — the own-stock join was case-sensitive.
-- **● Fix** — `UPPER(w.item) = UPPER(aci_pn)` for own-stock match and same-MPN exclusion.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_SHORTAGE_MATCH_SQL` join **@ L5142** · `tests/regression_tests.py` — `test_shortage_report_own_stock_is_case_insensitive` · `CHANGELOG.md`
-- **● When** — 2026-06-12 · commit `9a54620` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 3 TESTS PASSED (case-insensitive join, documentation, _SHORTAGE_MATCH_SQL)
-- **● Did it handle it?** — Yes.
-- **📚 Engineering docs** — See `bug_memory/bug-11-shortage-report-false-shortage-case-mismatch/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug12">🟩 <span style="color:#27ae60">12 — SSO auto-create failed for first-time KOSH users</span> ✅</h3>
-
-> **Date:** 2026-06-05 · **Severity:** 🟩 Low · **Area:** Auth
-
-- **● Issue** — new FORGE users hit *"SSO login failed: Internal error"*; no account created. Existing users fine.
-- **● Root cause** — the SSO auto-create branch imported `passlib`, not installed in the KOSH container.
-- **● Fix** — use the `bcrypt` library directly (matches the rest of the app).
-- **🛠️ Files & lines** — `app.py` (SSO callback auto-create branch, near `login()` **@ L3664**)
-- **● When** — 2026-06-05 · commit `e7a7bcf` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 3 TESTS PASSED (bcrypt imported, SSO uses bcrypt, no passlib)
-- **● Did it handle it?** — Yes.
-- **📚 Engineering docs** — See `bug_memory/bug-12-sso-auto-create-failed-first-time-users/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug13">🟨 <span style="color:#f39c12">13 — Shortage report crashed on 11 jobs (qty/cost parsing + overflow)</span> ✅</h3>
-
-> **Date:** 2026-06-04 · **Severity:** 🟨 Medium · **Area:** Shortage
-
-- **● Issue** — shortage generation, Job Line Items, and job export aborted for certain jobs.
-- **● Example** — a part number in the cost column (≥ 1,000,000) overflowed `numeric(10,4)`; fractional consumables; reference designators in qty.
-- **● Root cause** — `qty`/`cost` cast to INTEGER/DECIMAL; any non-numeric value crashed the query.
-- **● Fix** — tolerant parsing (clean number else 0); `ceil(qty*order_qty)`; cost integer part capped at 6 digits; applied to all query sites.
-- **🛠️ Files & lines** — `app.py` — `_SHORTAGE_MATCH_SQL` **@ L5131** + mirrored job views **@ L8421, L8724** + Python req math in `_persist_shortage_report()` **@ L5236**
-- **● When** — 2026-06-04 · commits `a283a43`, `70f6fdd` (+ export `a607a90`, `17191ba`) · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (tolerant qty parsing, tolerant cost parsing, ceil req calc, documentation)
-- **● Did it handle it?** — Yes (11 jobs).
-- **📚 Engineering docs** — See `bug_memory/bug-13-shortage-report-crashed-11-jobs-parsing-overflow/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug14">🟧 <span style="color:#e67e22">14 — Shortage report: structural bugs + "missing lines"</span> ✅</h3>
-
-> **Date:** 2026-06-03 → 06-04 · **Severity:** 🟧 High · **Area:** Shortage · **Reported by:** Theresa ("lost trust in the report")
-
-- **● Issue** — lines showing qty 0 / dropped; ignored same-MPN stock under other PNs (re-bought parts on the shelf); worst zero-stock shortages hidden by default.
-- **● Root cause**
-  - ◦ **A** — alternate-part dedup kept the qty-0 "ZSUB" row → zeroed the requirement.
-  - ◦ **B** — MPN-based on-hand match pulled in other jobs' stock and exploded rows.
-  - ◦ **D** — two drifted report generators.
-  - ◦ **E** — "Hide 0 On Hand" toggle defaulted ON.
-- **● Fix** — deterministic dedup (qty DESC); job-scoped own-stock match; single shared builder `_persist_shortage_report`; same-MPN visibility (visibility-only; strict exact-MPN for Chemring; 33s→2s); toggle defaults OFF.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `_SHORTAGE_MATCH_SQL` **@ L5131**, `_persist_shortage_report()` **@ L5236**
-  - ◦ `templates/reports/shortage_report_view.html`
-  - ◦ `tests/regression_tests.py` — `test_shortage_report_alt_part_qty_and_same_mpn_visibility`
-- **● When** — 2026-06-03/04 · commits `73f8664`, `1e81161`, `2c6515f`, `b48263f` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · ALL 4 TESTS PASSED (deterministic dedup, single builder, single SQL source, documentation)
-- **● Did it handle it?** — Yes.
-- **📚 Engineering docs** — See `bug_memory/bug-14-shortage-report-structural-bugs-missing-lines/` for verification tests and technical details.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug15">🟧 <span style="color:#e67e22">15 — Connection leaks + open data routes + wrong shortage cost</span> ✅</h3>
-
-> **Date:** 2026-06-01 · **Severity:** 🟧 High · **Area:** Infra / Security
-
-- **● Issue** — pooled-connection leaks (same class as the May outage); data routes anonymously reachable; shortage cost mis-computed.
-- **● Example** — `get_po_history`, `get_locations`, `database_health_check` each leaked a connection; `/source*` and the PCN/PO/valuation APIs were reachable without login.
-- **● Root cause** — missing `finally`/`return_connection`; missing auth gates; cost used full required cost not the shortfall.
-- **● Fix** — add connection cleanup; require login on `/source*`, PCN/PO/valuation APIs; `total_cost` = full-BOM required (deduped), `shortage_cost` = shortfall only; notifications query cached 30s.
-- **🛠️ Files & lines** — `app.py` (`get_po_history`, `get_locations`, `database_health_check`; shortage cost in `_persist_shortage_report()` **@ L5236**) (+ `715862c`)
-- **● When** — 2026-06-01 · commit `ef8e4b0` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · Connection cleanup, cost distinction verified
-- **● Did it handle it?** — Yes.
-- **📚 Engineering docs** — See `bug_memory/bug-15-connection-leaks-open-routes-wrong-cost/`
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug16">🟥 <span style="color:#c0392b">16 — DB connection leak → pool exhaustion (outage)</span> ✅</h3>
-
-> **Date:** 2026-05-29 · **Severity:** 🟥 Critical · **Area:** Infra
-
-- **● Issue** — the whole app hung after enough page views.
-- **● Example** — after enough `/sources` + `/stats` views the `maxconn=15` pool was fully exhausted and every page then failed.
-- **● Root cause** — routes handed raw `psycopg2.connect` connections to `return_connection`, which `putconn` rejected and dropped → leaked until the `maxconn=15` pool was exhausted.
-- **● Fix** — `return_connection` now CLOSES rejected connections; removed dead `pcb_inventory` refs + orphaned page; moved to **gunicorn (1 worker / 8 gthreads)**; pool 15→20.
-- **🛠️ Files & lines**
-  - ◦ `app.py` — `return_connection` · `Dockerfile.webapp` (gunicorn CMD **@ L49-50**)
-  - ◦ `tests/regression_tests.py` — `test_return_connection_never_leaks_foreign_connection`
-- **● When** — 2026-05-29 · commits `9ee8436`, `9ff6c81`, `961275b`, `e0d7324` · **Deployed:** ✅
-- **● Verified** — 2026-06-25 · return_connection closes rejected connections
-- **● Did it handle it?** — Yes.
-- **📚 Engineering docs** — See `bug_memory/bug-16-db-connection-leak-pool-exhaustion/`
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug17">🟨 <span style="color:#f39c12">17 — Restock quantity silently dropping by 1</span> ✅</h3>
-
-> **Date:** 2026-05-29 · **Severity:** 🟨 Medium · **Area:** Pick / Restock
-
-- **● Issue** — restock saved one less unit than typed (type 50 → save 49).
-- **● Root cause** — mouse wheel over the number input decremented its value before submit.
-- **● Fix** — neutralize wheel events on quantity inputs.
-- **🛠️ Files & lines** — `app.py` (restock form) · `templates/inventory_ops/restock.html` · `tests/regression_tests.py` — `test_quantity_fields_are_not_number_spinners`
-- **● When** — 2026-05-29 · commit `9a258f1` · **Deployed:** ✅
-- **● Did it handle it?** — Yes.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-<h3 id="bug18">🟨 <span style="color:#f39c12">18 — Restock: qty autofill / MFG-floor not zeroed</span> <code>[WHSE≠HIST]</code> ✅</h3>
-
-> **Date:** 2026-05-18 · **Severity:** 🟨 Medium · **Area:** Pick / Restock
-
-- **● Issue** — restock pre-filled the wrong quantity; floor stock not cleared when stock went back to a bin (double-represented).
-- **● Root cause** — a qty autofill convenience + not zeroing `mfg_qty` on restock.
-- **● Fix** — removed the autofill; zero `mfg_qty` on restock (keeps on-hand = `onhandqty + mfg_qty` consistent across both screens).
-- **🛠️ Files & lines** — `app.py` (`restock_pcb`) · `templates/inventory_ops/restock.html`
-- **● When** — 2026-05-18 · commit `f5ab95b` · **Deployed:** ✅
-- **● Did it handle it?** — Yes.
-- **🔁 Recurrences / new case reports:** _none yet._
-
----
-
-## 🎨 Changes that were NOT bugs (in window)
-- **●** Shortage same-MPN presentation → indented rows; Excel = stock-only pull sheet *(intentional reversal — do not reintroduce columns)* — `04fe448`, `1bf0c15`, `a95ac59`, `89bb549`, `ea3f9a2`
-- **●** Warehouse filter UX (exact-match, preserve-on-pagination, select-on-focus, autofocus) — `bdae42c`, `9fbc842`, `9dc8e4a`, `4b9dc33`, `e9a20b9`, `35b78e5`
-- **●** Auto-refresh 60s seamless morph — `8c51c48`, `1301e39`
-- **●** Shortage export bold text `c42db2a` · DB config / drop Neon `c6ca191` · stop tracking secrets/build artifacts `11efb2c`
-
----
-
-## 📑 Appendix — complete commit index (13 May → 23 Jun 2026, 49 commits)
-
-| Date | Commit | Summary |
-|------|--------|---------|
-| 2026-06-23 | `e88ae7b` | Shortage report: show real bin location, not MFG Floor; item search exact-or-prefix |
-| 2026-06-22 | `1958a08` | Stop on-hand reconcile from wiping fresh restocks |
-| 2026-06-18 | `069819e` | Hotfix: PCN History anchor must read RealDictCursor result by alias |
-| 2026-06-18 | `5b1967c` | Anchor PCN History on-hand to Warehouse; fix RESTOCK-after-recount doubling |
-| 2026-06-17 | `c42db2a` | Shortage Report export: bold all text |
-| 2026-06-17 | `3fb6463` | Reconcile: honor any-length numeric bins + text locations |
-| 2026-06-17 | `c6ca191` | Update KOSH DB config: rename user to aci, new password, remove Neon |
-| 2026-06-16 | `11efb2c` | Sync local changes; stop tracking secrets and build artifacts |
-| 2026-06-16 | `5de9e4c` | Reconcile: honor manual location-edit ADJT so relocations stick |
-| 2026-06-16 | `e9a20b9` | Warehouse Inventory: clearing an applied filter auto-removes it |
-| 2026-06-16 | `4b9dc33` | Warehouse Inventory: select-all on focus for filter fields |
-| 2026-06-16 | `9dc8e4a` | Warehouse Inventory: preserve filters across pagination + auto-apply Per Page |
-| 2026-06-16 | `9fbc842` | Warehouse Inventory: exact match on MPN, Location, Description filters |
-| 2026-06-16 | `bdae42c` | Warehouse Inventory: exact match on PCN and Item Number filters |
-| 2026-06-16 | `5adb737` | tests: add real-PCN relabel-neutral history balance test |
-| 2026-06-16 | `6c2ded8` | PCN History: use relabel-neutral on-hand so it matches Warehouse |
-| 2026-06-15 | `b06f52b` | Reconcile: sync Warehouse Inventory location from latest placement |
-| 2026-06-15 | `0a020fc` | Shortage report: count MFG-Floor stock in on-hand |
-| 2026-06-12 | `b05281f` | Doc: TODO/status checklist + April label-mismatch findings |
-| 2026-06-12 | `7d6cead` | Doc: record nightly monitor + stale-loc fix done |
-| 2026-06-12 | `0ecc242` | Add nightly integrity monitor (Phase 6) |
-| 2026-06-12 | `4a5a3ea` | Data integrity: Phase 3 done; integrity monitor + Group C review list |
-| 2026-06-12 | `0d3682c` | On-hand: neutralize relabel-ADJT phantom in reconcile (guarded) |
-| 2026-06-12 | `ea3f9a2` | Shortage report: Excel = stock-only pull sheet; same-MPN rows carry requirement |
-| 2026-06-12 | `89bb549` | Shortage report export: stop dropping zero-on-hand lines |
-| 2026-06-12 | `a95ac59` | Shortage report: drop arrow icon + tint from same-MPN rows |
-| 2026-06-12 | `9a54620` | Shortage report: fix false shortage from case-mismatched part numbers |
-| 2026-06-12 | `1bf0c15` | Shortage report: render same-MPN/other-PN entries as full table rows |
-| 2026-06-12 | `04fe448` | Shortage report: replace cross-job same-MPN columns with row entries |
-| 2026-06-09 | `1301e39` | Stack auto-refresh pill above dark-mode toggle |
-| 2026-06-08 | `8c51c48` | Auto-refresh: 60s interval + seamless in-place morph |
-| 2026-06-05 | `e7a7bcf` | Fix SSO auto-create failing for first-time KOSH users |
-| 2026-06-04 | `17191ba` | Shortage report: Excel export omits zero-on-hand; revert print-CSS |
-| 2026-06-04 | `a607a90` | Shortage report: digital view shows all lines; print drops zero-on-hand |
-| 2026-06-04 | `70f6fdd` | Shortage report: guard cost magnitude against numeric(10,4) overflow |
-| 2026-06-04 | `a283a43` | Shortage report/job views: tolerant numeric parsing for qty & cost |
-| 2026-06-04 | `b48263f` | Shortage report: customer-aware tolerant same-MPN + restore hide-0 default |
-| 2026-06-04 | `2c6515f` | Shortage report: show 0-on-hand shortages by default |
-| 2026-06-03 | `1e81161` | Shortage report: surface same-MPN stock under other part numbers |
-| 2026-06-03 | `73f8664` | Fix shortage report: alternate-part qty, job-scoped on-hand, single builder |
-| 2026-06-01 | `715862c` | Speed up notifications page: cache the heavy correlation query (30s) |
-| 2026-06-01 | `ef8e4b0` | Fix connection leaks, lock down data routes, correct shortage costs |
-| 2026-05-29 | `e0d7324` | Speed: run under gunicorn (concurrency) + global auto-refresh toggle |
-| 2026-05-29 | `961275b` | Remove orphaned inventory/inventory.html |
-| 2026-05-29 | `9ff6c81` | Remove PCB Inventory tab/page; fix page 500s; harden return_connection |
-| 2026-05-29 | `9ee8436` | Fix DB connection leak (pool exhaustion) + remove dead pcb_inventory refs |
-| 2026-05-29 | `9a258f1` | Fix restock qty silently dropping by 1 (number-input wheel decrement) |
-| 2026-05-22 | `35b78e5` | Autofocus PCN filter on warehouse inventory page |
-| 2026-05-18 | `f5ab95b` | Fix restock: remove qty autofill, zero MFG floor on restock |
-
-<p align="center"><sub>Auto-logged per <code>bug_memory/README.md</code>. Every future KOSH bug fix gets a dated entry here.</sub></p>
+# ✅ Definition of done (what "fixed" will finally mean)
+
+An issue is closed ONLY when all of the following hold — no exceptions, no "deployed =
+done":
+
+1. One on-hand number, one source of truth; Warehouse Inventory and PCN History always
+   equal (kills WI-2, PH-1).
+2. A part is in exactly one place — bin **or** floor, never both (kills the double-count).
+3. Renaming a part carries its stock with it, so pick/edit/shortage all see it (kills
+   SR-3, WI-1, PK-1).
+4. Shortage report is accurate: exact MPN only, real BOM substitutes included (ZSUB shown
+   as ZSUB), correct ACI PN **and line-item number**, individual PCNs on their own lines,
+   real on-hand (not bin+floor summed), and no bogus "MFG FLOOR" location
+   (kills SR-1..SR-4, SR-8, SR-9).
+5. Restock never refuses parts physically in hand (kills RS-1).
+6. Kitting never signs her out (kills SO-1).
+7. Proven on a copy of real data on staging, then **Theresa signs off** against this
+   exact list.
+
+Until every one of these is true, everything above stays 🔴 **UNFIXED.**

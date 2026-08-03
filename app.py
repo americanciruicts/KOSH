@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash, session, g, make_response
 from expiration_manager import ExpirationManager, ExpirationStatus
-import ledger  # single source of truth: append-only inventory_txn + inventory_balance
+# ledger removed 2026-07-22 — on-hand is the single stored onhandqty (snapshot model)
 from flask_wtf import FlaskForm
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from wtforms import StringField, IntegerField, SelectField, SubmitField, HiddenField
@@ -74,26 +74,27 @@ compress = Compress(app)
 
 # Column definitions for shortage/job report exports.
 # Order + labels + defaults match the legacy "qryShortage Report by MPN" format
-# Preet asked for (sample: 6846 WO# 23878-2.xlsx):
-#   ACI PN | PCN | MPN | DESC | QTY | Job | Order Qty | REQ | Item | OnHandQty | LOC
-# The non-default columns below stay available in the Customize Export modal.
+# Shortage-report Excel columns + default selection restored to the Mar 11 2026
+# layout (2026-07-22, Preet): ACI PN | PCN | MPN | QTY | ORDER QTY | REQ | ITEM |
+# ON HAND QTY | LOCATION, with uppercase labels and NO Job column. DESCRIPTION,
+# LINE #, MANUFACTURER, UNIT COST and LINE COST stay available but OFF by default
+# in the Customize Export modal. (This reverts the 2026-06-30 "6846 format" default
+# set — DESC + Job on by default — back to the Mar 11 default selection.)
 SHORTAGE_EXPORT_COLUMNS = [
-    {'key': 'aci_pn',       'label': 'ACI PN',     'width': 15, 'default': True},
-    {'key': 'pcn',          'label': 'PCN',        'width': 12, 'default': True},
-    {'key': 'mpn',          'label': 'MPN',        'width': 25, 'default': True},
-    {'key': 'description',  'label': 'DESC',       'width': 32, 'default': True},
-    {'key': 'qty',          'label': 'QTY',        'width': 8,  'default': True},
-    {'key': 'job',          'label': 'Job',        'width': 12, 'default': True},
-    {'key': 'order_qty',    'label': 'Order Qty',  'width': 12, 'default': True},
-    {'key': 'req',          'label': 'REQ',        'width': 8,  'default': True},
-    {'key': 'item',         'label': 'Item',       'width': 15, 'default': True},
-    {'key': 'qty_on_hand',  'label': 'OnHandQty',  'width': 12, 'default': True},
-    {'key': 'location',     'label': 'LOC',        'width': 15, 'default': True},
-    # Optional columns (off by default; selectable in the Customize Export modal)
     {'key': 'line_no',      'label': 'LINE #',       'width': 8,  'default': False},
-    {'key': 'manufacturer', 'label': 'MANUFACTURER', 'width': 20, 'default': False},
-    {'key': 'unit_cost',    'label': 'UNIT COST',    'width': 12, 'default': False},
-    {'key': 'line_cost',    'label': 'LINE COST',    'width': 12, 'default': False},
+    {'key': 'aci_pn',       'label': 'ACI PN',       'width': 15, 'default': True},
+    {'key': 'pcn',          'label': 'PCN',          'width': 12, 'default': True},
+    {'key': 'mpn',          'label': 'MPN',          'width': 25, 'default': True},
+    {'key': 'manufacturer', 'label': 'MANUFACTURER',  'width': 20, 'default': False},
+    {'key': 'description',  'label': 'DESCRIPTION',   'width': 30, 'default': False},
+    {'key': 'qty',          'label': 'QTY',           'width': 8,  'default': True},
+    {'key': 'order_qty',    'label': 'ORDER QTY',     'width': 12, 'default': True},
+    {'key': 'req',          'label': 'REQ',           'width': 8,  'default': True},
+    {'key': 'item',         'label': 'ITEM',          'width': 15, 'default': True},
+    {'key': 'qty_on_hand',  'label': 'ON HAND QTY',   'width': 14, 'default': True},
+    {'key': 'location',     'label': 'LOCATION',      'width': 15, 'default': True},
+    {'key': 'unit_cost',    'label': 'UNIT COST',     'width': 12, 'default': False},
+    {'key': 'line_cost',    'label': 'LINE COST',     'width': 12, 'default': False},
 ]
 
 def get_export_cell_value(item, column_key, order_qty=None):
@@ -106,9 +107,14 @@ def get_export_cell_value(item, column_key, order_qty=None):
         'manufacturer': lambda i: i.get('manufacturer') or '',
         'description':  lambda i: i.get('description') or '',
         'job':          lambda i: i.get('job') or '',
-        'qty':          lambda i: i.get('qty', 0),
+        # SR-6: a qty the BOM stated but we could not read parses to 0. On the pull
+        # sheet a bare 0 is indistinguishable from "none required", so carry the raw
+        # BOM text instead — Purchasing sees a question, not a confident zero.
+        'qty':          lambda i: (f'UNREADABLE: {i["qty_unparseable"]}'
+                                   if i.get('qty_unparseable') else i.get('qty', 0)),
         'order_qty':    lambda i: i.get('order_qty') or order_qty or '',
-        'req':          lambda i: i.get('req') or (int(i.get('qty', 0) or 0) * (order_qty or 1)),
+        'req':          lambda i: ('UNREADABLE' if i.get('qty_unparseable')
+                                   else i.get('req') or (int(i.get('qty', 0) or 0) * (order_qty or 1))),
         'item':         lambda i: i.get('item') or i.get('aci_pn') or '',
         'qty_on_hand':  lambda i: i.get('qty_on_hand') if i.get('qty_on_hand') is not None else i.get('on_hand', 0),
         'location':     lambda i: i.get('location') or '',
@@ -163,6 +169,184 @@ def parse_other_mpn_rows(raw):
                      'qty': qty_val, 'location': ''})
     return rows
 
+
+# Shortage-report SQL lives in shortage_sql.py (no Flask/DB imports) so the
+# behavioral tests can import and run the REAL query instead of keeping their own
+# copy of the predicate, which is how a test drifts from the code it covers.
+# See that module's header for the approved-MPN-set design (Theresa's 7946L note).
+from shortage_sql import (BOM_PRIMARY_ORDER_BY as _BOM_PRIMARY_ORDER_BY,
+                          LINE_MPNS_CTE as _LINE_MPNS_CTE,
+                          mpn_approved as _mpn_approved,
+                          PCN_ROWS_SQL as _PCN_ROWS_SQL,
+                          SHORTAGE_MATCH_SQL as _SHORTAGE_MATCH_SQL,
+                          UNPARSEABLE_QTY_SQL as _UNPARSEABLE_QTY_SQL)
+
+
+def job_is_chemring(cursor, job):
+    """Chemring jobs keep byte-exact (case-SENSITIVE) MPN matching for defence
+    traceability; every other customer folds case only. Single source of truth so
+    the report query and its per-PCN helpers can never disagree on the rule."""
+    cursor.execute('SELECT bool_or(cust ILIKE %s) AS is_chem FROM warehouse."tblBOM" WHERE job = %s',
+                   ('%chemring%', job))
+    row = cursor.fetchone()
+    if not row:
+        return False
+    return bool(row['is_chem'] if isinstance(row, dict) else row[0])
+
+
+def zsub_rows_by_acipn(cursor, job):
+    """Return {aci_pn: [ {mpn, manufacturer, description, qty, pcn, location}, ... ]}
+    of every ZSUB substitute alternate in `job`'s BOM (latest job_rev), each with
+    its own live on-hand under that substitute MPN. Used to render the approved
+    substitutes as labelled sub-rows under their primary line on the shortage report
+    AND the job-detail form, so a ZSUB from the BOM is never lost (SR-1). On-hand is
+    real bin stock only — MFG-Floor rows never count (SR-8/9). Read-only."""
+    cursor.execute("""
+        SELECT z.aci_pn,
+               z.mpn AS mpn, z.man AS manufacturer, z."DESC" AS description,
+               COALESCE(st.oh, 0) AS qty, st.pcn, st.location
+        FROM warehouse."tblBOM" z
+        LEFT JOIN LATERAL (
+            SELECT SUM(COALESCE(w.onhandqty,0)) AS oh,
+                   (array_agg(w.pcn ORDER BY COALESCE(w.onhandqty,0) DESC NULLS LAST))[1] AS pcn,
+                   (array_agg(COALESCE(w.loc_to,'') ORDER BY COALESCE(w.onhandqty,0) DESC NULLS LAST))[1] AS location
+            FROM warehouse."tblWhse_Inventory" w
+            WHERE UPPER(w.item) = UPPER(z.aci_pn) AND UPPER(w.mpn) = UPPER(z.mpn)
+              AND COALESCE(w.loc_to,'') != 'MFG Floor'   -- SR-8/9: floor never counts
+        ) st ON true
+        WHERE z.job = %s
+          AND z."DESC" ILIKE '%%ZSUB%%'
+          AND (z.job_rev = (SELECT job_rev FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
+               OR NOT EXISTS (SELECT 1 FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
+        ORDER BY z.aci_pn,
+                 CASE WHEN z.line ~ '^[0-9]+$' THEN z.line::int ELSE 999999 END, z.mpn
+    """, (job, job, job))
+    out = {}
+    for r in cursor.fetchall():
+        acipn = r['aci_pn'] if isinstance(r, dict) else r[0]
+        row = dict(r) if isinstance(r, dict) else {
+            'aci_pn': r[0], 'mpn': r[1], 'manufacturer': r[2], 'description': r[3],
+            'qty': r[4], 'pcn': r[5], 'location': r[6]}
+        out.setdefault(acipn, []).append(row)
+    return out
+
+
+# Per-PCN breakdown of a job's own stock (SR-4), used twice: once for the PCNs the
+# BOM approves (`negate=''`) and once for the ones it does not (`negate='NOT '`).
+# One template so the two can never disagree about what "approved" means, and so
+# counted + flagged always accounts for every unit the old rule summed.
+# Takes 7 params: job, job, job (bom_pns), job, job, job (line_mpns), strict_mpn.
+def own_pcn_rows_by_acipn(cursor, job, strict_mpn=None):
+    """Return {aci_pn: [ {pcn, qty, location, mpn, is_zsub}, ... ]} — the job's OWN
+    stock for each BOM part, broken out ONE ROW PER PCN (SR-4), so a part sitting in
+    several PCNs/lots shows each PCN's own qty instead of a single lumped total.
+    qty per PCN is real bin stock only — MFG-Floor rows never count (SR-8/9) — and
+    the rows sum to the line's on-hand. Only PCNs with positive bin stock are
+    returned. The caller renders these as sub-rows only when a line has >1 PCN.
+
+    2026-07-27: a PCN now only appears under a line whose BOM approves its MPN
+    (`line_mpns`), so PCNs 29534/28800/36430 stop being offered as pull options for
+    7946L-30 — they hold a different component. Each row carries its OWN mpn and an
+    is_zsub flag; renderers MUST print that, never the line's BOM mpn (printing the
+    line mpn is what stamped the dashed 'EEE-FC1E101P' over PCN 31639's real
+    'EEEFC1E101P'). Excluded PCNs are NOT lost — see unmatched_pcn_rows_by_acipn.
+    Also adds the job_rev filter the old query was missing, so MPNs from superseded
+    revisions no longer widen the approved set."""
+    if strict_mpn is None:
+        strict_mpn = job_is_chemring(cursor, job)
+    cursor.execute(_PCN_ROWS_SQL.format(line_mpns=_LINE_MPNS_CTE, negate='',
+                                        approved=_mpn_approved('w.item', 'w.mpn')),
+                   (job, job, job, job, job, job, strict_mpn))
+    return _group_pcn_rows(cursor)
+
+
+def unmatched_pcn_rows_by_acipn(cursor, job, strict_mpn=None):
+    """The mirror image of own_pcn_rows_by_acipn: stock filed under a BOM line's ACI
+    part number whose MPN the BOM does NOT approve.
+
+    This exists so that tightening on-hand never LOOKS like stock vanished. Line
+    7946L-30 dropping from 1720 to 1270 with no explanation is exactly how trust got
+    lost the last time; these rows render as a flagged "NOT ON BOM — verify" line
+    carrying the PCN's REAL mpn, turning a silent subtraction into a question a human
+    can answer (approved alternate that belongs on the BOM as a ZSUB? mis-stocked?
+    or a data typo, like PCN 31639's missing dash). counted + flagged always equals
+    what the old part-number-only rule blindly summed."""
+    if strict_mpn is None:
+        strict_mpn = job_is_chemring(cursor, job)
+    cursor.execute(_PCN_ROWS_SQL.format(line_mpns=_LINE_MPNS_CTE, negate='NOT ',
+                                        approved=_mpn_approved('w.item', 'w.mpn')),
+                   (job, job, job, job, job, job, strict_mpn))
+    return _group_pcn_rows(cursor)
+
+
+def _group_pcn_rows(cursor):
+    """Shape the per-PCN row queries above into {aci_pn: [row, ...]}."""
+    out = {}
+    for r in cursor.fetchall():
+        acipn = r['aci_pn'] if isinstance(r, dict) else r[0]
+        row = dict(r) if isinstance(r, dict) else {
+            'aci_pn': r[0], 'pcn': r[1], 'qty': r[2], 'location': r[3],
+            'mpn': r[4], 'is_zsub': r[5]}
+        out.setdefault(acipn, []).append(row)
+    return out
+
+
+def unparseable_qty_by_acipn(cursor, job):
+    """Return {aci_pn: raw_qty_text} for BOM lines whose qty holds no readable number
+    (SR-6). The renderers show that raw text loudly beside the QTY instead of printing
+    a bare 0, so "we could not read the BOM" stops looking identical to "none
+    required" — the silent 0 Theresa reported. Read-only; see UNPARSEABLE_QTY_SQL."""
+    cursor.execute(_UNPARSEABLE_QTY_SQL, (job, job, job))
+    out = {}
+    for r in cursor.fetchall():
+        acipn = r['aci_pn'] if isinstance(r, dict) else r[0]
+        out[acipn] = r['raw_qty'] if isinstance(r, dict) else r[1]
+    return out
+
+
+def attach_line_subrows(cursor, job, items, mpn_key='mpn'):
+    """Attach every sub-row the shortage-report surfaces render under a BOM line:
+    the per-PCN breakdown (SR-4), the BOM's ZSUB alternates (SR-1), approved-MPN
+    stock under OTHER part numbers, and stock filed under this part number that the
+    BOM does NOT approve. One place, so the on-screen view, the Excel pull sheet and
+    the job tab can never disagree about a line's sub-rows. Mutates and returns
+    `items`; each is a dict with at least 'aci_pn' and `mpn_key`."""
+    strict = job_is_chemring(cursor, job)
+    zmap = zsub_rows_by_acipn(cursor, job)
+    pmap = own_pcn_rows_by_acipn(cursor, job, strict)
+    umap = unmatched_pcn_rows_by_acipn(cursor, job, strict)
+    qmap = unparseable_qty_by_acipn(cursor, job)
+
+    def _u(v):
+        return (v or '').strip().upper()
+
+    for it in items:
+        acipn = it.get('aci_pn')
+        pcns = pmap.get(acipn, [])
+        # Break out the per-PCN rows when the part sits in several PCNs, and ALSO
+        # when a single PCN's own mpn differs from the line's. Without that second
+        # case the PCN would appear only on the main row — which prints the BOM's
+        # mpn — and the difference (PCN 31639's missing dash) would be invisible
+        # again, which is the whole complaint.
+        it['pcn_rows'] = pcns if (len(pcns) > 1 or
+                                  (len(pcns) == 1 and _u(pcns[0].get('mpn')) != _u(it.get(mpn_key)))) else []
+        # Stock under this PN whose MPN the BOM does not approve. Still computed and
+        # still EXCLUDED from on-hand — but as of 2026-07-29 (Preet) it is no longer
+        # printed on the shortage report or its Excel pull sheet; only the JOB TAB
+        # renders it, as a "NOT ON BOM" row. Consequence to be aware of: on the report
+        # a line's on-hand can now drop (7946L-30: 1720 -> 1270) with nothing on the
+        # page explaining where the other 450 units went.
+        it['unmatched_rows'] = umap.get(acipn, [])
+        # A ZSUB holding bin stock under this PN is already one of the per-PCN rows
+        # (flagged is_zsub), so list it here only when it has none — "approved
+        # alternate exists, none in stock under this PN" (SR-1), no PCN shown twice.
+        it['zsub_rows'] = [z for z in zmap.get(acipn, []) if not (z.get('qty') or 0)]
+        it['other_mpn_rows'] = parse_other_mpn_rows(it.get('other_mpn_locations'))
+        # SR-6: the BOM's raw qty text when it holds no readable number, so the
+        # surfaces can flag it instead of silently rendering the parsed 0.
+        it['qty_unparseable'] = qmap.get(acipn)
+    return items
+
 # CSRF Configuration
 # Enable CSRF protection with proper configuration
 app.config['WTF_CSRF_ENABLED'] = True
@@ -197,11 +381,24 @@ def validate_pcb_type(pcb_type: str) -> bool:
     allowed_types = ['Bare', 'Partial', 'Completed', 'Ready to Ship']
     return pcb_type in allowed_types
 
+# NO BUSINESS CEILING ON QUANTITY (Preet, 2026-07-31). The old 10,000 cap blocked real
+# reel quantities, was raised to 100,000, and then blocked those too. A warehouse quantity
+# is whatever is physically there, so the app stops guessing an upper bound: 0 or more is
+# accepted for stock, PCN generation, pick and restock.
+#
+# The one bound that REMAINS is technical, not a policy: warehouse."tblWhse_Inventory".
+# onhandqty is a Postgres `integer` (int4), so anything above 2,147,483,647 cannot be
+# stored. Without this check Postgres raises and the operator gets an opaque 500 with the
+# whole transaction rolled back; with it they get a sentence telling them what happened.
+# If a real quantity ever needs to exceed it, the COLUMN has to become bigint first.
+MAX_QTY = 2147483647          # int4 upper bound — a storage limit, not a business rule
+
+
 def validate_quantity(quantity: Any) -> tuple[bool, int]:
-    """Validate quantity is a positive integer."""
+    """Validate quantity is a non-negative integer the qty column can actually hold."""
     try:
         qty = int(quantity)
-        return (1 <= qty <= 100000, qty)
+        return (0 <= qty <= MAX_QTY, qty)
     except (ValueError, TypeError):
         return (False, 0)
 
@@ -241,7 +438,7 @@ def validate_api_request(required_fields: list):
                 if 'quantity' in data:
                     is_valid, qty = validate_quantity(data['quantity'])
                     if not is_valid:
-                        return jsonify({'success': False, 'error': 'Invalid quantity (must be 1-100000)'}), 400
+                        return jsonify({'success': False, 'error': f'Invalid quantity (must be 0 or more, up to {MAX_QTY:,})'}), 400
                     data['quantity'] = qty
                 
                 if 'location' in data and not validate_location(data['location']):
@@ -438,6 +635,11 @@ DB_CONFIG = {
 }
 logger.info("Using local database")
 
+# Base URL of the ACI-FORGE instance this KOSH talks to for centralized login.
+# Defaults to production; staging overrides it via docker-compose.override.yml so
+# the environment lives in config, not in code.
+FORGE_BASE_URL = os.getenv('FORGE_BASE_URL', 'http://acidashboard.aci.local:2005').rstrip('/')
+
 # PCB Types and Locations (matching the original application)
 PCB_TYPES = [
     ('Bare', 'Bare PCB'),
@@ -594,7 +796,7 @@ class StockForm(FlaskForm):
     pcb_type = StringField('Component Type', validators=[Length(max=50)], default='Bare')
     dc = StringField('Date Code (DC)', validators=[Length(max=50)])
     msd = StringField('Moisture Sensitive Device (MSD)', validators=[Length(max=50)])
-    quantity = IntegerField('Quantity', validators=[DataRequired(), NumberRange(min=1)])
+    quantity = IntegerField('Quantity', validators=[InputRequired(), NumberRange(min=0)])
     location_from = StringField('Location From', validators=[DataRequired(), Length(min=1, max=50), validate_location_field], default='Receiving Area')
     location_to = StringField('Location To', validators=[DataRequired(), Length(min=1, max=50), validate_location_field])
     submit = SubmitField('Stock Parts')
@@ -620,7 +822,7 @@ class RestockForm(FlaskForm):
     pcn = StringField('PCN Number', validators=[Optional(), Length(max=50)])
     item = StringField('Item Number', validators=[Optional(), Length(max=50)])
     po = StringField('PO Number', validators=[Optional(), Length(max=50)])
-    quantity = IntegerField('Quantity to Restock', validators=[DataRequired(), NumberRange(min=1)])
+    quantity = IntegerField('Quantity to Restock', validators=[InputRequired(), NumberRange(min=0)])
     location_from = StringField('Source Location', validators=[DataRequired(), Length(max=50), validate_location_field], default='MFG Floor')
     location_to = StringField('Destination Location', validators=[DataRequired(), Length(max=50), validate_location_field], default='Count Area')
     submit = SubmitField('Restock Parts')
@@ -839,10 +1041,10 @@ class DatabaseManager:
                   part_number: str = None) -> Dict[str, Any]:
         """Stock PCB - directly updates warehouse inventory and transaction tables."""
         # CRITICAL: Input validation
-        if not isinstance(quantity, int) or quantity < 1 or quantity > 10000:
+        if not isinstance(quantity, int) or quantity < 0 or quantity > MAX_QTY:
             return {
                 'success': False,
-                'error': f'Invalid quantity: {quantity}. Must be between 1 and 10,000.'
+                'error': f'Invalid quantity: {quantity}. Must be 0 or more (max {MAX_QTY:,}).'
             }
 
         if not job or not isinstance(job, str) or len(job) > 50:
@@ -946,17 +1148,14 @@ class DatabaseManager:
                     VALUES (%s, %s, %s, %s, 0, '0', %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 """, (job, str(pcn), mpn or '', dc, location_from, location_to, msd, work_order))
 
-            # THE authoritative write: append STOCK to the one ledger + update the
-            # balance cache, atomically in this transaction (I1/I3/I6).
-            try:
-                ledger.stock(cursor, item=job, mpn=mpn, pcn=str(pcn), qty=quantity,
-                             to_bin=location_to, user=username, wo=work_order, po=work_order)
-            except ledger.LedgerError as le:
-                conn.rollback()
-                return {'success': False, 'error': str(le)}
-            # Project the ONE number back onto the legacy snapshot (same txn -> no drift).
-            ledger.project_warehouse(cursor, str(pcn))
-            logger.info(f"Stocked {quantity} of {job} PCN {pcn} into {location_to} (ledger)")
+            # SNAPSHOT STOCK (ledger removed 2026-07-22): a STOCK enters the received
+            # qty as the PCN's on-hand (the ONE stored number) in the destination bin.
+            cursor.execute("""
+                UPDATE warehouse."tblWhse_Inventory"
+                SET onhandqty = %s, loc_to = %s
+                WHERE item::text ILIKE %s AND pcn::text = %s
+            """, (int(quantity), location_to, job, str(pcn)))
+            logger.info(f"Stocked {quantity} of {job} PCN {pcn} into {location_to}")
 
             # Legacy audit mirror (history-trail detail only; on-hand is NOT computed
             # from tblTransaction anymore — the ledger is the single source of truth).
@@ -1035,10 +1234,10 @@ class DatabaseManager:
         Otherwise, picks using FIFO across all PCNs for the item.
         """
         # CRITICAL: Input validation to prevent invalid data
-        if not isinstance(quantity, int) or quantity < 0 or quantity > 100000:
+        if not isinstance(quantity, int) or quantity < 0 or quantity > MAX_QTY:
             return {
                 'success': False,
-                'error': f'Invalid quantity: {quantity}. Must be between 0 and 100,000.'
+                'error': f'Invalid quantity: {quantity}. Must be 0 or more (max {MAX_QTY:,}).'
             }
 
         if not job or not isinstance(job, str) or len(job) > 50:
@@ -1292,17 +1491,21 @@ class DatabaseManager:
                         'pcb_type': pcb_type
                     }
 
-                # Apply each allocation as a ledger PICK (bin -> MFG Floor). This is the
-                # authoritative, total-conserving state change; over-pick is rejected (I1),
-                # and bin+floor can never double-count because it is one transfer (I2).
-                try:
-                    for a_pcn, a_item, a_mpn, a_dc, a_msd, a_bin, a_qty in allocations:
-                        ledger.pick(cursor, item=a_item, mpn=a_mpn, pcn=a_pcn,
-                                    qty=int(a_qty), from_bin=a_bin, user=username, wo=work_order)
-                        ledger.project_warehouse(cursor, a_pcn)
-                except ledger.LedgerError as le:
-                    conn.rollback()
-                    return {'success': False, 'error': str(le), 'job': job, 'pcb_type': pcb_type}
+                # SNAPSHOT PICK (ledger removed 2026-07-22): a PICK takes the WHOLE PCN
+                # from its bin to the MFG Floor for the job. BIN XOR FLOOR: the bin qty
+                # (onhandqty) moves into the floor qty (mfg_qty), onhandqty -> 0,
+                # loc_from records the source bin, loc_to becomes 'MFG Floor'. The
+                # availability gate above reads onhandqty, so a picked PCN reads 0
+                # available (fixes "insufficient qty available though stock is there").
+                for a_pcn, a_item, a_mpn, a_dc, a_msd, a_bin, a_qty in allocations:
+                    cursor.execute("""
+                        UPDATE warehouse."tblWhse_Inventory"
+                        SET mfg_qty  = COALESCE(onhandqty, 0)::text,
+                            onhandqty = 0,
+                            loc_from = loc_to,
+                            loc_to   = 'MFG Floor'
+                        WHERE pcn::text = %s
+                    """, (str(a_pcn),))
 
                 updated_rows = len(allocations)
 
@@ -1327,6 +1530,20 @@ class DatabaseManager:
                 remaining_result = cursor.fetchone()
                 new_qty = int(remaining_result[0]) if remaining_result and remaining_result[0] else 0
 
+                # Remaining on the PCN(s) this pick actually emptied. Operators pick a
+                # PCN, so a "Remaining" figure covering every OTHER PCN of the item
+                # reads as "the pick left units behind" — picking all 50000 of PCN
+                # 46607 reported "Remaining: 2000", which was 2000 units sitting on a
+                # different PCN (45082) that the pick never touched.
+                picked_pcns = [str(a[0]) for a in allocations]
+                cursor.execute("""
+                    SELECT COALESCE(SUM(onhandqty), 0)
+                    FROM warehouse."tblWhse_Inventory"
+                    WHERE pcn::text = ANY(%s)
+                """, (picked_pcns,))
+                pcn_remaining_result = cursor.fetchone()
+                pcn_remaining_qty = int(pcn_remaining_result[0]) if pcn_remaining_result and pcn_remaining_result[0] else 0
+
                 conn.commit()
                 logger.info(f"Pick operation: Updated {updated_rows} warehouse inventory records for item {job}, picked {quantity}, remaining {new_qty}, moved to MFG Floor")
 
@@ -1334,11 +1551,21 @@ class DatabaseManager:
                 cache.delete_memoized(self.get_current_inventory)
                 cache.delete('stats_summary')
 
+                # Echo back which PCN/MPN/bin the pick came from — these were never
+                # returned, so the flash message and the history detail line rendered
+                # "PCN: -, MPN: -, From: -" for every pick.
+                first_alloc = allocations[0]
                 return {
                     'success': True,
                     'message': f'Successfully picked {quantity} units of {job}',
                     'picked_qty': quantity,
-                    'new_qty': new_qty,
+                    'new_qty': new_qty,               # item total across every PCN
+                    'item_remaining_qty': new_qty,
+                    'pcn_remaining_qty': pcn_remaining_qty,
+                    'pcn': picked_pcns[0] if len(picked_pcns) == 1 else None,
+                    'pcns': picked_pcns,
+                    'mpn': first_alloc[2],
+                    'loc_from': first_alloc[5] if len(picked_pcns) == 1 else None,
                     'job': job,
                     'pcb_type': pcb_type
                 }
@@ -1387,10 +1614,10 @@ class DatabaseManager:
                     username: str = 'system') -> Dict[str, Any]:
         """Restock parts from specified source location to destination location."""
         # CRITICAL: Input validation
-        if not isinstance(quantity, int) or quantity < 1 or quantity > 10000:
+        if not isinstance(quantity, int) or quantity < 0 or quantity > MAX_QTY:
             return {
                 'success': False,
-                'error': f'Invalid quantity: {quantity}. Must be between 1 and 10,000.'
+                'error': f'Invalid quantity: {quantity}. Must be 0 or more (max {MAX_QTY:,}).'
             }
 
         if pcn is not None:
@@ -1512,55 +1739,55 @@ class DatabaseManager:
                 if not location_to:
                     location_to = 'Count Area'
 
-                # Check last KOSH-era PICK/RESTOCK/PURGE to decide if restock is valid.
-                # Legacy MDB transactions are excluded (userid LIKE '%@%' keeps
-                # only authenticated-user rows). PURGE counts as a stock-clearing
-                # event — if it ran after the most recent RESTOCK, the "already
-                # restocked" lock is released because the units it added have
-                # since been removed.
+                # RESTOCK ONCE, THEN PICK (Theresa, 2026-07-30). A PCN that is already
+                # sitting in a bin must not be restocked a second time — she hit a PCN that
+                # history showed as put away, restocked it anyway, and had no way left to
+                # tell which count was real. The block existed once and was removed on
+                # 2026-07-22 with the ledger, on the reasoning that a SET cannot
+                # double-count; that protects the arithmetic but not the process, which is
+                # what the warehouse needs.
+                #
+                # On the snapshot model "restocked and not yet picked" IS simply
+                # "on-hand > 0": a RESTOCK sets on-hand above zero, a PICK zeroes it and
+                # moves the qty to the floor. So the stored number answers the question
+                # directly — no userid or legacy-trantype guessing, and it holds for PCNs
+                # whose history came from the Access import.
+                #
+                # When on-hand is 0 the parts are NOT in a bin (they are on the MFG Floor,
+                # or the PCN was picked/purged), so restocking is the legitimate way to put
+                # them back and stays allowed. That is deliberate: a PCN must never end up
+                # both un-pickable and un-restockable. Correcting the COUNT of a PCN that is
+                # already in a bin is the quantity edit in Warehouse Inventory (ADJT), which
+                # records the delta, rather than a silent second restock.
                 cursor.execute("""
-                    SELECT trantype FROM warehouse."tblTransaction"
-                    WHERE pcn::text = %s AND trantype IN ('PICK', 'RESTOCK', 'PURGE')
-                      AND userid LIKE '%%@%%'
-                    ORDER BY id DESC
-                    LIMIT 1
-                """, (str(pcn_num),))
-                last_txn = cursor.fetchone()
-                # Defensive backstop: if there's no on-hand stock anywhere for
-                # this PCN, restock is always valid regardless of guard state —
-                # nothing in inventory means nothing was double-restocked.
-                cursor.execute("""
-                    SELECT COALESCE(SUM(onhandqty), 0) FROM warehouse."tblWhse_Inventory"
+                    SELECT COALESCE(SUM(onhandqty), 0)
+                    FROM warehouse."tblWhse_Inventory"
                     WHERE pcn::text = %s
                 """, (str(pcn_num),))
-                total_onhand = cursor.fetchone()[0] or 0
-                if last_txn and last_txn[0] == 'RESTOCK' and int(total_onhand) > 0:
-                    conn.rollback()
+                onhand_row = cursor.fetchone()
+                current_onhand = int(onhand_row[0]) if onhand_row and onhand_row[0] else 0
+                if current_onhand > 0:
+                    conn.rollback()  # Release lock
                     return {
                         'success': False,
-                        'error': f'PCN {pcn_num} has already been restocked. It must be picked again before it can be restocked.'
+                        'error': (f'PCN {pcn_num} has already been restocked — it is holding '
+                                  f'{current_onhand} units in {existing_loc_to or "a bin"}. It must be '
+                                  f'picked before it can be restocked again. To correct the count '
+                                  f'without a pick, edit the quantity in Warehouse Inventory.'),
+                        'pcn': pcn_num,
+                        'item': item_num,
+                        'current_onhand_qty': current_onhand,
+                        'location_to': existing_loc_to,
                     }
 
-                # THE authoritative write: the operator is physically holding these
-                # parts, so the floor balance never vetoes the restock (Theresa's
-                # day-one requirement: parts picked at zero, purged, or never actually
-                # consumed still come back). What the floor can account for moves as a
-                # RESTOCK transfer; any leftover STAYS on the floor. What it cannot is
-                # recorded as FOUND rather than rejected or silently absorbed — see
-                # ledger.restock_physical.
-                try:
-                    split = ledger.restock_physical(
-                        cursor, item=item_num, mpn=mpn, pcn=str(pcn_num),
-                        qty=quantity, to_bin=location_to,
-                        from_floor=location_from or 'MFG Floor', user=username)
-                except ledger.LedgerError as le:
-                    conn.rollback()
-                    return {'success': False, 'error': str(le)}
-                if split['found']:
-                    logger.info(
-                        f"Restock PCN {pcn_num}: floor held {split['transferred']} of "
-                        f"{quantity}; {split['found']} booked as FOUND by {username}")
-                ledger.project_warehouse(cursor, str(pcn_num))
+                # The PCN moves into the destination bin and any floor status is cleared.
+                # The qty entered is what the operator is physically holding and BECOMES
+                # the on-hand (SET, not add).
+                cursor.execute("""
+                    UPDATE warehouse."tblWhse_Inventory"
+                    SET onhandqty = %s, mfg_qty = '0', loc_from = loc_to, loc_to = %s
+                    WHERE pcn::text = %s
+                """, (int(quantity), location_to, str(pcn_num)))
                 updated_rows = 1
 
                 # Legacy audit mirror (history-trail detail only).
@@ -1600,8 +1827,8 @@ class DatabaseManager:
                     'location_to': location_to,
                     'new_mfg_qty': new_mfg_qty,
                     'new_onhand_qty': new_onhand_qty,
-                    'found_qty': split['found'],
-                    'transferred_qty': split['transferred']
+                    'found_qty': 0,
+                    'transferred_qty': quantity
                 }
 
             except psycopg2.extensions.TransactionRollbackError as e:
@@ -1682,15 +1909,13 @@ class DatabaseManager:
             # in one transaction (I2). If the floor no longer holds pick_qty (already
             # restocked/consumed) the reversal is rejected (I1) rather than clamped —
             # clamping is exactly what used to leave phantom stock.
-            lcur = conn.cursor()  # tuple cursor for the ledger service (same txn)
-            try:
-                ledger.restock(lcur, item=item_val, mpn=txn['mpn'], pcn=str(pcn_val),
-                               qty=pick_qty, to_bin=original_location,
-                               from_floor='MFG Floor', user=username)
-            except ledger.LedgerError as le:
-                conn.rollback()
-                return {'success': False, 'error': f'Cannot reverse pick: {le}'}
-            ledger.project_warehouse(lcur, str(pcn_val))
+            # SNAPSHOT reverse-pick (ledger removed 2026-07-22): put the picked parts
+            # back — restore on-hand to the picked qty at the original bin, clear floor.
+            cursor.execute("""
+                UPDATE warehouse."tblWhse_Inventory"
+                SET onhandqty = COALESCE(onhandqty,0) + %s, mfg_qty = '0', loc_to = %s
+                WHERE pcn::text = %s
+            """, (pick_qty, original_location, str(pcn_val)))
 
             # 3. Mark original transaction as reversed
             cursor.execute("""
@@ -2627,7 +2852,7 @@ def require_auth(f):
             # For page requests, redirect to FORGE login with SSO redirect back to KOSH
             is_local = request.host and ('.local' in request.host or '192.168.' in request.host or 'localhost' in request.host)
             if is_local:
-                forge_login_url = 'http://acidashboard.aci.local:2005/login?redirect=kosh'
+                forge_login_url = f'{FORGE_BASE_URL}/login?redirect=kosh'
             else:
                 forge_login_url = 'https://aci-forge.vercel.app/login?redirect=kosh'
             return redirect(forge_login_url)
@@ -3207,49 +3432,15 @@ def reconcile_floor_onhand(cur):
     return cur.rowcount
 
 
-def _history_delta(row):
-    """Signed on-hand effect of one transaction row for the PCN History trail.
-    RNDT/PTWY/PN_CHANGE/UPDATE are quantity-NEUTRAL here: the absolute on-hand
-    comes from the anchor (Warehouse Inventory), not from an RNDT recount
-    baseline. That is what removes the RESTOCK-after-recount double-count
-    (e.g. PCN 41664 was 2000 then a RESTOCK pushed the replay to 4000)."""
-    if bool(row.get('reversed')):
-        return 0
-    try:
-        tq = int(str(row.get('tranqty') or '').strip())
-    except (TypeError, ValueError):
-        return 0
-    if row.get('is_relabel'):
-        return 0  # renumber logged as ADJT = quantity-neutral
-    tt = row.get('trantype') or ''
-    if tt in ('INDF', 'STOCK', 'PCN Generation', 'RESTOCK', 'ADJT'):
-        return tq
-    if tt in ('PICK', 'PURGE', 'SCRA'):
-        return -tq  # SCRA = scrapped, leaves inventory
-    return 0
-
-
-def compute_anchored_history_balances(transactions, anchor):
-    """Assign row['balance'] = on-hand AFTER each transaction, ANCHORED so the
-    newest row equals `anchor` (the authoritative Warehouse Inventory on-hand
-    for the PCN). Walks the trail backward from the anchor:
-        on-hand after row i = on-hand after row (i+1) - delta(row i+1)
-    This guarantees PCN History's current on-hand always equals Warehouse
-    Inventory, for every PCN, with no doubling — even when the imported Access
-    ledger is incomplete or internally inconsistent. Each row must carry
-    trantype, tranqty, reversed, is_relabel, sort_time, id. Mutates in place."""
-    def _sort_key(r):
-        st = r.get('sort_time')
-        return (0 if st is None else 1,
-                st.timestamp() if st is not None else 0.0,
-                r.get('id') or 0)
-    chron = sorted(transactions, key=_sort_key)
-    running = int(anchor or 0)
-    for row in reversed(chron):
-        row['balance'] = max(0, running)
-        running -= _history_delta(row)
-    return transactions
-
+# PCN History's on-hand trail lives in history_balance.py (no Flask/DB imports) so the
+# behavioral suite can import and run the REAL logic. It was rewritten 2026-07-29: the
+# old version summed signed deltas (+qty for STOCK/RESTOCK, -qty for a PICK) — the
+# CONSERVATION model Phase 6 deleted everywhere else — so PCN 46559 showed 60,900
+# against a stored 300 and PCN 46602 showed 20,000 against a stored 0. See that
+# module for the one-number semantics and the anchoring rule.
+from history_balance import (apply_txn as _apply_history_txn,
+                             compute_anchored_history_balances,
+                             qty_display as _txn_qty_display)
 
 def _sync_onhand_from_transactions():
     """Recompute onhandqty from the transaction log once per interval.
@@ -3562,11 +3753,11 @@ def _floor_janitor():
             consumed_units = 0
             for pcn_id, part_id, item_raw, mpn_raw, floor_qty, last_pick in rows:
                 age_days = (datetime.now(last_pick.tzinfo) - last_pick).days if last_pick else None
-                txn_id = ledger.consume(
-                    cur, item_raw, mpn_raw, pcn_id, floor_qty, user='floor_janitor',
-                    note=f'stale floor auto-consumed (last pick {last_pick:%Y-%m-%d}, '
-                         f'{age_days}d, >{months}mo)')
-                ledger.project_warehouse(cur, pcn_id)
+                # SNAPSHOT consume (ledger removed 2026-07-22): floor is a status, not a
+                # tracked quantity, so "consuming stale floor" just clears mfg_qty. On-hand
+                # (onhandqty) is already 0 for a picked PCN, so nothing else changes.
+                cur.execute("UPDATE warehouse.\"tblWhse_Inventory\" SET mfg_qty='0' WHERE pcn::text=%s", (str(pcn_id),))
+                txn_id = None
                 cur.execute("""
                     INSERT INTO warehouse.floor_janitor_audit
                       (pcn_id, part_id, item_raw, mpn_raw, location_id, consumed_qty,
@@ -3599,7 +3790,10 @@ def _floor_janitor():
                     pass
         time.sleep(86400)  # once per day
 
-threading.Thread(target=_floor_janitor, daemon=True).start()
+# DISABLED 2026-07-22: the floor janitor is a reconciler that overwrites stored qty
+# (clearing mfg_qty on "stale" floor rows). In the one-number snapshot model nothing
+# may silently rewrite a save, so the thread is not started (ACTION-PLAN Phase 2).
+# threading.Thread(target=_floor_janitor, daemon=True).start()
 
 
 def _do_log_activity(user_id, username, full_name, action_type, description, details):
@@ -3735,7 +3929,7 @@ def login():
     if request.method == 'GET':
         is_local = request.host and ('.local' in request.host or '192.168.' in request.host or 'localhost' in request.host)
         if is_local:
-            forge_login_url = 'http://acidashboard.aci.local:2005/login?redirect=kosh'
+            forge_login_url = f'{FORGE_BASE_URL}/login?redirect=kosh'
         else:
             forge_login_url = 'https://aci-forge.vercel.app/login?redirect=kosh'
         return redirect(forge_login_url)
@@ -3864,7 +4058,7 @@ def logout():
     # Redirect to FORGE login with redirect back to KOSH
     is_local = request.host and ('.local' in request.host or '192.168.' in request.host or 'localhost' in request.host)
     if is_local:
-        return redirect('http://acidashboard.aci.local:2005/login?redirect=kosh')
+        return redirect(f'{FORGE_BASE_URL}/login?redirect=kosh')
     return redirect('https://aci-forge.vercel.app/login?redirect=kosh')
 
 @app.route('/')
@@ -4083,13 +4277,27 @@ def pick():
                     )
                     flash(f"Successfully purged {result.get('records_deleted', 0)} zero-quantity record(s) for {result['job']}.", 'success')
                 else:
+                    item_remaining = result['new_qty']
+                    pcn_remaining = result.get('pcn_remaining_qty', item_remaining)
                     log_user_activity(
                         'PICK',
                         f"Picked {result['picked_qty']} units of {result['job']}{pcn_str}{loc_str}",
-                        f"PCN: {result.get('pcn','-')}, MPN: {result.get('mpn','-')}, From: {result.get('loc_from','-')}, Remaining: {result['new_qty']}",
+                        f"PCN: {result.get('pcn','-')}, MPN: {result.get('mpn','-')}, From: {result.get('loc_from','-')}, "
+                        f"PCN remaining: {pcn_remaining}, Item remaining: {item_remaining}",
                     )
-                    flash(f"Successfully picked {result['picked_qty']} units of {result['job']}. "
-                          f"Remaining: {result['new_qty']}", 'success')
+                    # The notification covers ONLY the PCN(s) this pick used. A bare
+                    # "Remaining" was the item total across every PCN, so a fully-picked
+                    # PCN still reported units that live on other, untouched PCNs — it
+                    # contradicted the confirm dialog and read as units left behind.
+                    # The item total stays in the audit detail above, not in the toast.
+                    if result.get('pcn'):
+                        flash(f"Successfully picked {result['picked_qty']} units of {result['job']}{pcn_str}{loc_str}. "
+                              f"PCN {result['pcn']} remaining: {pcn_remaining}", 'success')
+                    else:
+                        pcns_str = ', '.join(result.get('pcns') or [])
+                        pcns_label = f" (PCNs {pcns_str})" if pcns_str else ''
+                        flash(f"Successfully picked {result['picked_qty']} units of {result['job']}{pcns_label}. "
+                              f"Remaining on those PCNs: {pcn_remaining}", 'success')
                 return redirect(url_for('pick'))
             else:
                 error_msg = result.get('error', 'Unknown error')
@@ -4245,10 +4453,10 @@ def api_restock():
 
         try:
             quantity = int(quantity_raw)
-            if quantity < 1:
+            if quantity < 0:          # 0 is a legitimate recount ("I am holding none")
                 raise ValueError
         except (ValueError, TypeError):
-            return jsonify({'success': False, 'error': 'Please enter a valid quantity'}), 400
+            return jsonify({'success': False, 'error': 'Please enter a valid quantity (0 or more)'}), 400
 
         pcn_value = None
         if pcn_raw:
@@ -4353,10 +4561,10 @@ def part_number_change():
             # the old part_id, and pick — which resolves part_id from the new name —
             # then reads 0 and refuses to pick a bin that is full (bug 28). Quantity is
             # untouched: a relabel is metadata, never a movement (I8).
-            lcur = conn.cursor()  # tuple cursor for the ledger service (same txn)
-            moved_rows, moved_qty = ledger.relabel_pcn(
-                lcur, pcn, new_part_number, item['mpn'], user=username)
-            ledger.project_warehouse(lcur, str(pcn))
+            # SNAPSHOT relabel (ledger removed 2026-07-22): a rename is metadata only —
+            # the UPDATE item above re-files the PCN's stock under the new part number,
+            # and the one stored onhandqty rides along untouched. No ledger, no movement.
+            moved_rows, moved_qty = 1, 0
 
             # Log the change in transaction table. tranqty is 0 — a relabel moves no
             # stock, and logging one with the full qty is what produced phantom stock.
@@ -5026,30 +5234,63 @@ def update_warehouse_item():
                 conn.rollback()
                 return jsonify({'success': False, 'message': 'Item not found'}), 404
 
-            # Apply the on-hand edit through the ledger (single source of truth), then
-            # project the snapshot back so onhandqty/mfg_qty reflect the ledger exactly.
+            # SNAPSHOT manual edit (ledger removed 2026-07-22): set the ONE stored
+            # on-hand (and optional floor/bin) directly to the entered values.
             username = session.get('username', 'system')
             edit_bin = loc_to_val or prior_loc or ''
-            try:
-                ledger.set_pcn_snapshot(cursor, prior_item, prior_mpn, str(prior_pcn),
-                                        edit_bin, onhand_qty, mfg_qty, user=username)
-            except ledger.LedgerError as le:
-                conn.rollback()
-                return jsonify({'success': False, 'message': f'Edit rejected: {le}'}), 400
-            ledger.project_warehouse(cursor, str(prior_pcn))
+            cursor.execute("""
+                UPDATE warehouse."tblWhse_Inventory"
+                SET onhandqty = COALESCE(%s, onhandqty),
+                    mfg_qty   = COALESCE(%s, mfg_qty),
+                    loc_to    = COALESCE(NULLIF(%s, ''), loc_to)
+                WHERE pcn::text = %s
+            """, (onhand_qty, (str(mfg_qty) if mfg_qty is not None else None), edit_bin, str(prior_pcn)))
 
-            # Verify the ledger landed the edit: available (non-floor) balance must match.
-            if onhand_qty is not None:
+            # WI-1 (Theresa, "unable to edit quantities") — 2026-07-30.
+            # The DB guard `trg_bin_xor_floor` NORMALIZES every write: when the row's loc_to
+            # is 'MFG Floor' it forces onhandqty = 0 and re-homes the qty into mfg_qty. The
+            # check here used to compare the raw number the operator typed against the stored
+            # onhandqty, so editing the quantity of ANY PCN on the floor compared (say) 1000
+            # against 0, declared the save failed, and rolled the WHOLE edit back with a 500.
+            # 12,851 rows sit on the MFG Floor, and every one was un-editable. A PCN in a bin
+            # was never affected — which is why the edit looked fine in testing (PCN 46606 was
+            # in bin 1251457 by the time it was edited).
+            #
+            # Two changes: reject the genuinely ambiguous case up front with an actionable
+            # message, and verify against the bucket the location dictates instead of the
+            # raw input.
+            if edit_bin == 'MFG Floor' and onhand_qty:
+                conn.rollback()
+                return jsonify({
+                    'success': False,
+                    'message': (f'PCN {prior_pcn} is on the MFG Floor, so it holds no bin '
+                                f'quantity. Enter the bin location to bring the {onhand_qty} '
+                                f'unit(s) back into a bin, or edit the MFG Qty instead.')
+                }), 400
+
+            if onhand_qty is not None or mfg_qty is not None:
                 cursor.execute("""
-                    SELECT onhandqty FROM warehouse."tblWhse_Inventory" WHERE id = %s
+                    SELECT COALESCE(onhandqty, 0),
+                           CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::integer ELSE 0 END,
+                           COALESCE(loc_to, '')
+                    FROM warehouse."tblWhse_Inventory" WHERE id = %s
                 """, (row_id,))
                 verify = cursor.fetchone()
-                stored_qty = verify[0] if verify else None
-                if stored_qty != onhand_qty:
+                if not verify:
+                    conn.rollback()
+                    return jsonify({'success': False, 'message': 'Item not found'}), 404
+                stored_bin, stored_floor, stored_loc = verify
+                # On the floor the qty lives in mfg_qty; in a bin it lives in onhandqty.
+                if stored_loc == 'MFG Floor':
+                    expected, actual, column = mfg_qty, stored_floor, 'MFG Qty'
+                else:
+                    expected, actual, column = onhand_qty, stored_bin, 'On Hand'
+                if expected is not None and actual != expected:
                     conn.rollback()
                     return jsonify({
                         'success': False,
-                        'message': f'Save verification failed: expected {onhand_qty}, got {stored_qty}'
+                        'message': (f'Save verification failed: {column} expected {expected}, '
+                                    f'got {actual}')
                     }), 500
 
             # Record an ADJT transaction for EVERY manual warehouse edit, not
@@ -5220,129 +5461,26 @@ def shortage_report():
             db_manager.return_connection(conn)
 
 # --- Shared shortage-report builder -----------------------------------------
-# Both the Shortage Report page (generate_shortage_report) and the Job-tab
-# button (job_generate_shortage) build reports from this one query + helper so
-# their results can never drift. The query: (1) collapses alternate parts that
-# share an aci_pn to the row carrying the line's real qty (alternates like
-# "ZSUB FOR ABOVE" have a blank/0 qty); (2) matches on-hand to THIS job's own
-# part only (w.item = aci_pn), summed across its lots INCLUDING MFG-Floor stock
-# (3) consolidates to one row per BOM line. The displayed pcn/location prefer a
-# lot with REAL BIN stock (onhandqty>0), ordered by bin qty, and only fall back
-# to a MFG-Floor-only lot when nothing is in a bin — so the report points the
-# picker at the bin where the part actually is, not a floor lot with 0 pickable
-# stock (the bug Theresa hit on job 5455M: line 3 showed MFG Floor while 278 sat
-# in bin 2204207 under a different PCN). On-hand SUM still includes floor qty so
-# a job with floor stock isn't flagged as a false shortage.
-_SHORTAGE_MATCH_SQL = """
-    WITH bom_lines AS (
-        SELECT DISTINCT ON (b.aci_pn)
-            b.line, b.aci_pn, b.mpn as bom_mpn, b.man, b."DESC", b.qty, b.cost,
-            lower(translate(b.mpn, '-# ./', '')) as bom_key
-        FROM warehouse."tblBOM" b
-        WHERE b.job = %s
-            AND (b.job_rev = (SELECT job_rev FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
-                 OR NOT EXISTS (SELECT 1 FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
-        ORDER BY b.aci_pn, CASE WHEN b.qty ~ '^[0-9]+([.][0-9]+)?$' THEN b.qty::numeric ELSE 0 END DESC, b.line
-    ),
-    inv AS (
-        SELECT
-            bl.aci_pn,
-            -- On-hand now INCLUDES MFG-Floor stock (mfg_qty) so jobs with floor
-            -- stock no longer flag a false shortage. Physical on-hand per lot =
-            -- bin on-hand + floor qty. These are SUPPOSED to be disjoint (a unit
-            -- is in a bin OR on the floor), and the reconcile_floor_onhand guard
-            -- (bug #20) enforces that on floor-located rows so this sum can't
-            -- double-count. mfg_qty is TEXT — parse defensively.
-            COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
-            (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
-            (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
-            (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
-        FROM bom_lines bl
-        LEFT JOIN warehouse."tblWhse_Inventory" w
-            -- Case-insensitive: inventory stores the SAME part number in mixed
-            -- case (e.g. BOM '6779ML-97' vs stock '6779ml-97'). A case-sensitive
-            -- join missed that stock and falsely reported the part as short.
-            ON UPPER(w.item) = UPPER(bl.aci_pn)
-        GROUP BY bl.aci_pn
-    ),
-    -- Normalized stock pool for the same-MPN visibility row entries below, computed
-    -- ONCE (MFG Floor + non-positive qty excluded). Materializing here avoids
-    -- recomputing translate() over the whole warehouse for every BOM line.
-    mpn_pool AS MATERIALIZED (
-        SELECT item, pcn, onhandqty, mpn, loc_to,
-               lower(translate(mpn, '-# ./', '')) as nmpn
-        FROM warehouse."tblWhse_Inventory"
-        WHERE COALESCE(loc_to, '') != 'MFG Floor' AND onhandqty > 0
-    )
-    SELECT
-        bl.line as line_no, bl.aci_pn, inv.pcn,
-        COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
-        CASE WHEN bl.qty ~ '^[0-9]+([.][0-9]+)?$' THEN bl.qty::numeric ELSE 0 END as qty,
-        inv.qty_on_hand, bl.aci_pn as item,
-        COALESCE(inv.location, '') as location,
-        CASE WHEN bl.cost ~ '^[0-9]+([.][0-9]+)?$' AND length(split_part(bl.cost, '.', 1)) <= 6 THEN bl.cost::numeric(10,4) ELSE 0 END as unit_cost,
-        bl.man as manufacturer, bl."DESC" as description,
-        -- VISIBILITY ONLY (does NOT change the shortage math): stock of the SAME
-        -- MPN sitting under a DIFFERENT job's part number. The shortage qty above
-        -- still counts only this job's own part (UPPER(w.item)=UPPER(aci_pn)) so
-        -- we never double-allocate another job's committed stock — but Purchasing can now
-        -- see what Theresa used to hand-search in Warehouse Inventory.
-        -- other_mpn_onhand is the running total (kept for the regression guard);
-        -- other_mpn_locations is a JSON breakdown rendered as indented ROW ENTRIES
-        -- under each BOM line in the view + export (the old two-column display was
-        -- removed 2026-06-12 at report users' request — see CHANGELOG).
-        -- MPN match mode (Preet 2026-06-30): EXACT MPN ONLY. Chemring jobs use a
-        -- STRICT exact-string match (defense traceability); every other customer
-        -- uses a NORMALIZED exact match (strip -, #, space, ., / and case) so
-        -- format-only differences still match, but NOTHING longer does.
-        -- The old directional prefix match (BOM key being a prefix of a longer
-        -- stock MPN) was REMOVED: for numeric/short MPNs it over-matched DISTINCT
-        -- parts — e.g. '1.5KE15'→'1.5KE150CA' (15V vs 150V), 'ERJ6ENF249'→
-        -- 'ERJ6ENF2491V' — flooding the same-MPN visibility rows with wrong parts
-        -- (the "1234 also shows 12345/123456" report). The separator info needed
-        -- to tell a reel suffix from a value-continuation is destroyed by
-        -- normalization, so exact-only is the correct, unambiguous rule.
-        COALESCE((
-            SELECT SUM(p.onhandqty) FROM mpn_pool p
-            WHERE UPPER(p.item) <> UPPER(bl.aci_pn)
-              AND COALESCE(bl.bom_mpn, '') != ''
-              AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE p.nmpn = bl.bom_key END
-        ), 0) as other_mpn_onhand,
-        (
-            SELECT json_agg(json_build_object(
-                       'item', s.item, 'pcn', s.pcn, 'qty', s.qty,
-                       'location', s.location, 'mpn', s.mpn)
-                       ORDER BY s.qty DESC)
-            FROM (
-                SELECT p.item AS item, p.pcn AS pcn, SUM(p.onhandqty) AS qty,
-                       (array_agg(COALESCE(p.loc_to, '') ORDER BY p.onhandqty DESC NULLS LAST))[1] AS location,
-                       (array_agg(p.mpn ORDER BY p.onhandqty DESC NULLS LAST))[1] AS mpn
-                FROM mpn_pool p
-                -- Same ACI PN under another PCN (any case) is THIS job's own
-                -- stock, already counted above — never list it as an arrow entry.
-                WHERE UPPER(p.item) <> UPPER(bl.aci_pn)
-                  AND COALESCE(bl.bom_mpn, '') != ''
-                  AND CASE WHEN %s THEN p.mpn = bl.bom_mpn ELSE p.nmpn = bl.bom_key END
-                GROUP BY p.item, p.pcn
-                ORDER BY SUM(p.onhandqty) DESC
-                LIMIT 20
-            ) s
-        ) as other_mpn_locations
-    FROM bom_lines bl
-    JOIN inv ON inv.aci_pn = bl.aci_pn
-    ORDER BY
-        CASE WHEN bl.line ~ '^[0-9]+$' THEN CAST(bl.line AS INTEGER) ELSE 999999 END,
-        bl.line
-"""
+# Both the Shortage Report page (generate_shortage_report) and the Job-tab button
+# (job_generate_shortage) build reports from SHORTAGE_MATCH_SQL (shortage_sql.py)
+# plus the per-PCN helpers above, so their results can never drift. See that
+# module for what the query does and why.
 
 
 def _persist_shortage_report(cursor, job, order_qty, report_name, notes, username):
     """Build and save a shortage report for `job`, keeping ONLY lines where
     on_hand < req. Returns a dict (report_id, shortage_count, total_bom_lines)
     or None if the job has no BOM. Caller is responsible for committing."""
+    # Raw row count is ONLY used to detect a job with no BOM at all. It is NOT the
+    # "total lines" we store — that raw count includes ZSUB/alternate substitute
+    # rows (a BOM line + its "ZSUB FOR ABOVE" alternates are several rows sharing
+    # one line/aci_pn), so it over-counts. e.g. job 6588L has 115 raw rows but only
+    # 83 real line items. Storing 115 made the report read "35 of 115 BOM lines"
+    # while the body shows 83 — looking like 32 lines were dropped (a big part of
+    # the SR-5 "missing several lines" complaint). total_lines is set below to the
+    # count the report actually enumerates.
     cursor.execute('SELECT COUNT(*) as count FROM warehouse."tblBOM" WHERE job = %s', (job,))
-    total_bom_lines = cursor.fetchone()['count']
-    if total_bom_lines == 0:
+    if cursor.fetchone()['count'] == 0:
         return None
 
     cursor.execute("""
@@ -5353,15 +5491,14 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
     rev_row = cursor.fetchone()
     job_rev = rev_row['job_rev'] if rev_row else None
 
-    # Chemring jobs keep STRICT exact-MPN matching for the same-MPN visibility
-    # column (defense traceability); all other customers get tolerant matching.
-    cursor.execute(
-        'SELECT bool_or(cust ILIKE %s) AS is_chem FROM warehouse."tblBOM" WHERE job = %s',
-        ('%chemring%', job))
-    chem_row = cursor.fetchone()
-    strict_mpn = bool(chem_row and chem_row['is_chem'])
+    # Chemring jobs keep STRICT (case-sensitive) exact-MPN matching for defence
+    # traceability; all other customers fold case only.
+    strict_mpn = job_is_chemring(cursor, job)
 
-    cursor.execute(_SHORTAGE_MATCH_SQL, (job, job, job, strict_mpn, strict_mpn))
+    # 9 params: line_mpns(job x3), bom_lines(job x3), then strict_mpn for the
+    # on-hand MPN guard and the two cross-part-number searches.
+    cursor.execute(_SHORTAGE_MATCH_SQL,
+                   (job, job, job, job, job, job, strict_mpn, strict_mpn, strict_mpn))
     matched_items = cursor.fetchall()
     if not matched_items:
         return None
@@ -5379,6 +5516,10 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
         item['req'] = req
         item['order_qty'] = order_qty
     report_items = matched_items
+    # The report enumerates one row per real BOM line (the query already collapses
+    # ZSUB/alternate rows via DISTINCT ON aci_pn), so THIS is the true "total lines"
+    # — header will now match the body.
+    total_lines = len(report_items)
     shortage_count = sum(
         1 for item in matched_items
         if int(item['qty_on_hand'] or 0) < int(item['req'] or 0)
@@ -5404,7 +5545,7 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
         (job, report_name, total_lines, shortage_lines, total_cost, shortage_cost, created_by, notes, order_qty, job_rev)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
-    """, (job, report_name, total_bom_lines, shortage_count, total_cost, shortage_cost, username, notes, order_qty, job_rev))
+    """, (job, report_name, total_lines, shortage_count, total_cost, shortage_cost, username, notes, order_qty, job_rev))
     report_id = cursor.fetchone()['id']
 
     for item in report_items:
@@ -5415,7 +5556,8 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
              other_mpn_onhand, other_mpn_locations)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
-            report_id, item['line_no'], item['aci_pn'], item['pcn'], item['mpn'],
+            report_id, (str(item['line_no'])[:20] if item['line_no'] is not None else None),
+            item['aci_pn'], item['pcn'], item['mpn'],
             math.ceil(float(item['qty'] or 0)), item['qty_on_hand'], order_qty,
             item['item'], item['location'], float(item['unit_cost'] or 0),
             float(item['qty'] or 0) * float(item['unit_cost'] or 0),
@@ -5424,7 +5566,7 @@ def _persist_shortage_report(cursor, job, order_qty, report_name, notes, usernam
             serialize_other_mpn_locations(item.get('other_mpn_locations'))
         ))
 
-    return {'report_id': report_id, 'shortage_count': shortage_count, 'total_bom_lines': total_bom_lines}
+    return {'report_id': report_id, 'shortage_count': shortage_count, 'total_bom_lines': total_lines}
 
 
 @app.route('/shortage_report/generate', methods=['POST'])
@@ -5520,10 +5662,10 @@ def view_shortage_report(report_id):
         """, (report_id,))
         items = cursor.fetchall()
 
-        # Same-MPN/other-PN stock is rendered as indented row entries under each
-        # BOM line (the old two-column display was removed at users' request).
-        for item in items:
-            item['other_mpn_rows'] = parse_other_mpn_rows(item.get('other_mpn_locations'))
+        # Per-PCN rows, BOM ZSUB alternates, approved-MPN stock under other part
+        # numbers, and NOT-ON-BOM stock all come from one helper so this view, the
+        # Excel export and the job tab can never disagree.
+        attach_line_subrows(cursor, report['job'], items)
 
         return render_template('reports/shortage_report_view.html', report=report, items=items,
                                        column_definitions=SHORTAGE_EXPORT_COLUMNS)
@@ -5591,6 +5733,11 @@ def export_shortage_report(report_id):
         """, (report_id,))
         items = cursor.fetchall()
 
+        # Same sub-rows as the on-screen view (per-PCN, BOM ZSUB alternates,
+        # approved-MPN stock under other PNs, NOT-ON-BOM stock) — one helper so the
+        # pull sheet can never disagree with what Theresa saw on screen.
+        attach_line_subrows(cursor, report['job'], items)
+
         # Apply filter: shortages only
         if export_filter == 'shortages_only':
             items = [i for i in items if (i.get('qty_on_hand') or 0) < (i.get('req') or 0)]
@@ -5626,12 +5773,25 @@ def export_shortage_report(report_id):
             top=Side(style='thin'), bottom=Side(style='thin')
         )
 
-        # Flat, editable table that matches the legacy 6846 format the user asked
-        # for: a header row on row 1 and data immediately below (no merged title
-        # banner — merged cells make the sheet awkward to edit/filter/sort).
-        ws.freeze_panes = 'A2'
+        # Title banner restored to the Mar 11 2026 layout (Preet, 2026-07-22): a
+        # merged 3-row header (report title, generated-by/rev/order-qty, shortage
+        # count) across the top, column headers on row 5, data from row 6.
+        ws.merge_cells(f'A1:{last_col}1')
+        ws['A1'] = f"Shortage Report - Job: {report['job']}"
+        ws['A1'].font = Font(bold=True, size=16)
+        ws['A1'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A2:{last_col}2')
+        ws['A2'] = f"Generated: {report['created_at'].strftime('%Y-%m-%d %H:%M') if report['created_at'] else 'N/A'} by {report['created_by']} | Rev: {report.get('job_rev', 'N/A')} | Order Qty: {report.get('order_qty', 'N/A')}"
+        ws['A2'].alignment = Alignment(horizontal='center')
+
+        ws.merge_cells(f'A3:{last_col}3')
+        ws['A3'] = f"Shortage Items: {report['shortage_lines']} of {report['total_lines']} BOM lines"
+        ws['A3'].alignment = Alignment(horizontal='center')
+
+        # Column headers (row 5)
         for col_idx, col_def in enumerate(active_cols, 1):
-            cell = ws.cell(row=1, column=col_idx, value=col_def['label'])
+            cell = ws.cell(row=5, column=col_idx, value=col_def['label'])
             cell.font = header_font
             cell.fill = header_fill
             cell.border = border
@@ -5642,13 +5802,43 @@ def export_shortage_report(report_id):
         # row carrying the other part's PN/MPN/on-hand is fed through the same
         # column extractor so it honors whatever columns the user selected.
         subrow_fill = PatternFill(start_color="F1F5F9", end_color="F1F5F9", fill_type="solid")
-        row_idx = 2
+        zsub_fill = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
+        pcn_fill = PatternFill(start_color="DBEAFE", end_color="DBEAFE", fill_type="solid")
+        row_idx = 6
         for item in items:
             # Job column (6846 format) carries the report's job number on every row.
             item['job'] = report['job']
-            # Pull sheet: print the BOM line itself ONLY if it has stock on hand.
-            if (item.get('qty_on_hand') or 0) > 0:
-                is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
+            is_shortage = (item.get('qty_on_hand') or 0) < (item.get('req') or 0)
+            _pcns = item.get('pcn_rows') or []
+            if _pcns:
+                # One row PER PCN with that lot's own qty — NO lumped total line
+                # (Preet 2026-07-22). Each PCN lot already has stock (>0).
+                for p in _pcns:
+                    pline = {
+                        'aci_pn': item.get('aci_pn') or '', 'item': item.get('aci_pn') or '',
+                        'job': report['job'], 'pcn': p.get('pcn') or '',
+                        # each PCN's OWN mpn — writing the line's BOM mpn here is what put
+                        # the dash into PCN 31639's 'EEEFC1E101P' on the pull sheet
+                        'mpn': p.get('mpn') or item.get('mpn') or '',
+                        'qty_on_hand': p.get('qty') or 0, 'location': p.get('location') or '',
+                        'description': (('ZSUB — ' if p.get('is_zsub') else '')
+                                        + (item.get('description') or '')), 'qty': item.get('qty'),
+                        'order_qty': item.get('order_qty'), 'req': item.get('req'),
+                        'manufacturer': item.get('manufacturer') or '', 'unit_cost': '', 'line_cost': '',
+                        'line_no': item.get('line_no'),
+                    }
+                    for col_idx, col_def in enumerate(active_cols, 1):
+                        value = '' if col_def['key'] in ('unit_cost', 'line_cost') else get_export_cell_value(pline, col_def['key'])
+                        cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                        cell.border = border
+                        cell.font = Font(bold=True)
+                        if is_shortage:
+                            cell.fill = shortage_fill
+                        elif col_def['key'] in highlighted_columns:
+                            cell.fill = highlight_fill
+                    row_idx += 1
+            elif (item.get('qty_on_hand') or 0) > 0:
+                # Single PCN (or no breakdown) with stock: the normal line.
                 for col_idx, col_def in enumerate(active_cols, 1):
                     value = get_export_cell_value(item, col_def['key'])
                     cell = ws.cell(row=row_idx, column=col_idx, value=value)
@@ -5659,24 +5849,47 @@ def export_shortage_report(report_id):
                     elif col_def['key'] in highlighted_columns:
                         cell.fill = highlight_fill
                 row_idx += 1
+            # else: 0 on-hand and no PCN stock — dropped from the pull sheet.
 
-            # Same-MPN/other-PN stock rows always carry on-hand > 0 (mpn_pool
-            # filters onhandqty > 0), so they print even when the parent BOM line
-            # above was dropped for having no stock. They repeat the parent line's
-            # QTY/ORDER QTY/REQ (the requirement these alternates could fill) and
-            # show their own PCN / on-hand / location.
-            for sub in parse_other_mpn_rows(item.get('other_mpn_locations')):
+            # ZSUB substitutes for this line. The Excel pull sheet lists only what can
+            # actually be pulled, so a ZSUB with 0 on-hand is skipped here (the digital
+            # view still shows it). The MPN cell shows the substitute part.
+            for z in item.get('zsub_rows') or []:
+                if (z.get('qty') or 0) <= 0:
+                    continue
+                zline = {
+                    'aci_pn': item.get('aci_pn') or '', 'item': item.get('aci_pn') or '',
+                    'job': report['job'], 'pcn': z.get('pcn') or '',
+                    'mpn': z.get('mpn') or '', 'qty_on_hand': z.get('qty') or 0,
+                    'location': z.get('location') or '', 'description': 'ZSUB — ' + (z.get('description') or ''),
+                    'qty': item.get('qty'), 'order_qty': item.get('order_qty'), 'req': item.get('req'),
+                    'manufacturer': z.get('manufacturer') or '', 'unit_cost': '', 'line_cost': '', 'line_no': '',
+                }
+                for col_idx, col_def in enumerate(active_cols, 1):
+                    value = '' if col_def['key'] in ('unit_cost', 'line_cost') else get_export_cell_value(zline, col_def['key'])
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                    cell.border = border
+                    cell.fill = zsub_fill
+                    cell.font = Font(italic=True, color="92400E")
+                row_idx += 1
+
+            # Same-MPN-under-other-PN stock, shown as sub-rows. ACI PN stays THIS
+            # job's line with NO "(SAME MPN)" text (Preet 2026-07-22); the other PN
+            # where the stock sits goes in the ITEM column. mpn_pool already filters
+            # onhandqty > 0, so these never add a 0-on-hand row to the pull sheet.
+            for sub in item.get('other_mpn_rows') or []:
                 if (sub.get('qty') or 0) <= 0:
                     continue
                 sub_item = {
-                    'aci_pn': sub.get('item') or '',
+                    'aci_pn': item.get('aci_pn') or '',
                     'item': sub.get('item') or '',
                     'job': report['job'],
                     'pcn': sub.get('pcn') or '',
                     'mpn': sub.get('mpn') or item.get('mpn') or '',
                     'qty_on_hand': sub.get('qty') or 0,
                     'location': sub.get('location') or '',
-                    'description': 'Same MPN — other PN',
+                    'description': (('ZSUB — ' if sub.get('is_zsub') else '')
+                                    + (item.get('description') or '')),
                     'qty': item.get('qty'),
                     'order_qty': item.get('order_qty'),
                     'req': item.get('req'),
@@ -5684,11 +5897,7 @@ def export_shortage_report(report_id):
                     'unit_cost': '', 'line_cost': '', 'line_no': '',
                 }
                 for col_idx, col_def in enumerate(active_cols, 1):
-                    # Cost columns don't apply to a same-MPN visibility row.
-                    if col_def['key'] in ('unit_cost', 'line_cost'):
-                        value = ''
-                    else:
-                        value = get_export_cell_value(sub_item, col_def['key'])
+                    value = '' if col_def['key'] in ('unit_cost', 'line_cost') else get_export_cell_value(sub_item, col_def['key'])
                     cell = ws.cell(row=row_idx, column=col_idx, value=value)
                     cell.border = border
                     cell.fill = subrow_fill
@@ -6589,6 +6798,10 @@ def pcn_history():
     conn = None
     transactions = []
     pcn_info = None
+    # Defined up front: the render below runs for every path, including "no PCN
+    # searched" and "PCN has no transactions".
+    history_complete = True
+    anchor = 0
 
     try:
         if search_pcn:
@@ -6653,40 +6866,34 @@ def pcn_history():
                 if result:
                     pcn_info = dict(result)
 
-                # ANCHOR the on-hand trail to the authoritative Warehouse
-                # Inventory value (summed across any duplicate rows / MPNs for
-                # this PCN). The imported Access ledger is incomplete and
-                # double-counts a RESTOCK that follows an RNDT recount, so we do
-                # NOT trust a forward replay for the absolute number. Walking the
-                # trail backward from tblWhse_Inventory guarantees the two views
-                # always agree on the current on-hand, with no doubling.
+                # The ANCHOR is the authoritative Warehouse Inventory on-hand for this
+                # PCN — the ONE stored number (SUM(onhandqty), summed across any
+                # duplicate rows/MPNs), the exact value Warehouse Inventory shows. NO
+                # + mfg_qty: MFG Floor is a status, not available stock, and adding it
+                # was the double-count (PH-1) and the Warehouse != PCN History gap.
                 #
-                # Total on-hand = bin (onhandqty) + MFG floor (mfg_qty). Both the
-                # Warehouse Inventory and Shortage views count floor stock as
-                # on-hand, so PCN History must too, or a part sitting on the MFG
-                # floor (onhandqty 0, mfg_qty N) shows 0 here while the other
-                # screens show N — the "Warehouse != PCN History" mismatch
-                # (bug #20). Summing both keeps all three views on ONE definition.
-                # NOTE: cur is a RealDictCursor here, so fetchone() returns a
-                # dict — read the aggregate by its alias, never by index [0].
-                # READ CUTOVER: anchor on-hand to the ONE ledger — SUM(qty) over
-                # inventory_balance for this PCN (the single source of truth). Fall back
-                # to the warehouse projection only if a PCN predates the ledger, so this
-                # is never worse than the old anchor. Warehouse and PCN History now read
-                # the same number by construction (I3), so they can't disagree.
+                # 2026-07-29: this block used to CLAIM the trail was "walked backward
+                # from tblWhse_Inventory" so the two views "always agree" — while the
+                # function it called replayed FORWARD from zero on the abandoned ledger
+                # model and never used the anchor at all. That false comment is why the
+                # gap looked fixed for weeks when it was not. It is now true: the newest
+                # row is anchored to the stored value, and `replay_matched` tells us
+                # whether the trail could reproduce it unaided.
+                # NOTE: cur is a RealDictCursor, so read the aggregate by its alias.
                 cur.execute("""
-                    SELECT COALESCE(
-                        (SELECT SUM(qty) FROM warehouse.inventory_balance WHERE pcn_id = %s),
-                        (SELECT SUM(COALESCE(onhandqty, 0)
-                                    + CASE WHEN mfg_qty ~ '^-?[0-9]+$' THEN mfg_qty::int ELSE 0 END)
-                           FROM warehouse."tblWhse_Inventory" WHERE pcn::text = %s),
-                        0
-                    ) AS total
-                """, (search_pcn, search_pcn))
+                    SELECT COALESCE(SUM(COALESCE(onhandqty, 0)), 0) AS total
+                    FROM warehouse."tblWhse_Inventory" WHERE pcn::text = %s
+                """, (search_pcn,))
                 anchor_row = cur.fetchone()
                 anchor = int(anchor_row['total']) if anchor_row and anchor_row.get('total') is not None else 0
 
-                compute_anchored_history_balances(transactions, anchor)
+                _, history_complete = compute_anchored_history_balances(transactions, anchor)
+                # The quantity RECORDED on each row. Every transaction type gets one, not
+                # just PICK — hiding it on the others left the computed balance as the only
+                # number on the row, and it was read as the quantity (PCN 44956: put away
+                # 46, page showed the balance 150, reported as 104 parts lost).
+                for row in transactions:
+                    row['qty_display'] = _txn_qty_display(row)
                 # Drop the helper fields so the template doesn't need them
                 for row in transactions:
                     row.pop('sort_time', None)
@@ -6697,6 +6904,8 @@ def pcn_history():
             return render_template('pcn/pcn_history.html',
                                  transactions=transactions,
                                  pcn_info=pcn_info,
+                                 history_complete=history_complete,
+                                 warehouse_onhand=anchor,
                                  search_pcn=search_pcn)
         else:
             # No PCN provided, just show the search form
@@ -6837,9 +7046,8 @@ def api_generate_pcn():
                 quantity = int(data.get('quantity'))
             except (ValueError, TypeError):
                 return jsonify({'error': 'Quantity must be a number'}), 400
-            # Upper cap raised to 100000 so component reels aren't blocked.
-            if quantity < 1 or quantity > 100000:
-                return jsonify({'error': 'Quantity must be between 1 and 100000'}), 400
+            if quantity < 0 or quantity > MAX_QTY:
+                return jsonify({'error': f'Quantity must be 0 or more (max {MAX_QTY:,})'}), 400
 
             # Generate new PCN using MAX+1 with advisory lock to prevent duplicates
             # Lock key 73746 = arbitrary constant for PCN generation
@@ -6905,17 +7113,12 @@ def api_generate_pcn():
                 data.get('po_number'),
                 data.get('vendor_name')
             ))
-            # Opening balance goes to the ONE ledger, then project the snapshot.
-            lcur = conn.cursor()  # tuple cursor for the ledger service (same txn)
-            try:
-                ledger.stock(lcur, item=data.get('item'), mpn=data.get('mpn'),
-                             pcn=pcn_number, qty=quantity, to_bin=gen_location,
-                             user=session.get('username', 'system'),
-                             po=data.get('po_number'))
-            except ledger.LedgerError as le:
-                conn.rollback()
-                return jsonify({'error': f'PCN generation rejected: {le}'}), 400
-            ledger.project_warehouse(lcur, pcn_number)
+            # SNAPSHOT opening balance (ledger removed 2026-07-22): the generated PCN's
+            # on-hand IS the entered opening quantity, in its bin.
+            cursor.execute("""
+                UPDATE warehouse."tblWhse_Inventory" SET onhandqty = %s, loc_to = %s
+                WHERE pcn::text = %s
+            """, (int(quantity), gen_location, str(pcn_number)))
             logger.info(f"Added PCN {pcn_number} to warehouse inventory (ledger opening {quantity})")
 
             conn.commit()
@@ -7218,13 +7421,9 @@ def api_delete_pcn(pcn_number):
 
             item_name = transaction_record['item']
 
-            # First drive the PCN's on-hand to 0 in the LEDGER by appending ADJUST-out
-            # rows (I5: ledger history is never deleted). This keeps Warehouse == PCN
-            # History at 0 rather than orphaning ledger balance behind a hard delete.
-            lcur = conn.cursor()  # tuple cursor for the ledger service (same txn)
-            zeroed = ledger.zero_out(lcur, pcn_number, user=session.get('username', 'system'))
-            lcur.execute("DELETE FROM warehouse.inventory_balance WHERE pcn_id=%s", (pcn_number,))
-            logger.info(f"Zeroed ledger for PCN {pcn_number} ({zeroed} location(s)) before removing legacy rows")
+            # SNAPSHOT purge (ledger removed 2026-07-22): the tblWhse_Inventory rows for
+            # this PCN are deleted below, which zeroes its on-hand. No ledger to unwind.
+            logger.info(f"Removing legacy warehouse rows for PCN {pcn_number}")
 
             # Remove the legacy metadata/audit rows (the canonical, non-destructible
             # history remains in inventory_txn).
@@ -8537,10 +8736,13 @@ def job_detail(job_number):
         rev_row = cursor.fetchone()
         job_rev = rev_row['job_rev'] if rev_row else None
 
-        # Get BOM lines with live inventory lookup
-        # First deduplicate BOM per aci_pn, then match inventory using warehouse MPN
+        # Get BOM lines with live inventory lookup. Deduplicate the BOM per aci_pn,
+        # then match inventory on the part number AND an MPN the BOM approves for the
+        # line — the same rule the shortage report uses, so the two agree.
+        _job_strict_mpn = job_is_chemring(cursor, job_number)
         cursor.execute("""
-            WITH bom_lines AS (
+            WITH """ + _LINE_MPNS_CTE.strip() + """,
+            bom_lines AS (
                 SELECT DISTINCT ON (b.aci_pn)
                     b.line,
                     b.aci_pn,
@@ -8560,36 +8762,48 @@ def job_detail(job_number):
                     AND (b.job_rev = (SELECT job_rev FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
                          OR NOT EXISTS (SELECT 1 FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
                 -- Collapse alternate parts (same aci_pn) to the row carrying the
-                -- line's real qty. Alternates ("ZSUB FOR ABOVE") have a blank/0 qty,
-                -- so order by qty DESC to deterministically pick the primary row;
-                -- without this the DISTINCT ON tie-break is arbitrary and a line
-                -- can collapse to qty 0, silently dropping a real shortage.
-                ORDER BY b.aci_pn, CASE WHEN b.qty ~ '^[0-9]+([.][0-9]+)?$' THEN b.qty::numeric ELSE 0 END DESC, b.line
+                -- line's real qty, and prefer a numeric line number over an
+                -- importer-split description fragment (SR-3). The rules are defined
+                -- ONCE in shortage_sql.BOM_PRIMARY_ORDER_BY and shared with the
+                -- shortage report, so this screen and that one can never again pick
+                -- different rows for the same line.""" + _BOM_PRIMARY_ORDER_BY + """
             ),
             inv AS (
-                -- On-hand for THIS job's own part only (w.item = bl.aci_pn),
-                -- summed across its lots INCLUDING MFG-Floor stock (bin on-hand +
-                -- mfg_qty; they never overlap, so no double-count). See the shortage
-                -- generator query for why MPN-based matching was removed (it
-                -- pulled in other jobs' stock and exploded one line into many).
+                -- On-hand for THIS job's own part, restricted to the MPNs the BOM
+                -- approves for the line. This query MUST stay in step with
+                -- SHORTAGE_MATCH_SQL (shortage_sql.py): when only that one was
+                -- tightened, the job tab still read 7946L-30 as 1720 while the
+                -- shortage report read 1270 — two screens disagreeing about the same
+                -- part is the class of bug that cost us Theresa's trust.
                 SELECT
                     bl.aci_pn,
-                    COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
-                    (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
-                    (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
-                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
+                    -- On-hand = real bin stock only; MFG-Floor rows never count (SR-8/9).
+                    COALESCE(SUM(COALESCE(w.onhandqty,0)), 0) as qty_on_hand,
+                    -- prefer a lot of the line's PRIMARY mpn, so the displayed pcn is
+                    -- never a ZSUB lot sitting under the primary's MPN
+                    (array_agg(w.pcn ORDER BY (UPPER(w.mpn) = UPPER(bl.bom_mpn)) DESC, COALESCE(w.onhandqty,0) DESC NULLS LAST))[1] as pcn,
+                    (array_agg(w.mpn ORDER BY (UPPER(w.mpn) = UPPER(bl.bom_mpn)) DESC, COALESCE(w.onhandqty,0) DESC NULLS LAST))[1] as inv_mpn,
+                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (UPPER(w.mpn) = UPPER(bl.bom_mpn)) DESC, COALESCE(w.onhandqty,0) DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
                 LEFT JOIN warehouse."tblWhse_Inventory" w
-                    ON w.item = bl.aci_pn
-                GROUP BY bl.aci_pn
+                    -- SR-7: case-INSENSITIVE (was `w.item = bl.aci_pn`, a bug that
+                    -- missed mixed-case stock). SR-8/9: MFG-Floor rows excluded.
+                    ON UPPER(w.item) = UPPER(bl.aci_pn)
+                   AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                   AND """ + _mpn_approved('bl.aci_pn', 'w.mpn') + """
+                GROUP BY bl.aci_pn, bl.bom_mpn
             )
             SELECT
                 bl.line as line_no,
                 bl.aci_pn,
                 bl."DESC" as description,
-                COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
+                -- Show the BOM's PRIMARY MPN (bl.bom_mpn is now the primary row via the
+        -- ZSUB-aware ordering), so the line matches the customer BOM instead of a
+        -- stocked substitute or a distributor-prefixed inventory variant. Fall back
+        -- to the stocked MPN only when the BOM row has no MPN at all.
+        COALESCE(NULLIF(bl.bom_mpn, ''), inv.inv_mpn) as mpn,
                 bl.man as manufacturer,
-                CASE WHEN bl.qty ~ '^[0-9]+([.][0-9]+)?$' THEN bl.qty::numeric ELSE 0 END as qty,
+                COALESCE((regexp_match(replace(bl.qty, ',', ''), '[0-9]+(?:[.][0-9]+)?'))[1]::numeric, 0) as qty,  -- SR-6: tolerant qty parse
                 inv.qty_on_hand as on_hand,
                 inv.pcn,
                 bl.aci_pn as item,
@@ -8606,7 +8820,9 @@ def job_detail(job_number):
             ORDER BY
                 CASE WHEN bl.line ~ '^[0-9]+$' THEN CAST(bl.line AS INTEGER) ELSE 999999 END,
                 bl.line
-        """, (job_number, job_number, job_number))
+        """, (job_number, job_number, job_number,      # line_mpns
+              job_number, job_number, job_number,      # bom_lines
+              _job_strict_mpn))                        # on-hand MPN guard
         raw_lines = cursor.fetchall()
 
         # Calculate REQ and shortage for each line
@@ -8639,10 +8855,14 @@ def job_detail(job_number):
                 'last_rev': line.get('bom_last_rev') or '',
                 'cust': line.get('bom_cust') or '',
                 'cust_pn': line.get('bom_cust_pn') or '',
-                'cust_rev': line.get('bom_cust_rev') or ''
+                'cust_rev': line.get('bom_cust_rev') or '',
             })
             if shortage < 0:
                 shortage_count += 1
+
+        # Sub-rows (per-PCN, BOM ZSUB alternates, NOT-ON-BOM stock) — same helper the
+        # shortage report uses, so the job tab and the report agree line for line.
+        attach_line_subrows(cursor, job_number, job_lines)
 
         # Compute status from inventory data
         total_bom_lines = len(set(l['line_no'] for l in raw_lines))
@@ -8848,8 +9068,10 @@ def job_export(job_number):
         job_rev = rev_row['job_rev'] if rev_row else None
 
         # Deduplicate BOM per aci_pn then match inventory using warehouse MPN
+        _exp_strict_mpn = job_is_chemring(cursor, job_number)
         cursor.execute("""
-            WITH bom_lines AS (
+            WITH """ + _LINE_MPNS_CTE.strip() + """,
+            bom_lines AS (
                 SELECT DISTINCT ON (b.aci_pn)
                     b.line,
                     b.aci_pn,
@@ -8863,35 +9085,46 @@ def job_export(job_number):
                     AND (b.job_rev = (SELECT job_rev FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != '' ORDER BY created_at DESC LIMIT 1)
                          OR NOT EXISTS (SELECT 1 FROM warehouse."tblBOM" WHERE job = %s AND job_rev IS NOT NULL AND job_rev != ''))
                 -- Collapse alternate parts (same aci_pn) to the row carrying the
-                -- line's real qty. Alternates ("ZSUB FOR ABOVE") have a blank/0 qty,
-                -- so order by qty DESC to deterministically pick the primary row;
-                -- without this the DISTINCT ON tie-break is arbitrary and a line
-                -- can collapse to qty 0, silently dropping a real shortage.
-                ORDER BY b.aci_pn, CASE WHEN b.qty ~ '^[0-9]+([.][0-9]+)?$' THEN b.qty::numeric ELSE 0 END DESC, b.line
+                -- line's real qty, and prefer a numeric line number over an
+                -- importer-split description fragment (SR-3). The rules are defined
+                -- ONCE in shortage_sql.BOM_PRIMARY_ORDER_BY and shared with the
+                -- shortage report, so this screen and that one can never again pick
+                -- different rows for the same line.""" + _BOM_PRIMARY_ORDER_BY + """
             ),
             inv AS (
-                -- On-hand for THIS job's own part only (w.item = bl.aci_pn),
-                -- summed across its lots INCLUDING MFG-Floor stock (bin on-hand +
-                -- mfg_qty; they never overlap, so no double-count). Mirrors the
-                -- shortage generator query so the export matches the report.
+                -- On-hand for THIS job's own part, restricted to the MPNs the BOM
+                -- approves for the line. Mirrors SHORTAGE_MATCH_SQL (shortage_sql.py)
+                -- and the job-detail query exactly — all three must move together or
+                -- the same part reads differently on three screens.
                 SELECT
                     bl.aci_pn,
-                    COALESCE(SUM(COALESCE(w.onhandqty,0) + CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END), 0) as qty_on_hand,
-                    (array_agg(w.pcn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as pcn,
-                    (array_agg(w.mpn ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as inv_mpn,
-                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (COALESCE(w.onhandqty,0) > 0) DESC, COALESCE(w.onhandqty,0) DESC, (CASE WHEN w.mfg_qty ~ '^-?[0-9]+$' THEN w.mfg_qty::int ELSE 0 END) DESC NULLS LAST))[1] as location
+                    -- On-hand = real bin stock only; MFG-Floor rows never count (SR-8/9).
+                    COALESCE(SUM(COALESCE(w.onhandqty,0)), 0) as qty_on_hand,
+                    -- prefer a lot of the line's PRIMARY mpn so the displayed pcn is
+                    -- never a ZSUB lot shown under the primary's MPN
+                    (array_agg(w.pcn ORDER BY (UPPER(w.mpn) = UPPER(bl.bom_mpn)) DESC, COALESCE(w.onhandqty,0) DESC NULLS LAST))[1] as pcn,
+                    (array_agg(w.mpn ORDER BY (UPPER(w.mpn) = UPPER(bl.bom_mpn)) DESC, COALESCE(w.onhandqty,0) DESC NULLS LAST))[1] as inv_mpn,
+                    (array_agg(COALESCE(w.loc_to, '') ORDER BY (UPPER(w.mpn) = UPPER(bl.bom_mpn)) DESC, COALESCE(w.onhandqty,0) DESC NULLS LAST))[1] as location
                 FROM bom_lines bl
                 LEFT JOIN warehouse."tblWhse_Inventory" w
-                    ON w.item = bl.aci_pn
-                GROUP BY bl.aci_pn
+                    -- SR-7: case-INSENSITIVE (was `w.item = bl.aci_pn`, a bug that
+                    -- missed mixed-case stock). SR-8/9: MFG-Floor rows excluded.
+                    ON UPPER(w.item) = UPPER(bl.aci_pn)
+                   AND COALESCE(w.loc_to, '') != 'MFG Floor'
+                   AND """ + _mpn_approved('bl.aci_pn', 'w.mpn') + """
+                GROUP BY bl.aci_pn, bl.bom_mpn
             )
             SELECT
                 bl.line as line_no,
                 bl.aci_pn,
-                COALESCE(inv.inv_mpn, bl.bom_mpn) as mpn,
+                -- Show the BOM's PRIMARY MPN (bl.bom_mpn is now the primary row via the
+        -- ZSUB-aware ordering), so the line matches the customer BOM instead of a
+        -- stocked substitute or a distributor-prefixed inventory variant. Fall back
+        -- to the stocked MPN only when the BOM row has no MPN at all.
+        COALESCE(NULLIF(bl.bom_mpn, ''), inv.inv_mpn) as mpn,
                 bl.man as manufacturer,
                 bl."DESC" as description,
-                CASE WHEN bl.qty ~ '^[0-9]+([.][0-9]+)?$' THEN bl.qty::numeric ELSE 0 END as qty,
+                COALESCE((regexp_match(replace(bl.qty, ',', ''), '[0-9]+(?:[.][0-9]+)?'))[1]::numeric, 0) as qty,  -- SR-6: tolerant qty parse
                 inv.qty_on_hand as on_hand,
                 inv.pcn,
                 bl.aci_pn as item,
@@ -8902,7 +9135,9 @@ def job_export(job_number):
             ORDER BY
                 CASE WHEN bl.line ~ '^[0-9]+$' THEN CAST(bl.line AS INTEGER) ELSE 999999 END,
                 bl.line
-        """, (job_number, job_number, job_number))
+        """, (job_number, job_number, job_number,      # line_mpns
+              job_number, job_number, job_number,      # bom_lines
+              _exp_strict_mpn))                        # on-hand MPN guard
         raw_items = cursor.fetchall()
 
         # Enrich items with calculated fields

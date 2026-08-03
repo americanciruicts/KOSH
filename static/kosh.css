@@ -1782,6 +1782,12 @@
             color: #ffffff !important;
         }
 
+        /* Keep toasts below the fixed navbar so they never cover the header/user menu */
+        .toast-container.position-fixed.top-0 {
+            top: 64px !important;
+            max-width: min(420px, calc(100vw - 1rem));
+        }
+
         /* Fix toast notifications - ensure colored backgrounds and readable text */
         .toast.text-bg-danger {
             background-color: #dc3545 !important;
