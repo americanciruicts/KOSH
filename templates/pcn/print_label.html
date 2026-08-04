@@ -100,7 +100,7 @@
                (26px) is taller than the PCN/QTY block (25.2px), so it defines the row
                height and the border-bottom lands straight on the bottom of the bars —
                which both looks broken and eats into the symbol. */
-            padding: 0 6px 5px 18px;
+            padding: 0 6px 1px 18px;
         }
 
         /* Bottom section: 2-column, 3-row grid. Every detail line uses the
@@ -240,7 +240,10 @@
                    paid for by the barcode getting shorter and losing its vertical margins
                    (see the JsBarcode options below), which nets the detail rows ~5px MORE
                    space than they had originally, not less. */
-                padding: 0.05in 0.06in 0.03in 0.14in;
+                /* Top padding is deliberately tiny: on the printed reference label
+                   (KOSH/label.jpg) the barcode starts 0.4px from the label's top edge and
+                   the rule sits at 33.4px. Anything larger pushes the whole label down. */
+                padding: 0.01in 0.06in 0.03in 0.14in;
                 margin: 0 !important;
                 box-shadow: none;
                 border: none;
@@ -328,7 +331,7 @@
                     // only 4.8mm; 26px ≈ 6.9mm. Nearly free in layout terms because the
                     // PCN/QTY text block beside it is already ~25px tall, so the row height
                     // barely changes.
-                    height: 25,
+                    height: 31,
                     displayValue: false,
                     // 0 here is deliberate and safe (it is `margin`, not `marginTop`). The
                     // quiet zone comes from .barcode-section's horizontal padding.
