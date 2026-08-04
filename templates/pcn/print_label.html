@@ -86,7 +86,7 @@
             min-width: 0;
             /* QUIET ZONE. CODE128 needs clear space of ~10x the bar module width on each
                side or the reader cannot lock onto the start/stop pattern. The module is
-               1px, so 11px ≈ 2.9mm clears the ~2.65mm requirement. This lives here rather
+               2px, so 18px ≈ 4.8mm clears the ~5.3mm target closely. This lives here rather
                than in JsBarcode's marginLeft/marginRight because those cannot be set
                without also touching marginTop/marginBottom, where passing 0 silently
                falls back to the library default of 10 (that bug rendered a 42px barcode
@@ -97,7 +97,7 @@
                (26px) is taller than the PCN/QTY block (25.2px), so it defines the row
                height and the border-bottom lands straight on the bottom of the bars —
                which both looks broken and eats into the symbol. */
-            padding: 0 11px 5px;
+            padding: 0 18px 5px;
         }
 
         /* Bottom section: 2-column, 3-row grid. Every detail line uses the
@@ -312,9 +312,14 @@
                 // (align-content:start), never from the barcode.
                 JsBarcode("#labelBarcode", barcodeData, {
                     format: "CODE128",
-                    // width is the BAR THICKNESS — keep at 1. Raising it to 1.5 (commit
-                    // 7f7fb3c) is what made the bars print "too bold" and bleed together.
-                    width: 1,
+                    // width is the BAR MODULE width — it sets thickness AND overall length
+                    // together. Set to 2 to match the printed reference label Preet supplied
+                    // (KOSH/label.jpg, PCN 45870): measured off that photo the barcode is 55%
+                    // of the label width and 32% of its height, which on a 288x96 label works
+                    // out at ~159px wide / ~31px tall, i.e. a module of ~2.0px. 2 is also the
+                    // widest that fits — at 2.3 the flex row squeezes the SVG back to 157px,
+                    // which distorts the bars.
+                    width: 2,
                     // height is bar LENGTH, not thickness — it does not affect how bold the
                     // label looks, and taller bars are markedly easier to scan. 18px was
                     // only 4.8mm; 26px ≈ 6.9mm. Nearly free in layout terms because the
