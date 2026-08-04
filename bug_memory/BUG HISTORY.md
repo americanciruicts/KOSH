@@ -479,7 +479,44 @@ fitter first tested the details block's own bottom, but that block is `flex:1` a
 stretches to the container edge, so the test was always true and shrank the MPN to the
 7.5px floor on every label. It now measures the LAST ROW.
 
-**Still open:** the ZPL path is untouched and unverified on paper. The original top-clipping report is addressed in the browser path
+**Matching the printed reference (2026-08-04).** Preet supplied a photo of a real printed
+label (`KOSH/label.jpg`, PCN 45870) and asked for that exact look. Three things made this
+take far longer than it should have, all measurement errors on my side:
+
+1. **I was measuring the SCREEN view.** `.label-box` has different padding in the screen
+   rule (0.03in) and the `@media print` rule (0.01in), so every screenshot measurement was
+   of geometry that never prints. Render with `--print-to-pdf` at a real 3.00x1.00in page
+   and rasterise (`pdftoppm -r 406`) — never measure the screen preview.
+2. **The photo has perspective skew** (~9%, plus 0.09deg tilt). Correct the tilt and derive
+   the scale from the label's own bounding box before measuring anything.
+3. **The full-width rule was inside my barcode bounding box**, which inflated the barcode
+   width measurement and sent me tuning the wrong dimension. Find the rule row first
+   (the row with the most dark pixels) and measure the bars only above it.
+
+Final printed geometry vs the reference, in CSS px on a 288x96 label:
+
+| element | reference | ours | diff |
+|---|---|---|---|
+| barcode top | 0.40 | 0.95 | +0.55 |
+| barcode bottom | 32.00 | 31.45 | -0.55 |
+| barcode width | 161.00 | 161.02 | +0.02 |
+| rule | 33.40 | 33.10 | -0.30 |
+| Item No / MPN / PO | 41.2 / 58.7 / 75.2 | 40.0 / 57.9 / 75.9 | <1.2 |
+
+Settings: module `width: 2.04`, `height: 31`, right-aligned (`justify-content: flex-end`),
+label top padding 0.01in, 1px between bars and rule, detail rows 13px.
+
+**Open:** the reference packs MORE, THINNER bars into the same 161px (its widest bar
+measures ~5.05px vs our 8.16px = 4 modules), which means it encodes ~8 characters, not our
+5-digit PCN — or uses a different symbology (CODE39 fits the density). The photo is not
+sharp enough to decode. Needs someone to scan the reference label and report what it
+returns before changing what we encode.
+
+**Also open:** the ZPL path is untouched and unverified on paper.
+
+**Testing note:** decode checks must render against a WHITE page. A grey test background
+makes the quiet zone non-white and the symbol fails to read — a fixture artifact that once
+sent me redesigning a barcode that was fine. The original top-clipping report is addressed in the browser path
 only; no ZPL-printed label has been confirmed bad.
 
 ---
