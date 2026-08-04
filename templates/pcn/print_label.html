@@ -80,16 +80,13 @@
 
         .barcode-section {
             display: flex;
-            /* flex-end, not center: on the printed reference label (KOSH/label.jpg) the
-               barcode sits hard against the right edge of the label. Centring it left a
-               ~28px gap on the right that the reference does not have. */
-            justify-content: flex-end;
+            justify-content: center;
             align-items: center;
             flex: 1;
             min-width: 0;
             /* QUIET ZONE. CODE128 needs clear space of ~10x the bar module width on each
                side or the reader cannot lock onto the start/stop pattern. The module is
-               2px, so 18px ≈ 4.8mm clears the ~5.3mm target closely. This lives here rather
+               1px, so 11px ≈ 2.9mm clears the ~2.65mm requirement. This lives here rather
                than in JsBarcode's marginLeft/marginRight because those cannot be set
                without also touching marginTop/marginBottom, where passing 0 silently
                falls back to the library default of 10 (that bug rendered a 42px barcode
@@ -100,7 +97,7 @@
                (26px) is taller than the PCN/QTY block (25.2px), so it defines the row
                height and the border-bottom lands straight on the bottom of the bars —
                which both looks broken and eats into the symbol. */
-            padding: 0 6px 1px 18px;
+            padding: 0 11px 5px;
         }
 
         /* Bottom section: 2-column, 3-row grid. Every detail line uses the
@@ -155,12 +152,12 @@
             overflow: visible;
             text-overflow: clip;
             word-break: break-all;
-            /* Same size as Item No / PO, matching the printed reference label
-               (KOSH/label.jpg), where all three detail rows are ~13px. A long MPN is
-               handled by the auto-fit in JS, which shrinks THIS row only when it would
-               otherwise push MSD/PO off the bottom — so normal labels keep full size. */
-            font-size: 13px;
-            line-height: 1.15;
+            /* 11px/1.1 rather than 12px/1.15: this is the only row that can wrap, and a
+               second line is what pushes MSD/PO off the bottom. The smaller size fits
+               ~42 chars per line instead of ~39, so fewer MPNs wrap at all, and a wrap
+               costs 24px instead of 28px. Still the full string — never truncated. */
+            font-size: 12px;
+            line-height: 1.1;
         }
 
         /* Control buttons (screen only) */
@@ -240,10 +237,7 @@
                    paid for by the barcode getting shorter and losing its vertical margins
                    (see the JsBarcode options below), which nets the detail rows ~5px MORE
                    space than they had originally, not less. */
-                /* Top padding is deliberately tiny: on the printed reference label
-                   (KOSH/label.jpg) the barcode starts 0.4px from the label's top edge and
-                   the rule sits at 33.4px. Anything larger pushes the whole label down. */
-                padding: 0.01in 0.06in 0.03in 0.14in;
+                padding: 0.05in 0.06in 0.03in 0.14in;
                 margin: 0 !important;
                 box-shadow: none;
                 border: none;
@@ -318,20 +312,15 @@
                 // (align-content:start), never from the barcode.
                 JsBarcode("#labelBarcode", barcodeData, {
                     format: "CODE128",
-                    // width is the BAR MODULE width — it sets thickness AND overall length
-                    // together. Set to 2 to match the printed reference label Preet supplied
-                    // (KOSH/label.jpg, PCN 45870): measured off that photo the barcode is 55%
-                    // of the label width and 32% of its height, which on a 288x96 label works
-                    // out at ~159px wide / ~31px tall, i.e. a module of ~2.0px. 2 is also the
-                    // widest that fits — at 2.3 the flex row squeezes the SVG back to 157px,
-                    // which distorts the bars.
-                    width: 2.04,
+                    // width is the BAR THICKNESS — keep at 1. Raising it to 1.5 (commit
+                    // 7f7fb3c) is what made the bars print "too bold" and bleed together.
+                    width: 1,
                     // height is bar LENGTH, not thickness — it does not affect how bold the
                     // label looks, and taller bars are markedly easier to scan. 18px was
                     // only 4.8mm; 26px ≈ 6.9mm. Nearly free in layout terms because the
                     // PCN/QTY text block beside it is already ~25px tall, so the row height
                     // barely changes.
-                    height: 31,
+                    height: 30,
                     displayValue: false,
                     // 0 here is deliberate and safe (it is `margin`, not `marginTop`). The
                     // quiet zone comes from .barcode-section's horizontal padding.
@@ -362,7 +351,7 @@
                     if (!last) return;
                     var limit = box.getBoundingClientRect().bottom -
                                 parseFloat(getComputedStyle(box).paddingBottom) - 1;
-                    var size = 13;
+                    var size = 12;
                     while (last.getBoundingClientRect().bottom > limit && size > 7.5) {
                         size -= 0.5;
                         mpn.style.fontSize = size + 'px';
