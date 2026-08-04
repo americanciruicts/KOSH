@@ -80,7 +80,10 @@
 
         .barcode-section {
             display: flex;
-            justify-content: center;
+            /* flex-end, not center: on the printed reference label (KOSH/label.jpg) the
+               barcode sits hard against the right edge of the label. Centring it left a
+               ~28px gap on the right that the reference does not have. */
+            justify-content: flex-end;
             align-items: center;
             flex: 1;
             min-width: 0;
@@ -97,7 +100,7 @@
                (26px) is taller than the PCN/QTY block (25.2px), so it defines the row
                height and the border-bottom lands straight on the bottom of the bars —
                which both looks broken and eats into the symbol. */
-            padding: 0 18px 5px;
+            padding: 0 6px 5px 18px;
         }
 
         /* Bottom section: 2-column, 3-row grid. Every detail line uses the
@@ -152,12 +155,12 @@
             overflow: visible;
             text-overflow: clip;
             word-break: break-all;
-            /* 11px/1.1 rather than 12px/1.15: this is the only row that can wrap, and a
-               second line is what pushes MSD/PO off the bottom. The smaller size fits
-               ~42 chars per line instead of ~39, so fewer MPNs wrap at all, and a wrap
-               costs 24px instead of 28px. Still the full string — never truncated. */
-            font-size: 12px;
-            line-height: 1.1;
+            /* Same size as Item No / PO, matching the printed reference label
+               (KOSH/label.jpg), where all three detail rows are ~13px. A long MPN is
+               handled by the auto-fit in JS, which shrinks THIS row only when it would
+               otherwise push MSD/PO off the bottom — so normal labels keep full size. */
+            font-size: 13px;
+            line-height: 1.15;
         }
 
         /* Control buttons (screen only) */
@@ -325,7 +328,7 @@
                     // only 4.8mm; 26px ≈ 6.9mm. Nearly free in layout terms because the
                     // PCN/QTY text block beside it is already ~25px tall, so the row height
                     // barely changes.
-                    height: 30,
+                    height: 25,
                     displayValue: false,
                     // 0 here is deliberate and safe (it is `margin`, not `marginTop`). The
                     // quiet zone comes from .barcode-section's horizontal padding.
@@ -356,7 +359,7 @@
                     if (!last) return;
                     var limit = box.getBoundingClientRect().bottom -
                                 parseFloat(getComputedStyle(box).paddingBottom) - 1;
-                    var size = 12;
+                    var size = 13;
                     while (last.getBoundingClientRect().bottom > limit && size > 7.5) {
                         size -= 0.5;
                         mpn.style.fontSize = size + 'px';
