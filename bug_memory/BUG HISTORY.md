@@ -514,6 +514,24 @@ returns before changing what we encode.
 
 **Also open:** the ZPL path is untouched and unverified on paper.
 
+**ROOT CAUSE of "scans on screen, not on paper" (2026-08-05).** The barcode decoded from
+every raster I rendered, yet printed labels would not scan. The ZP450 is **203dpi**, so
+1 CSS px = 203/96 = **2.115 printer dots**. At `width: 1` the printer rounded each bar
+independently and emitted bars of **2, 3, 4, 6, 7 and 8 dots** — but a CODE128 bar is only
+ever 1x/2x/3x/4x the module, so 3- and 7-dot bars encode nothing and the reader sees a
+corrupt symbol. On screen there is no dot grid, so the identical SVG decodes perfectly.
+
+Fix: pin the module to a whole number of printer dots. `width: 1.417px` = exactly 3 dots;
+bars then quantise to 3/6/9/12. Valid values: **2 dots = 0.945, 3 dots = 1.417,
+4 dots = 1.890**. Never set a module that is not a whole dot multiple.
+
+**How to verify a barcode change — do not skip this:** render the PRINT output
+(`--print-to-pdf` at a real 3.00x1.00in page), rasterise at the printer's native
+resolution (`pdftoppm -r 203`), and check the bar-width histogram is uniform multiples of
+the module. A screen screenshot proves nothing — it decoded happily the whole time the
+floor could not scan the label. Also print at 100% / Actual Size: any scaling in the print
+dialog destroys the dot alignment.
+
 **Testing note:** decode checks must render against a WHITE page. A grey test background
 makes the quiet zone non-white and the symbol fails to read — a fixture artifact that once
 sent me redesigning a barcode that was fine. The original top-clipping report is addressed in the browser path
