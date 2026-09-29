@@ -94,7 +94,7 @@
             </div>
             <div class="col-md-3">
                 <label class="form-label small fw-semibold mb-2" style="color: #475569; opacity: 0;">Actions</label>
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <button type="submit" class="btn btn-primary px-3">
                         <i class="bi bi-search me-1"></i> Search
                     </button>
@@ -103,6 +103,11 @@
                     </button>
                     <a href="{{ url_for('warehouse_inventory') }}" class="btn btn-outline-secondary px-3">
                         <i class="bi bi-x-circle me-1"></i> Clear
+                    </a>
+                    <a href="{{ url_for('warehouse_inventory_export') }}"
+                       class="btn btn-outline-success px-3"
+                       title="Download the whole Warehouse Inventory to Excel">
+                        <i class="bi bi-file-earmark-excel me-1"></i> Excel
                     </a>
                 </div>
             </div>

@@ -4769,6 +4769,69 @@ def warehouse():
     permanent redirect so old bookmarks/links don't 404."""
     return redirect(url_for('warehouse_inventory'))
 
+def _warehouse_inventory_query(search_item='', search_pcn='', search_mpn='',
+                                search_location='', search_description=''):
+    """Filtered Warehouse Inventory SELECT + params, shared by the listing page
+    and the Excel export so both always return exactly the same rows."""
+    # Build query with filters.
+    # Left-join a deduplicated tblPN_List so we can surface and search by
+    # part description without multiplying inventory rows (item is not
+    # unique in tblPN_List — ~36k rows for ~35k distinct items).
+    query = """
+        SELECT w.id, w.item, w.pcn, w.mpn, w.dc, w.onhandqty, w.loc_from, w.loc_to,
+               w.mfg_qty, w.qty_old, w.msd, w.po, w.cost, w.vendor, w.migrated_at,
+               p.description
+        FROM warehouse."tblWhse_Inventory" w
+        LEFT JOIN (
+            SELECT item, MAX("DESC") AS description
+            FROM warehouse."tblPN_List"
+            GROUP BY item
+        ) p ON w.item = p.item
+        WHERE 1=1
+    """
+    params = []
+
+    if search_item:
+        # EXACT-match-wins, else PREFIX (Theresa 2026-06-23): typing a complete
+        # item ('1234L-5') returns ONLY that item (never 1234L-50/-55), but
+        # typing a base/partial ('1234L-' or '1234L') lists EVERY variant
+        # 1234L-1, 1234L-5, 1234L-10... The NOT EXISTS makes exact take
+        # precedence: if any item equals the term, only exact rows return;
+        # otherwise the term is treated as a starts-with prefix. TRIM guards
+        # legacy whitespace; %/_ in the term are escaped so they stay literal.
+        term = search_item.lower()
+        like_term = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+        query += """ AND (
+            LOWER(TRIM(w.item::text)) = %s
+            OR (NOT EXISTS (
+                    SELECT 1 FROM warehouse."tblWhse_Inventory" we
+                    WHERE LOWER(TRIM(we.item::text)) = %s)
+                AND LOWER(TRIM(w.item::text)) LIKE %s ESCAPE '\\')
+        )"""
+        params.extend([term, term, like_term])
+
+    if search_pcn:
+        # EXACT PCN match (not prefix): '1234' returns only PCN 1234,
+        # not 12340/12345/etc.
+        query += " AND TRIM(w.pcn::text) = %s"
+        params.append(search_pcn)
+
+    if search_mpn:
+        # EXACT match (consistent with PCN/Item): return only the typed MPN.
+        query += " AND LOWER(TRIM(w.mpn::text)) = %s"
+        params.append(search_mpn.lower())
+
+    if search_location:
+        # EXACT match: '1101101' returns only that bin, not 11011010/etc.
+        query += " AND LOWER(TRIM(w.loc_to::text)) = %s"
+        params.append(search_location.lower())
+
+    if search_description:
+        # EXACT match: the full description text must match exactly.
+        query += " AND LOWER(TRIM(COALESCE(p.description, ''))) = %s"
+        params.append(search_description.lower())
+    return query, params
+
 @app.route('/warehouse-inventory')
 @require_auth
 def warehouse_inventory():
@@ -4794,63 +4857,8 @@ def warehouse_inventory():
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Build query with filters.
-        # Left-join a deduplicated tblPN_List so we can surface and search by
-        # part description without multiplying inventory rows (item is not
-        # unique in tblPN_List — ~36k rows for ~35k distinct items).
-        query = """
-            SELECT w.id, w.item, w.pcn, w.mpn, w.dc, w.onhandqty, w.loc_from, w.loc_to,
-                   w.mfg_qty, w.qty_old, w.msd, w.po, w.cost, w.vendor, w.migrated_at,
-                   p.description
-            FROM warehouse."tblWhse_Inventory" w
-            LEFT JOIN (
-                SELECT item, MAX("DESC") AS description
-                FROM warehouse."tblPN_List"
-                GROUP BY item
-            ) p ON w.item = p.item
-            WHERE 1=1
-        """
-        params = []
-
-        if search_item:
-            # EXACT-match-wins, else PREFIX (Theresa 2026-06-23): typing a complete
-            # item ('1234L-5') returns ONLY that item (never 1234L-50/-55), but
-            # typing a base/partial ('1234L-' or '1234L') lists EVERY variant
-            # 1234L-1, 1234L-5, 1234L-10... The NOT EXISTS makes exact take
-            # precedence: if any item equals the term, only exact rows return;
-            # otherwise the term is treated as a starts-with prefix. TRIM guards
-            # legacy whitespace; %/_ in the term are escaped so they stay literal.
-            term = search_item.lower()
-            like_term = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
-            query += """ AND (
-                LOWER(TRIM(w.item::text)) = %s
-                OR (NOT EXISTS (
-                        SELECT 1 FROM warehouse."tblWhse_Inventory" we
-                        WHERE LOWER(TRIM(we.item::text)) = %s)
-                    AND LOWER(TRIM(w.item::text)) LIKE %s ESCAPE '\\')
-            )"""
-            params.extend([term, term, like_term])
-
-        if search_pcn:
-            # EXACT PCN match (not prefix): '1234' returns only PCN 1234,
-            # not 12340/12345/etc.
-            query += " AND TRIM(w.pcn::text) = %s"
-            params.append(search_pcn)
-
-        if search_mpn:
-            # EXACT match (consistent with PCN/Item): return only the typed MPN.
-            query += " AND LOWER(TRIM(w.mpn::text)) = %s"
-            params.append(search_mpn.lower())
-
-        if search_location:
-            # EXACT match: '1101101' returns only that bin, not 11011010/etc.
-            query += " AND LOWER(TRIM(w.loc_to::text)) = %s"
-            params.append(search_location.lower())
-
-        if search_description:
-            # EXACT match: the full description text must match exactly.
-            query += " AND LOWER(TRIM(COALESCE(p.description, ''))) = %s"
-            params.append(search_description.lower())
+        query, params = _warehouse_inventory_query(
+            search_item, search_pcn, search_mpn, search_location, search_description)
 
         # Get total count for pagination
         count_query = f"SELECT COUNT(*) as total FROM ({query}) AS filtered"
@@ -4928,6 +4936,118 @@ def warehouse_inventory():
         return render_template('inventory/warehouse_inventory.html', inventory=[],
                              pagination={'total': 0, 'page': 1, 'total_pages': 1, 'per_page': 10},
                              total_records=0)
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if conn:
+            try:
+                db_manager.return_connection(conn)
+            except Exception:
+                pass
+
+@app.route('/warehouse-inventory/export')
+@require_auth
+def warehouse_inventory_export():
+    """Download the WHOLE Warehouse Inventory as .xlsx (the page's Excel button
+    links here with no filters). Search args, if passed, filter like the page."""
+    if not can_access_tool('warehouse_inventory'):
+        flash('You do not have access to this tool.', 'danger')
+        return redirect(url_for('index'))
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from openpyxl.cell import WriteOnlyCell
+
+    def _num(v):
+        # Source qty/cost columns are free text ('NA', '', '0.0000'); export
+        # real numbers where parseable so Excel can sum/sort, else keep text.
+        if v is None or isinstance(v, (int, float)):
+            return v
+        t = str(v).strip()
+        if re.fullmatch(r'-?\d+', t):
+            return int(t)
+        if re.fullmatch(r'-?\d*\.\d+', t):
+            return float(t)
+        return t
+
+    conn = None
+    cursor = None
+    try:
+        query, params = _warehouse_inventory_query(
+            request.args.get('search_item', '').strip(),
+            request.args.get('search_pcn', '').strip(),
+            request.args.get('search_mpn', '').strip(),
+            request.args.get('search_location', '').strip(),
+            request.args.get('search_description', '').strip())
+        query += " ORDER BY w.id DESC"
+
+        conn = db_manager.get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        # Same columns/order as the Warehouse Inventory screen.
+        headers = [('PCN', 12), ('Item', 18), ('MPN', 24), ('Description', 40),
+                   ('DC', 10), ('On Hand Qty (Bin)', 16), ('MFG Qty (Floor)', 15),
+                   ('Total On Hand', 14), ('Location', 12), ('Loc From', 12),
+                   ('Qty Old', 10), ('MSD', 8), ('PO', 14), ('Cost', 10), ('Vendor', 20)]
+
+        # write_only streams rows (~35k) instead of building a cell object
+        # graph — keeps the download well under proxy timeouts.
+        wb = Workbook(write_only=True)
+        ws = wb.create_sheet('Warehouse Inventory')
+        header_font = Font(bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='1E3A5F', end_color='1E3A5F', fill_type='solid')
+        for col_idx, (_, width) in enumerate(headers, 1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+        ws.freeze_panes = 'A2'
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(rows) + 1}"
+        header_cells = []
+        for h, _ in headers:
+            cell = WriteOnlyCell(ws, value=h)
+            cell.font = header_font
+            cell.fill = header_fill
+            header_cells.append(cell)
+        ws.append(header_cells)
+
+        grand_total = 0
+        for row in rows:
+            # Total on-hand = bin + MFG floor, computed exactly like the listing.
+            bin_qty = row['onhandqty'] if isinstance(row['onhandqty'], int) else 0
+            mfg_raw = (row['mfg_qty'] or '').strip()
+            floor_qty = int(mfg_raw) if re.fullmatch(r'-?\d+', mfg_raw) else 0
+            total = bin_qty + floor_qty
+            grand_total += total
+            ws.append([_num(row['pcn']), row['item'], row['mpn'], row['description'],
+                       row['dc'], row['onhandqty'], _num(row['mfg_qty']), total,
+                       row['loc_to'], row['loc_from'], _num(row['qty_old']),
+                       row['msd'], row['po'], _num(row['cost']), row['vendor']])
+
+        ws.append([])
+        total_cells = []
+        for v in ['TOTAL', f'{len(rows)} rows', None, None, None, None, None, grand_total]:
+            cell = WriteOnlyCell(ws, value=v)
+            cell.font = Font(bold=True)
+            total_cells.append(cell)
+        ws.append(total_cells)
+
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"Warehouse_Inventory_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting warehouse inventory: {e}")
+        flash('Error exporting warehouse inventory. Please try again.', 'danger')
+        return redirect(url_for('warehouse_inventory'))
     finally:
         if cursor:
             try:
