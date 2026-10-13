@@ -539,6 +539,21 @@ only; no ZPL-printed label has been confirmed bad.
 
 ---
 
+## 🔎 WAREHOUSE INVENTORY — Description filter could not partial-search (2026-10-13)
+
+**Reported by:** Adam Jeraci (via Preet) — "cannot do a partial description search."
+**Cause:** commit 9fbc842 (2026-06-16) made all five Warehouse Inventory filters exact-match
+for consistency. Fine for PCN/Item/MPN/Location codes, but descriptions are free text, so
+`'0603'` or `'cap cer'` returned nothing unless it equalled the whole description.
+**Fix:** `_warehouse_inventory_query` description filter is now case-insensitive CONTAINS
+(`LIKE '%term%'`, `%`/`_` escaped as literals). No word-splitting (Adam's call) — the typed
+phrase must appear as-is. Applies to the page and the Excel export (shared query). Other four
+filters stay exact. Placeholder changed to "Contains (e.g. 0603)".
+**Verified (read-only, prod data):** '0603' → 4201 rows, 'cap cer' → 3168, '10uF' → 613,
+'100%' → 1 (literal %), nonsense → 0.
+
+---
+
 # ✅ Definition of done (what "fixed" will finally mean)
 
 An issue is closed ONLY when all of the following hold — no exceptions, no "deployed =

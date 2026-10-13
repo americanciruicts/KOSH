@@ -4827,9 +4827,13 @@ def _warehouse_inventory_query(search_item='', search_pcn='', search_mpn='',
         params.append(search_location.lower())
 
     if search_description:
-        # EXACT match: the full description text must match exactly.
-        query += " AND LOWER(TRIM(COALESCE(p.description, ''))) = %s"
-        params.append(search_description.lower())
+        # CONTAINS match (Adam 2026-10-13): descriptions are free text, so the
+        # typed phrase may appear anywhere ('0603' finds 'CAP CER 10UF 0603').
+        # %/_ are escaped so they stay literal.
+        term = search_description.lower()
+        like_term = '%' + term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+        query += " AND LOWER(COALESCE(p.description, '')) LIKE %s ESCAPE '\\'"
+        params.append(like_term)
     return query, params
 
 @app.route('/warehouse-inventory')
