@@ -80,7 +80,7 @@
             <div class="col-md-3">
                 <label for="search_description" class="form-label small fw-semibold mb-2" style="color: #475569;">Description</label>
                 <input type="text" class="form-control" id="search_description" name="search_description"
-                       value="{{ request.args.get('search_description', '') }}" placeholder="Contains (e.g. 0603)" style="border-radius: 6px;">
+                       value="{{ request.args.get('search_description', '') }}" placeholder="Contains, typo-tolerant" style="border-radius: 6px;">
             </div>
             <div class="col-md-2">
                 <label for="per_page" class="form-label small fw-semibold mb-2" style="color: #475569;">Per Page</label>

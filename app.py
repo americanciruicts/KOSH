@@ -4780,7 +4780,7 @@ def _warehouse_inventory_query(search_item='', search_pcn='', search_mpn='',
     query = """
         SELECT w.id, w.item, w.pcn, w.mpn, w.dc, w.onhandqty, w.loc_from, w.loc_to,
                w.mfg_qty, w.qty_old, w.msd, w.po, w.cost, w.vendor, w.migrated_at,
-               p.description
+               p.description, {desc_rank} AS desc_rank
         FROM warehouse."tblWhse_Inventory" w
         LEFT JOIN (
             SELECT item, MAX("DESC") AS description
@@ -4826,15 +4826,31 @@ def _warehouse_inventory_query(search_item='', search_pcn='', search_mpn='',
         query += " AND LOWER(TRIM(w.loc_to::text)) = %s"
         params.append(search_location.lower())
 
+    desc_rank_sql, desc_rank_params = '0', []
     if search_description:
-        # CONTAINS match (Adam 2026-10-13): descriptions are free text, so the
-        # typed phrase may appear anywhere ('0603' finds 'CAP CER 10UF 0603').
+        # CONTAINS + one-typo tolerance (Adam 2026-10-13): descriptions are free
+        # text, so the typed phrase may appear anywhere, and for terms of 4+
+        # chars a description also matches if it contains the term with any ONE
+        # character missing ('abcd' finds 'abcd efgh', 'acdfgh', 'acdwfgy').
+        # True contains-matches rank first (desc_rank 0), near-misses after.
         # %/_ are escaped so they stay literal.
+        def _like(t):
+            return '%' + t.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
         term = search_description.lower()
-        like_term = '%' + term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
-        query += " AND LOWER(COALESCE(p.description, '')) LIKE %s ESCAPE '\\'"
-        params.append(like_term)
-    return query, params
+        variants = [term]
+        if len(term) >= 4:
+            for i in range(len(term)):
+                v = term[:i] + term[i + 1:]
+                if v.strip() and v not in variants:
+                    variants.append(v)
+        desc_expr = "LOWER(COALESCE(p.description, ''))"
+        query += " AND (" + " OR ".join(
+            [f"{desc_expr} LIKE %s ESCAPE '\\'"] * len(variants)) + ")"
+        params.extend(_like(v) for v in variants)
+        desc_rank_sql = f"CASE WHEN {desc_expr} LIKE %s ESCAPE '\\' THEN 0 ELSE 1 END"
+        desc_rank_params = [_like(term)]
+    # {desc_rank} sits in the SELECT list, so its params go before the WHERE params.
+    return query.replace('{desc_rank}', desc_rank_sql), desc_rank_params + params
 
 @app.route('/warehouse-inventory')
 @require_auth
@@ -4870,7 +4886,7 @@ def warehouse_inventory():
         total_records = cursor.fetchone()['total']
 
         # Add sorting and pagination (newest entries first for efficiency)
-        query += " ORDER BY w.id DESC LIMIT %s OFFSET %s"
+        query += " ORDER BY desc_rank, w.id DESC LIMIT %s OFFSET %s"
         params.extend([per_page, (page - 1) * per_page])
 
         # Execute main query
@@ -4986,7 +5002,7 @@ def warehouse_inventory_export():
             request.args.get('search_mpn', '').strip(),
             request.args.get('search_location', '').strip(),
             request.args.get('search_description', '').strip())
-        query += " ORDER BY w.id DESC"
+        query += " ORDER BY desc_rank, w.id DESC"
 
         conn = db_manager.get_connection()
         cursor = conn.cursor(cursor_factory=RealDictCursor)

@@ -551,6 +551,11 @@ phrase must appear as-is. Applies to the page and the Excel export (shared query
 filters stay exact. Placeholder changed to "Contains (e.g. 0603)".
 **Verified (read-only, prod data):** '0603' → 4201 rows, 'cap cer' → 3168, '10uF' → 613,
 '100%' → 1 (literal %), nonsense → 0.
+**Follow-up (same day, Preet):** search `abcd` must also find `acdfgh`/`acdwfgy`. Added one-typo
+tolerance: for terms of 4+ chars, a description also matches if it contains the term with any
+ONE character missing. Exact contains-matches sort first (`desc_rank` 0), near-misses after,
+on both the page and the export. Counts: '0603' 4201→4396, '10uF' 613→2625 (exact 613 on top),
+'abcd' 0→8 (BCD switches, ...ABDR...). Terms under 4 chars stay plain contains.
 
 ---
 
